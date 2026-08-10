@@ -1,12 +1,29 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>{{ shop.shop_name or shop.shop_domain }}</h1>
+<h1>{{ display_name }}</h1>
 <p class="sub">
-    {{ shop.shop_domain }}
+    {{ domains|join(", ") }}
+    &middot; <a href="/customers">back to all customers</a>
+</p>
+
+{% for installation in apps %}
+{% set app = installation.app %}
+{% set shop = installation.shop %}
+{% set current_state = installation.current_state %}
+{% set money = installation.money %}
+{% set subscription = installation.subscription %}
+{% set first_install_at = installation.first_install_at %}
+{% set timeline = installation.timeline %}
+{% set install_count = installation.install_count %}
+{% set payments = installation.payments %}
+{% set usage = installation.usage %}
+<section class="app-installation">
+<h2>{{ app.name }}</h2>
+<p class="sub">
+    {{ shop.shop_domain or shop.shop_gid }}
     {%- if shop.country %} &middot; {{ shop.country }}{% endif %}
     {%- if shop.industry %} &middot; {{ shop.industry }}{% endif %}
-    &middot; <a href="https://{{ shop.shop_domain }}">storefront</a>
-    &middot; <a href="/customers">back to all customers</a>
+    {%- if shop.shop_domain %} &middot; <a href="https://{{ shop.shop_domain }}">storefront</a>{% endif %}
 </p>
 
 <div class="cards">
@@ -128,8 +145,10 @@
             </tbody>
         </table>
     </div>
-    <p class="sub">Reported by {{ APP_NAME }} itself. The Partner API carries no product usage
+    <p class="sub">Reported by {{ app.name }} itself. The Partner API carries no product usage
     at all, so a shop with nothing here either predates tracking or was never set up.</p>
 </div>
 {% endif %}
+</section>
+{% endfor %}
 {% endblock %}

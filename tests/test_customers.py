@@ -1,11 +1,36 @@
 from decimal import Decimal
 
+import pytest
+
 from app_dashboard.customers import (
     count_customers,
     customer_detail,
     distinct_facets,
     list_customers,
 )
+from app_dashboard.scope import Scope
+
+APP = None
+OWNED_TABLES = (
+    "raw_app_events", "app_events", "charges", "subscriptions", "shops",
+    "transactions", "usage_events",
+)
+
+
+@pytest.fixture(autouse=True)
+def _owned_rows(db, test_app):
+    global APP
+    APP = test_app
+    for table in OWNED_TABLES:
+        db.execute(f"alter table {table} alter column app_id set default {test_app.id}")
+    yield
+    for table in OWNED_TABLES:
+        db.execute(f"alter table {table} alter column app_id drop default")
+
+
+def _only_app(detail):
+    assert len(detail["apps"]) == 1
+    return detail["apps"][0]
 
 
 def _shop(db, ai, **kw):
@@ -92,7 +117,7 @@ def test_detail_header_agrees_with_a_reinstalling_merchant(db):
     _event(db, "g1", "RELATIONSHIP_REACTIVATED", "reinstalled", "2026-06-20Z")
     db.commit()
 
-    detail = customer_detail(db, "back.myshopify.com")
+    detail = _only_app(customer_detail(db, "g1"))
     assert [t["kind"] for t in detail["timeline"]] == \
         ["installed", "uninstalled", "reinstalled"]
     assert detail["install_count"] == 2
@@ -108,7 +133,7 @@ def test_detail_names_a_store_shopify_closed(db):
     _event(db, "g1", "RELATIONSHIP_DEACTIVATED", "uninstalled", "2026-04-01Z")
     db.commit()
 
-    detail = customer_detail(db, "dead.myshopify.com")
+    detail = _only_app(customer_detail(db, "g1"))
     last = detail["timeline"][-1]
     assert last["chose_to_leave"] is False
     assert last["label"] == "Store closed or frozen by Shopify"
@@ -131,7 +156,7 @@ def test_detail_totals_money_and_falls_back_to_the_transaction_interval(db):
             (tid, kind, at, gross, net, interval))
     db.commit()
 
-    detail = customer_detail(db, "paid.myshopify.com")
+    detail = _only_app(customer_detail(db, "g1"))
     assert detail["money"]["gross"] == Decimal("171.00")
     assert detail["money"]["net"] == Decimal("165.49")
     assert detail["money"]["taken"] == Decimal("5.51")
@@ -143,7 +168,7 @@ def test_detail_totals_money_and_falls_back_to_the_transaction_interval(db):
 
 
 def test_detail_is_none_for_an_unknown_shop(db):
-    assert customer_detail(db, "nobody.myshopify.com") is None
+    assert customer_detail(db, "gid://shopify/Shop/nobody") is None
 
 
 def test_detail_never_selects_contact_details(db):
@@ -152,6 +177,31 @@ def test_detail_never_selects_contact_details(db):
     _shop(db, "g1", shop_domain="x.myshopify.com", owner_name="Jo Smith",
           email="jo@x.myshopify.com")
     db.commit()
-    detail = customer_detail(db, "x.myshopify.com")
+    detail = _only_app(customer_detail(db, "g1"))
     assert "owner_name" not in detail["shop"]
     assert "email" not in detail["shop"]
+
+
+def test_combined_customer_identity_groups_shared_shop_by_app(db, app_factory):
+    beta = app_factory(slug="beta", name="Beta")
+    db.execute(
+        """insert into shops
+               (app_id, shop_gid, shop_name, shop_domain, install_state)
+           values (%s, 'shared', 'Shared Alpha', 'alpha.myshopify.com', 'installed'),
+                  (%s, 'shared', 'Shared Beta', 'beta.myshopify.com', 'uninstalled'),
+                  (%s, 'alpha-only', 'Alpha Only', 'only.myshopify.com', 'installed')""",
+        (APP.id, beta.id, APP.id),
+    )
+    db.commit()
+
+    assert count_customers(db, scope=Scope.all()) == 3
+    assert count_customers(db, scope=Scope.for_app(APP.id)) == 2
+    combined = customer_detail(db, "shared", Scope.all())
+    assert [section["app"]["slug"] for section in combined["apps"]] == [
+        "beta", "test-app"
+    ]
+    assert {section["current_state"] for section in combined["apps"]} == {
+        "installed", "uninstalled"
+    }
+    selected = customer_detail(db, "shared", Scope.for_app(beta.id))
+    assert [section["app"]["slug"] for section in selected["apps"]] == ["beta"]

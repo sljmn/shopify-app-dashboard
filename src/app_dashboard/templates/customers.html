@@ -37,6 +37,7 @@
     <table>
         <thead>
             <tr>
+                <th>App</th>
                 <th>Shop</th>
                 <th>Domain</th>
                 <th>Country</th>
@@ -47,15 +48,16 @@
         <tbody>
             {% for row in rows %}
             <tr>
-                <td>{% if row.shop_domain %}<a href="/customers/{{ row.shop_domain }}">{{ row.shop_name or row.shop_domain }}</a>{% else %}{{ row.shop_name or "" }}{% endif %}</td>
+                <td>{{ row.app_name }}</td>
+                <td><a href="/customers/{{ row.shop_gid|urlencode }}{% if selected_app %}?app={{ selected_app.slug|urlencode }}{% endif %}">{{ row.shop_name or row.shop_domain or row.shop_gid }}</a></td>
                 <td class="sub">{{ row.shop_domain or "" }}</td>
                 <td>{{ row.country or "" }}</td>
                 <td class="sub">{{ row.industry or "" }}</td>
                 <td>{% if row.install_state %}<span class="pill {{ row.install_state }}">{{ row.install_state }}</span>{% endif %}</td>
             </tr>
             {% else %}
-            <tr><td colspan="5">No shops match these filters. The search box matches shop name and
-                domain, not industry.</td></tr>
+            <tr><td colspan="6">No shops match these filters. The search box matches app, shop name,
+                and domain, not industry.</td></tr>
             {% endfor %}
         </tbody>
     </table>
