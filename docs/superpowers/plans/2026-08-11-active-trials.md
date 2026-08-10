@@ -129,24 +129,24 @@ git commit -m "Sync current subscriptions independently"
 - Modify: `src/app_dashboard/metrics.py`
 - Modify: `tests/test_stats.py`
 
-- [ ] **Step 1: Add failing metric tests**
+- [x] **Step 1: Add failing metric tests**
 
 Create one paid shop, one free shop, one current trial, and one expired trial.
 Assert only paid and expired-trial shops contribute to MRR and paying count.
 Pin the same rule for plan mix and MRR trend so headline and charts agree.
 
-- [ ] **Step 2: Implement one shared billable predicate**
+- [x] **Step 2: Implement one shared billable predicate**
 
 Require `monthly_amount > 0.01` and exclude any matching snapshot with
 `trial_ends_at > now()`. Reuse this predicate in current overview metrics,
 historical MRR inputs, plan mix, and paying action cohorts.
 
-- [ ] **Step 3: Update metric definitions**
+- [x] **Step 3: Update metric definitions**
 
 State that paying shops and MRR exclude free plans and current Shopify trials,
 and cite `active_subscriptions` as a source.
 
-- [ ] **Step 4: Run focused tests and commit**
+- [x] **Step 4: Run focused tests and commit**
 
 ```bash
 .venv/bin/pytest tests/test_stats.py tests/test_web.py -q

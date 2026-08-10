@@ -62,28 +62,31 @@ METRICS: dict[str, Metric] = {
     "active_mrr": Metric(
         name="Active MRR",
         definition="What the current set of subscriptions is worth per month. A "
-                   "projection, not cash.",
+                   "projection, not cash. Free plans and active trials are excluded.",
         rule="sum of monthly_amount over subscriptions that have not churned, on "
-             "shops still installed. An annual plan counts as price / 12, but "
+             "shops still installed, where monthly_amount > 0.01 and the current "
+             "Shopify subscription has no future trial_ends_at. An annual plan "
+             "counts as price / 12, but "
              "only if its price is listed for that app in config/apps.yml: the Partner "
              "API does not state a billing interval, so an unlisted price is "
              "treated as monthly and counted at twelve times its true value.",
-        source="subscriptions joined to charges",
+        source="subscriptions joined to charges, shops, and active_subscriptions",
         kind="point", unit="usd", better="up",
     ),
     "paying": Metric(
         name="Paying shops",
-        definition="Installed shops with a live subscription.",
+        definition="Installed shops with a paid subscription outside its trial.",
         rule="distinct shop_gid over subscriptions where churned_at is null and "
-             "the shop is still installed",
-        source="subscriptions joined to shops",
+             "monthly_amount > 0.01, the shop is still installed, and the current "
+             "Shopify subscription has no future trial_ends_at",
+        source="subscriptions joined to shops and active_subscriptions",
         kind="point", better="up",
     ),
     "arpu": Metric(
         name="ARPU",
         definition="Average monthly revenue per paying shop.",
         rule="active MRR divided by paying shops",
-        source="subscriptions joined to charges",
+        source="subscriptions joined to charges, shops, and active_subscriptions",
         kind="point", unit="usd", better="up",
     ),
     "installs_30d": Metric(

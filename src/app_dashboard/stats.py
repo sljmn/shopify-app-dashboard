@@ -15,18 +15,37 @@ from app_dashboard.uninstall_reasons import (
     split_reasons,
 )
 
+PAYING_THRESHOLD = Decimal("0.01")
+
+
+def _billable(alias: str = "sub") -> tuple[str, tuple]:
+    """The shared boundary between revenue and free/current-trial state."""
+    return (
+        f"""{alias}.monthly_amount > %s
+        and not exists (
+            select 1 from active_subscriptions current_sub
+            where current_sub.app_id = {alias}.app_id
+              and current_sub.shop_gid = {alias}.shop_gid
+              and current_sub.trial_ends_at > now()
+        )""",
+        (PAYING_THRESHOLD,),
+    )
+
+
 # Every paying subscription joins back to the charge it came from, which is
 # where the billing interval lives.
 def _active_paying(scope: Scope) -> tuple[str, tuple]:
     predicate, params = scope.predicate("sub")
+    billable, billable_params = _billable("sub")
     return (
         f"""
         from subscriptions sub
         join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
         where sub.churned_at is null and s.install_state = 'installed'
           and {predicate}
+          and {billable}
         """,
-        params,
+        (*params, *billable_params),
     )
 
 
@@ -186,10 +205,12 @@ def unit_economics(
     start = datetime.now(timezone.utc) - timedelta(days=days)
     at_start = paying_at(conn, start, scope)
     sub_predicate, sub_params = scope.predicate("subscriptions")
+    billable, billable_params = _billable("subscriptions")
     (churned,) = conn.execute(
         f"""select count(*) from subscriptions
-           where churned_at >= %s and converted_at < %s and {sub_predicate}""",
-        (start, start, *sub_params),
+           where churned_at >= %s and converted_at < %s
+             and {sub_predicate} and {billable}""",
+        (start, start, *sub_params, *billable_params),
     ).fetchone()
 
     active_sql, active_params = _active_paying(scope)
@@ -221,6 +242,7 @@ def mrr_trend(
     because net_change on historical rows was recorded before the annual-plan
     interval fix and still carries the old inflated figures."""
     predicate, params = scope.predicate("sub")
+    billable, billable_params = _billable("sub")
     rows = conn.execute(
         f"""
         with bounds as (
@@ -236,12 +258,13 @@ def mrr_trend(
                    where sub.converted_at < b.month_start + interval '1 month'
                      and (sub.churned_at is null
                           or sub.churned_at >= b.month_start + interval '1 month')
+                     and {billable}
                ), 0) as mrr
         from bounds b left join subscriptions sub on {predicate}
         group by 1, 2
         order by 2
         """,
-        (months, *params),
+        (months, *billable_params, *params),
     ).fetchall()
     return [{"label": label, "mrr": mrr} for label, _, mrr in rows]
 
@@ -277,10 +300,12 @@ def mrr_movement_between(
     so a subscription counts if it had converted by then and had not churned.
     """
     predicate, params = scope.predicate("subscriptions")
+    billable, billable_params = _billable("subscriptions")
     rows = conn.execute(
         f"""select app_id, shop_gid, coalesce(monthly_amount, 0), converted_at, churned_at
-           from subscriptions where converted_at is not null and {predicate}""",
-        params,
+           from subscriptions where converted_at is not null and {predicate}
+             and {billable}""",
+        (*params, *billable_params),
     ).fetchall()
 
     def at(t):
@@ -313,21 +338,23 @@ def mrr_at(
 ) -> Decimal:
     """Total MRR at an instant. Same basis as `mrr_trend`."""
     predicate, params = scope.predicate("subscriptions")
+    billable, billable_params = _billable("subscriptions")
     return conn.execute(
         f"""select coalesce(sum(monthly_amount), 0) from subscriptions
            where converted_at <= %s and (churned_at is null or churned_at > %s)
-             and {predicate}""",
-        (t, t, *params),
+             and {predicate} and {billable}""",
+        (t, t, *params, *billable_params),
     ).fetchone()[0]
 
 
 def paying_at(conn: psycopg.Connection, t, scope: Scope = Scope.all()) -> int:
     predicate, params = scope.predicate("subscriptions")
+    billable, billable_params = _billable("subscriptions")
     return conn.execute(
         f"""select count(distinct (app_id, shop_gid)) from subscriptions
            where converted_at <= %s and (churned_at is null or churned_at > %s)
-             and {predicate}""",
-        (t, t, *params),
+             and {predicate} and {billable}""",
+        (t, t, *params, *billable_params),
     ).fetchone()[0]
 
 
@@ -351,10 +378,12 @@ def mrr_movements(
     month, in which case it is a reactivation.
     """
     predicate, params = scope.predicate("subscriptions")
+    billable, billable_params = _billable("subscriptions")
     rows = conn.execute(
         f"""select app_id, shop_gid, coalesce(monthly_amount, 0), converted_at, churned_at
-           from subscriptions where converted_at is not null and {predicate}""",
-        params,
+           from subscriptions where converted_at is not null and {predicate}
+             and {billable}""",
+        (*params, *billable_params),
     ).fetchall()
 
     now = datetime.now(timezone.utc)
@@ -529,6 +558,7 @@ PLAN_LABELS = {"EVERY_30_DAYS": "Monthly", "ANNUAL": "Annual"}
 def plan_mix(conn: psycopg.Connection, scope: Scope = Scope.all()) -> list[dict]:
     """Active paying subscriptions split by billing interval."""
     predicate, params = scope.predicate("sub")
+    billable, billable_params = _billable("sub")
     rows = conn.execute(
         f"""
         select c.plan_interval, count(*), coalesce(sum(sub.monthly_amount), 0)
@@ -537,12 +567,12 @@ def plan_mix(conn: psycopg.Connection, scope: Scope = Scope.all()) -> list[dict]
         join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
         where sub.churned_at is null
           and s.install_state = 'installed'
-          and sub.monthly_amount > 0
+          and {billable}
           and {predicate}
         group by c.plan_interval
         order by 3 desc
         """,
-        params,
+        (*billable_params, *params),
     ).fetchall()
     return [
         {"label": PLAN_LABELS.get(interval, interval or "Unknown"),
@@ -847,6 +877,7 @@ def review_candidates(
     the shop, agencies and our own team included; see migration 008.
     """
     predicate, params = scope.predicate("sub")
+    billable, billable_params = _billable("sub")
     rows = conn.execute(
         f"""
         select s.shop_gid, coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
@@ -860,12 +891,13 @@ def review_candidates(
         where sub.churned_at is null and s.install_state = 'installed'
           and s.reviewed_at is null
           and {predicate}
+          and {billable}
         group by sub.app_id, s.shop_gid, s.shop_name, s.shop_domain, s.country,
                  a.slug, a.name
         having min(sub.converted_at) <= now() - make_interval(days => %s)
         order by paying_since
         """,
-        (*params, min_days),
+        (*params, *billable_params, min_days),
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
@@ -884,6 +916,7 @@ def annual_upgrade_candidates(
     the annual plan, which converts a recurring monthly risk into a year of
     prepaid cash."""
     predicate, params = scope.predicate("sub")
+    billable, billable_params = _billable("sub")
     rows = conn.execute(
         f"""
         select s.shop_gid, coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
@@ -898,9 +931,10 @@ def annual_upgrade_candidates(
           and c.plan_interval = 'EVERY_30_DAYS'
           and sub.converted_at <= now() - make_interval(months => %s)
           and {predicate}
+          and {billable}
         order by sub.converted_at
         """,
-        (min_months, *params),
+        (min_months, *params, *billable_params),
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
@@ -1111,10 +1145,11 @@ def retention_cohorts(
     """Monthly subscription cohorts: % of each converted_at-month cohort still
     active N months after converting. Computed in Python; the table is small."""
     predicate, params = scope.predicate("subscriptions")
+    billable, billable_params = _billable("subscriptions")
     rows = conn.execute(
         f"""select converted_at, churned_at from subscriptions
-            where converted_at is not null and {predicate}""",
-        params,
+            where converted_at is not null and {predicate} and {billable}""",
+        (*params, *billable_params),
     ).fetchall()
     now = datetime.now(timezone.utc)
     this_month = now.year * 12 + (now.month - 1)

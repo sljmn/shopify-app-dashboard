@@ -37,7 +37,7 @@ APP = None
 OWNED_TABLES = (
     "raw_app_events", "app_events", "charges", "subscriptions", "shops",
     "transactions", "sync_state", "usage_events", "ga4_daily", "annotations",
-    "tracking_events",
+    "tracking_events", "active_subscriptions",
 )
 
 
@@ -101,6 +101,46 @@ def test_overview_arpu_and_churn(db):
     assert stats["arpu"] == Decimal("17.415")
     # 1 uninstall against 2 still installed + 1 that left
     assert stats["churn_30d"] == 33.3
+
+
+def test_paying_metrics_exclude_free_plans_and_current_trials(db):
+    for gid in ("paid", "free", "trial", "converted-trial"):
+        _shop(db, gid)
+    _sub(db, "paid-sub", "paid", Decimal("20.00"), "2026-01-01Z")
+    _sub(db, "free-sub", "free", Decimal("0.00"), "2026-01-01Z")
+    _sub(db, "trial-sub", "trial", Decimal("30.00"), "2026-01-01Z")
+    _sub(
+        db, "converted-trial-sub", "converted-trial", Decimal("40.00"),
+        "2026-01-01Z",
+    )
+    db.execute(
+        "insert into charges (gid, plan_interval) values "
+        "('paid-sub', 'EVERY_30_DAYS'), ('free-sub', 'EVERY_30_DAYS'), "
+        "('trial-sub', 'EVERY_30_DAYS'), "
+        "('converted-trial-sub', 'EVERY_30_DAYS')"
+    )
+    db.execute(
+        "insert into active_subscriptions "
+        "(app_id, shop_gid, trial_ends_at, observed_at) values "
+        "(%s, 'trial', now() + interval '7 days', now()), "
+        "(%s, 'converted-trial', now() - interval '1 day', now())",
+        (APP.id, APP.id),
+    )
+    db.commit()
+
+    overview = overview_stats(db)
+    assert overview["active_mrr"] == Decimal("60.00")
+    assert overview["paying"] == 2
+    assert overview["arpu"] == Decimal("30.00")
+
+    mix = plan_mix(db)
+    assert mix == [{
+        "label": "Monthly",
+        "interval": "EVERY_30_DAYS",
+        "count": 2,
+        "mrr": Decimal("60.00"),
+    }]
+    assert mrr_trend(db, months=1)[0]["mrr"] == Decimal("60.00")
 
 
 def test_mrr_trend_counts_a_sub_only_while_it_lived(db):
