@@ -277,7 +277,11 @@
             {% for e in events %}
             <tr>
                 <td><span class="pill {{ e.type }}">{{ e.type }}</span></td>
-                <td>{{ e.shop }}</td>
+                <td>
+                    <a href="/customers/{{ e.shop_gid|urlencode }}{{ scope_qs }}">{{ e.shop }}</a>
+                    {% if e.shop_domain %}<span class="sub"> &middot;
+                        <a href="https://{{ e.shop_domain }}">storefront</a></span>{% endif %}
+                </td>
                 <td class="sub">{{ e.at.strftime("%b %-d, %H:%M") }}</td>
             </tr>
             {% endfor %}

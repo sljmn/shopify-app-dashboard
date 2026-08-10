@@ -1008,8 +1008,8 @@ def recent_events(
     predicate, params = scope.predicate("e")
     rows = conn.execute(
         f"""
-        select e.type, coalesce(s.shop_name, s.shop_domain, e.shop_gid), e.occurred_at,
-               a.slug, a.name
+        select e.type, coalesce(s.shop_name, s.shop_domain, e.shop_gid),
+               e.shop_gid, s.shop_domain, e.occurred_at, a.slug, a.name
         from app_events e
         join apps a on a.id = e.app_id
         left join shops s on s.app_id = e.app_id and s.shop_gid = e.shop_gid
@@ -1020,8 +1020,16 @@ def recent_events(
         (*params, limit),
     ).fetchall()
     return [
-        {"type": t, "shop": shop, "at": at, "app_slug": slug, "app_name": name}
-        for t, shop, at, slug, name in rows
+        {
+            "type": kind,
+            "shop": shop,
+            "shop_gid": shop_gid,
+            "shop_domain": shop_domain,
+            "at": at,
+            "app_slug": slug,
+            "app_name": name,
+        }
+        for kind, shop, shop_gid, shop_domain, at, slug, name in rows
     ]
 
 

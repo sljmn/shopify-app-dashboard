@@ -23,19 +23,19 @@
 **Files:**
 - Modify: `tests/test_web.py`
 
-- [ ] **Step 1: Add a failing free-plan rendering test**
+- [x] **Step 1: Add a failing free-plan rendering test**
 
 Insert an installed shop, active zero-value subscription, and matching monthly
 charge. Request its detail page and assert `Free plan` and
 `No recurring charge` appear while `$0` does not.
 
-- [ ] **Step 2: Add a failing recent-activity link test**
+- [x] **Step 2: Add a failing recent-activity link test**
 
 Insert a shop and lifecycle event, request `/?app=test-app`, and assert the shop
 name links to `/customers/<encoded-gid>?app=test-app` while a separate
 `https://<domain>` storefront link is present.
 
-- [ ] **Step 3: Run the focused tests and verify they fail**
+- [x] **Step 3: Run the focused tests and verify they fail**
 
 Run:
 
@@ -53,22 +53,22 @@ does not yet expose link targets.
 - Modify: `src/app_dashboard/templates/customer.html`
 - Modify: `src/app_dashboard/templates/overview.html`
 
-- [ ] **Step 1: Return recent-event shop identity**
+- [x] **Step 1: Return recent-event shop identity**
 
 Select `e.shop_gid` and `s.shop_domain` in `recent_events`, then expose them as
 `shop_gid` and `shop_domain` in each returned dictionary.
 
-- [ ] **Step 2: Render free subscriptions explicitly**
+- [x] **Step 2: Render free subscriptions explicitly**
 
 Before the annual/monthly amount branches, render `Free plan` and
 `No recurring charge` when an active subscription has `monthly_amount == 0`.
 
-- [ ] **Step 3: Render both activity links**
+- [x] **Step 3: Render both activity links**
 
 Make the shop name an internal detail link that preserves the selected app.
 When a domain exists, add a separate HTTPS `storefront` link.
 
-- [ ] **Step 4: Run the focused tests**
+- [x] **Step 4: Run the focused tests**
 
 Run:
 
@@ -83,7 +83,7 @@ Expected: both tests pass.
 **Files:**
 - No code changes expected.
 
-- [ ] **Step 1: Run the full test suite**
+- [x] **Step 1: Run the full test suite**
 
 Run:
 
@@ -93,17 +93,16 @@ uv run pytest -q
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Smoke-test live Bol Sync data**
+- [x] **Step 2: Smoke-test live Bol Sync data**
 
 Open COTE CHIC. and Bol Sync Overview locally. Verify the detail card says
 `Free plan`, the activity shop name opens merchant detail, and `storefront`
 targets the merchant domain.
 
-- [ ] **Step 3: Commit the implementation**
+- [x] **Step 3: Commit the implementation**
 
 ```bash
 git add src/app_dashboard/stats.py src/app_dashboard/templates/customer.html \
   src/app_dashboard/templates/overview.html tests/test_web.py
 git commit -m "Clarify merchant plans and link activity shops"
 ```
-

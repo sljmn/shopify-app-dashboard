@@ -728,6 +728,68 @@ def test_customer_detail_page_and_its_markdown_twin(db):
     assert c.get("/customers/nope", auth=("tester", "suite-only-credential")).status_code == 404
 
 
+def test_customer_detail_distinguishes_free_and_paid_plans(db):
+    db.execute(
+        "insert into shops (shop_gid, shop_domain, shop_name, install_state) values "
+        "('free-shop', 'free.myshopify.com', 'Free Shop', 'installed'), "
+        "('paid-shop', 'paid.myshopify.com', 'Paid Shop', 'installed')"
+    )
+    db.execute(
+        "insert into subscriptions (id, shop_gid, monthly_amount, converted_at) values "
+        "('free-sub', 'free-shop', 0, '2026-08-10Z'), "
+        "('paid-sub', 'paid-shop', 29, '2026-08-10Z')"
+    )
+    db.execute(
+        "insert into charges (gid, plan_amount, plan_interval) values "
+        "('free-sub', 0, 'EVERY_30_DAYS'), "
+        "('paid-sub', 29, 'EVERY_30_DAYS')"
+    )
+    db.commit()
+
+    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    free = c.get(
+        "/customers/free-shop?app=test-app",
+        auth=("tester", "suite-only-credential"),
+    ).text
+    paid = c.get(
+        "/customers/paid-shop?app=test-app",
+        auth=("tester", "suite-only-credential"),
+    ).text
+
+    assert "Free plan" in free
+    assert "No recurring charge" in free
+    assert "$0<small>&nbsp;/mo</small>" not in free
+    assert "$29<small>&nbsp;/mo</small>" in paid
+    assert "Free plan" not in paid
+
+
+def test_latest_activity_links_to_merchant_detail_and_storefront(db):
+    shop_gid = "gid://partners/Shop/123"
+    db.execute(
+        "insert into shops (shop_gid, shop_domain, shop_name, install_state) "
+        "values (%s, 'linked.myshopify.com', 'Linked Shop', 'installed')",
+        (shop_gid,),
+    )
+    db.execute(
+        "insert into app_events "
+        "(platform_event_id, type, occurred_at, shop_gid) "
+        "values ('linked-event', 'installed', '2026-08-10Z', %s)",
+        (shop_gid,),
+    )
+    db.commit()
+
+    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    page = c.get(
+        "/?app=test-app", auth=("tester", "suite-only-credential")
+    ).text
+
+    assert (
+        'href="/customers/gid%3A//partners/Shop/123?app=test-app"'
+        ">Linked Shop</a>"
+    ) in page
+    assert 'href="https://linked.myshopify.com">storefront</a>' in page
+
+
 def test_customer_detail_needs_auth(db):
     c = TestClient(create_app(conn_factory=lambda: db))
     r = c.get("/customers/x.myshopify.com", follow_redirects=False)

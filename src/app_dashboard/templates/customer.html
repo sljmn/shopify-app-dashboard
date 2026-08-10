@@ -43,7 +43,10 @@
     <div class="card stat">
         <div class="label">Current plan</div>
         {% if subscription and not subscription.churned_at %}
-        {% if subscription.plan_interval == "ANNUAL" %}
+        {% if subscription.monthly_amount == 0 %}
+        <div class="num"><small>Free plan</small></div>
+        <div class="sub">No recurring charge</div>
+        {% elif subscription.plan_interval == "ANNUAL" %}
         {# Derived, not the sticker price: if the annual plan is ever
            repriced this keeps matching what the merchant actually pays. #}
         <div class="num">${{ "%.0f"|format(subscription.monthly_amount * 12) }}<small>&nbsp;a year</small></div>
