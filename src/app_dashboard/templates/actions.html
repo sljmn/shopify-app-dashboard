@@ -97,16 +97,15 @@ work the lists, then come back.</p>
 
 <div class="card">
     <div class="card-head">
-        <h2 id="trial">Trial watch &middot; {{ trial|length }}</h2>
+        <h2 id="trial">Recent installs not subscribed &middot; {{ trial|length }}</h2>
         {#- The only window on this page. The other two lists are business rules
             rather than view windows: widening those changes who belongs on the
             call sheet, not how much of it you can see. -#}
         {{ ui.window_form("trial_days", trial_days, trial_choices, "days") }}
     </div>
-    <p class="sub">Installed in the last {{ trial_days }} days and still not paying. Oldest first: those are
-    the ones closest to deciding. This is a proxy, not activation data. The Partner API carries
-    no product usage at all, so "installed and silent" is the best signal available until the
-    app itself reports events.</p>
+    <p class="sub">Installed in the last {{ trial_days }} days without any subscription. Oldest first.
+    These are not confirmed trials; current Shopify trials live on the <a href="/trials{{ scope_qs }}">Trials</a>
+    page. This list remains useful for finding new installs that never started one.</p>
     <div class="table-card">
         <table>
             <thead>

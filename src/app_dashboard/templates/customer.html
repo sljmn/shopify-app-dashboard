@@ -12,6 +12,7 @@
 {% set current_state = installation.current_state %}
 {% set money = installation.money %}
 {% set subscription = installation.subscription %}
+{% set trial = installation.trial %}
 {% set first_install_at = installation.first_install_at %}
 {% set timeline = installation.timeline %}
 {% set install_count = installation.install_count %}
@@ -23,7 +24,7 @@
     {{ shop.shop_domain or shop.shop_gid }}
     {%- if shop.country %} &middot; {{ shop.country }}{% endif %}
     {%- if shop.industry %} &middot; {{ shop.industry }}{% endif %}
-    {%- if shop.shop_domain %} &middot; <a href="https://{{ shop.shop_domain }}">storefront</a>{% endif %}
+    {%- if shop.shop_domain %} &middot; <a href="https://{{ shop.shop_domain }}" target="_blank" rel="noopener">storefront</a>{% endif %}
 </p>
 
 <div class="cards">
@@ -42,7 +43,14 @@
     </div>
     <div class="card stat">
         <div class="label">Current plan</div>
-        {% if subscription and not subscription.churned_at %}
+        {% if trial %}
+        <div class="num"><small>Trial</small></div>
+        <div class="sub">
+            Ends {{ trial.trial_ends_at.strftime("%b %-d, %Y") }}
+            {% if trial.monthly_amount is not none %}&middot; ${{ "%.2f"|format(trial.monthly_amount) }} MRR after conversion{% endif %}
+            {% if trial.cancel_at_end_of_cycle %}&middot; cancellation scheduled{% endif %}
+        </div>
+        {% elif subscription and not subscription.churned_at %}
         {% if subscription.monthly_amount == 0 %}
         <div class="num"><small>Free plan</small></div>
         <div class="sub">No recurring charge</div>

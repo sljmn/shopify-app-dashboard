@@ -212,6 +212,27 @@ def customer_detail(
             (app_id, shop_gid),
         ).fetchone()
 
+        trial = conn.execute(
+            """
+            select current_sub.trial_ends_at,
+                   current_sub.cancel_at_end_of_cycle,
+                   current_sub.item_handle,
+                   current_sub.item_description,
+                   current_sub.currency_code,
+                   sub.monthly_amount
+            from active_subscriptions current_sub
+            left join subscriptions sub
+              on sub.app_id = current_sub.app_id
+             and sub.id = current_sub.legacy_subscription_id
+             and sub.shop_gid = current_sub.shop_gid
+             and sub.churned_at is null
+            where current_sub.app_id = %s
+              and current_sub.shop_gid = %s
+              and current_sub.trial_ends_at > now()
+            """,
+            (app_id, shop_gid),
+        ).fetchone()
+
         usage = conn.execute(
             """
             select event_type, count(*), min(occurred_at), max(occurred_at)
@@ -251,6 +272,12 @@ def customer_detail(
                 {"monthly_amount": subscription[0], "converted_at": subscription[1],
                  "churned_at": subscription[2], "plan_interval": subscription[3]}
                 if subscription else None
+            ),
+            "trial": (
+                {"trial_ends_at": trial[0], "cancel_at_end_of_cycle": trial[1],
+                 "item_handle": trial[2], "item_description": trial[3],
+                 "currency_code": trial[4], "monthly_amount": trial[5]}
+                if trial else None
             ),
             "usage": [
                 {"event_type": kind, "count": count, "first_at": first,

@@ -143,12 +143,12 @@ def render_digest(data: dict, app_name: str = "The app") -> str:
             f"{escape(s['shop'])} ({s['days']}d)" for s in data["trial_watch"]
         )
         lines.append(
-            f"Trial watch ({data['trial_watch_total']}): {names}."
+            f"Recent installs without subscription ({data['trial_watch_total']}): {names}."
             + (" More on the Actions page." if data["trial_watch_total"]
                > len(data["trial_watch"]) else "")
         )
     else:
-        lines.append("Trial watch: nobody installed recently is still unsubscribed.")
+        lines.append("Recent installs without subscription: nobody in the window.")
 
     lines.append(f"{data['review_candidates']} merchants are due a review ask.")
     return "\n".join(lines)

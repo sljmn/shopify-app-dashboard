@@ -92,6 +92,7 @@ from app_dashboard.stats import (
     uninstall_reasons,
     uninstall_verbatims,
 )
+from app_dashboard.trials import current_trials
 from app_dashboard.usage import (
     MAX_BODY_BYTES,
     UsageError,
@@ -835,6 +836,23 @@ def create_app(conn_factory) -> FastAPI:
                 "first_row": (page - 1) * CUSTOMERS_PAGE_SIZE + 1 if total else 0,
                 "last_row": (page - 1) * CUSTOMERS_PAGE_SIZE + len(rows),
                 "base_qs": base_qs + "&" if base_qs else "",
+            },
+        )
+
+    @app.get("/trials")
+    def trials(request: Request, user: str = Depends(verify_creds)):
+        conn = conn_factory()
+        try:
+            scope, selected_app, apps = resolve_scope(request, conn)
+            report = current_trials(conn, scope)
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request,
+            "trials.html",
+            {
+                **page_context(request, user, "trials", selected_app, apps),
+                "trials": report,
             },
         )
 

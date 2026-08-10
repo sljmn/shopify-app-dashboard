@@ -25,7 +25,7 @@
 - `src/app_dashboard/templates/customer.html`: explicit live-trial state.
 - `src/app_dashboard/templates/actions.html`: rename the non-subscriber proxy.
 - `src/app_dashboard/metrics.py`: corrected metric definitions.
-- `tests/test_partner_api.py`, `tests/test_active_subscriptions.py`, `tests/test_scheduler.py`, `tests/test_stats.py`, `tests/test_web.py`, `tests/test_migrations.py`: regression coverage.
+- `tests/test_partner_api.py`, `tests/test_active_subscriptions.py`, `tests/test_scheduler.py`, `tests/test_stats.py`, `tests/test_trials.py`, `tests/test_web.py`, `tests/test_migrations.py`: regression coverage.
 
 ### Task 1: Persist Current Active Subscriptions
 
@@ -166,30 +166,30 @@ git commit -m "Exclude free plans and active trials from MRR"
 - Modify: `src/app_dashboard/templates/actions.html`
 - Modify: `tests/test_web.py`
 
-- [ ] **Step 1: Add failing route and scope tests**
+- [x] **Step 1: Add failing route and scope tests**
 
 Assert `/trials` requires auth, renders current trials only, isolates selected
 apps, preserves app scope in merchant links, separates converting and
 cancel-scheduled MRR, and shows a not-yet-synced state when no snapshots exist.
 
-- [ ] **Step 2: Implement the report query**
+- [x] **Step 2: Implement the report query**
 
 Join current trial snapshots to apps, shops, and the matching derived
 subscription. Return summary totals and rows ordered by earliest trial end.
 
-- [ ] **Step 3: Add route, navigation, and template**
+- [x] **Step 3: Add route, navigation, and template**
 
 Add `Trials` after Customers in the sidebar. Render compact summary metrics and
 one table containing end date, app, merchant, storefront, plan, MRR, and status.
 
-- [ ] **Step 4: Expose trial status on merchant detail**
+- [x] **Step 4: Expose trial status on merchant detail**
 
 For a current snapshot with a future `trial_ends_at`, label the plan card
 `Trial` and show its end date and potential monthly value.
 
-- [ ] **Step 5: Rename the Actions proxy and run web tests**
+- [x] **Step 5: Rename the Actions proxy and run web tests**
 
-Rename visible "Trial watch" copy to "New installs without a subscription".
+Rename visible "Trial watch" copy to "Recent installs not subscribed".
 
 ```bash
 .venv/bin/pytest tests/test_web.py tests/test_customers.py -q

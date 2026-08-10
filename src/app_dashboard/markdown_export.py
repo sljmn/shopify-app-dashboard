@@ -41,6 +41,7 @@ from app_dashboard.usage import (
     has_usage_data,
     time_to_activation,
 )
+from app_dashboard.trials import current_trials
 
 # Path on the site -> (slug used for the .md URL, title, one-line description).
 # "{app}" in a description is filled with APP_NAME when the frontmatter is
@@ -52,6 +53,9 @@ PAGES = {
     "customers": ("customers", "Customers",
                   "Every shop that has ever installed {app}, filterable by "
                   "install state, industry, and country."),
+    "trials": ("trials", "Trials",
+               "Current Shopify subscription trials, their end dates, scheduled "
+               "cancellations, and potential monthly revenue for {app}."),
     "actions": ("actions", "Actions",
                 "Three call sheets: merchants to ask for a review, monthly subscribers to "
                 "pitch the annual plan, and recent installs that have not subscribed."),
@@ -341,12 +345,26 @@ def _actions(conn, settings, query: dict) -> str:
         "\n## Annual upgrade candidates\n",
         "On a monthly plan for at least three months.\n",
         _json(annual),
-        f"\n## Trial watch, last {trial_days} days\n",
+        f"\n## Recent installs not subscribed, last {trial_days} days\n",
         f"Installed in the last {trial_days} days with no subscription. This is a proxy "
         "for activation risk, not usage data: the Partner API carries no product usage at "
         "all. The window is the only one on this page that moves; the review and annual "
         "lists are business rules, not view windows.\n",
         _json(trial),
+    ])
+
+
+def _trials(conn, settings, query: dict) -> str:
+    report = current_trials(conn, query["_scope"])
+    return "\n".join([
+        "# Trials\n",
+        "Current trials come from Shopify's activeSubscription state. They are "
+        "excluded from Active MRR, paying shops, ARPU, plan mix, and paid retention "
+        "until trial_ends_at passes.\n",
+        "## Summary\n",
+        _json({key: value for key, value in report.items() if key != "rows"}),
+        "\n## Current trials\n",
+        _json(report["rows"]),
     ])
 
 
@@ -515,7 +533,8 @@ def render_page(conn, page: str, settings, query: dict | None = None,
     # is honoured by its markdown twin too. A twin that ignored ?days= would
     # quietly stop being a mirror of what is on screen.
     body = {
-        "overview": _overview, "customers": _customers, "actions": _actions,
+        "overview": _overview, "customers": _customers, "trials": _trials,
+        "actions": _actions,
         "funnel": _funnel, "churn": _churn, "retention": _retention,
         "traffic": _traffic, "faq": _faq,
     }[page](conn, settings, query)

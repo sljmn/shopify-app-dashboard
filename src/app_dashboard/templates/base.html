@@ -478,6 +478,15 @@
         .pill.uninstalled { background: var(--gone-soft); color: var(--muted); }
         .pill.reinstalled { background: var(--brand-soft); color: var(--brand); }
         .pill.paid { background: var(--ok-soft); color: var(--ok); font-family: var(--mono); }
+        .pill.trial { background: var(--brand-soft); color: var(--brand); }
+        .pill.cancelling { background: color-mix(in srgb, var(--down) 12%, var(--card)); color: var(--down); }
+        .trial-deadline { font-family: var(--mono); font-weight: 600; }
+        .trial-deadline.soon { color: var(--down); }
+        .sync-note {
+            padding: 10px 12px; border-left: 3px solid var(--down);
+            background: color-mix(in srgb, var(--down) 7%, var(--card));
+            color: var(--ink-2); font-size: 13px;
+        }
 
         form.filters { display: flex; gap: 10px; flex-wrap: wrap; }
         select, input[type="search"] {
@@ -756,11 +765,14 @@
         ("/customers", "customers", "Customers",
          '<circle cx="8" cy="7.5" r="2.8"/><path d="M2.8 16.2a5.2 5.2 0 0 1 10.4 0"/><path d="M14 5.2a2.6 2.6 0 0 1 0 4.8"/><path d="M15.4 16.2a4.6 4.6 0 0 0-1.9-3.6"/>',
          []),
+        ("/trials", "trials", "Trials",
+         '<path d="M6 3h8"/><path d="M7 3v4l-3 6.2A2.6 2.6 0 0 0 6.4 17h7.2a2.6 2.6 0 0 0 2.4-3.8L13 7V3"/><path d="M6 12h8"/>',
+         []),
         ("/actions", "actions", "Actions",
          '<path d="M3.5 6.5 5 8l2.5-2.8"/><path d="M3.5 13.5 5 15l2.5-2.8"/><path d="M10 7h7"/><path d="M10 14h7"/>',
          ([("Paying, but gone quiet", "quiet")] if tracking else [])
          + [("Ask for a review", "review"), ("Pitch the annual plan", "annual"),
-            ("Trial watch", "trial")]),
+            ("Recent installs not subscribed", "trial")]),
         ("/reports/funnel", "funnel", "Funnel",
          '<path d="M3 4h14l-5.2 6v5.4L8.2 17v-7z"/>',
          [("Lifecycle funnel", "lifecycle"), ("Activation", "activation")]),

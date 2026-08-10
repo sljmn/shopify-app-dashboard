@@ -46,7 +46,8 @@ def test_every_section_is_present(db):
     payload = _payload(db)
     assert set(payload) == {
         "meta", "definitions", "sync_health", "annotations", "overview",
-        "customers", "actions", "funnel", "churn", "retention", "traffic", "faq",
+        "customers", "trials", "actions", "funnel", "churn", "retention",
+        "traffic", "faq",
     }
 
 

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Trials</h1>
+<p class="sub">Current Shopify subscription trials. They stay outside paying customers and MRR until the trial ends.</p>
+
+{% if not trials.sync_complete %}
+<p class="sync-note">Trial state is not synced for every selected app yet: {{ trials.synced_apps }} of {{ trials.app_count }} apps have a completed snapshot.</p>
+{% endif %}
+
+<div class="cards">
+    <div class="card stat">
+        <div class="label">Current trials</div>
+        <div class="num">{{ trials.count }}</div>
+    </div>
+    <div class="card stat{% if trials.ending_soon %} down{% endif %}">
+        <div class="label">Ending within 7 days</div>
+        <div class="num">{{ trials.ending_soon }}</div>
+    </div>
+    <div class="card stat">
+        <div class="label">MRR if converting</div>
+        <div class="num">${{ "%.2f"|format(trials.converting_mrr) }}</div>
+        {% if trials.known_mrr_count < trials.count %}<div class="sub">Known for {{ trials.known_mrr_count }} of {{ trials.count }} trials</div>{% endif %}
+    </div>
+    <div class="card stat{% if trials.cancel_scheduled %} down{% endif %}">
+        <div class="label">MRR scheduled to cancel</div>
+        <div class="num">${{ "%.2f"|format(trials.cancelling_mrr) }}</div>
+        <div class="sub">{{ trials.cancel_scheduled }} trial{% if trials.cancel_scheduled != 1 %}s{% endif %}</div>
+    </div>
+</div>
+
+<div class="table-card">
+    <table>
+        <thead>
+            <tr>
+                <th>App</th>
+                <th>Merchant</th>
+                <th>Plan</th>
+                <th>Ends</th>
+                <th>Status</th>
+                <th class="num">Potential MRR</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for trial in trials.rows %}
+            <tr>
+                <td>{{ trial.app_name }}</td>
+                <td>
+                    <a href="/customers/{{ trial.shop_gid|urlencode }}?app={{ trial.app_slug|urlencode }}">{{ trial.shop }}</a>
+                    {% if trial.shop_domain %}<div class="sub"><a href="https://{{ trial.shop_domain }}" target="_blank" rel="noopener">{{ trial.shop_domain }}</a></div>{% endif %}
+                </td>
+                <td>{{ trial.item_description or trial.item_handle or "Unknown plan" }}<div class="sub">{{ trial.billing_period or "" }}</div></td>
+                <td>
+                    <span class="trial-deadline{% if trial.days_left <= 7 %} soon{% endif %}">
+                        {% if trial.days_left == 0 %}Today{% elif trial.days_left == 1 %}Tomorrow{% else %}{{ trial.days_left }} days{% endif %}
+                    </span>
+                    <div class="sub">{{ trial.trial_ends_at.strftime("%b %-d, %Y") }}</div>
+                </td>
+                <td>
+                    {% if trial.cancel_at_end_of_cycle %}<span class="pill cancelling">Cancelling</span>{% else %}<span class="pill trial">In trial</span>{% endif %}
+                </td>
+                <td class="num">{% if trial.monthly_amount is not none %}${{ "%.2f"|format(trial.monthly_amount) }}{% else %}<span class="sub">Unknown</span>{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No current trials for the selected apps.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% if trials.oldest_sync %}<p class="sub">Oldest selected app snapshot: {{ trials.oldest_sync.strftime("%b %-d, %Y %H:%M UTC") }}.</p>{% endif %}
+{% endblock %}

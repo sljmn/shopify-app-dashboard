@@ -35,6 +35,7 @@ from app_dashboard.markdown_export import _no_contact, json_default
 from app_dashboard.metrics import METRICS
 from app_dashboard.ops import sync_health
 from app_dashboard.scope import Scope
+from app_dashboard.trials import current_trials
 from app_dashboard.usage import (
     activation_cohorts,
     at_risk_shops,
@@ -122,7 +123,7 @@ def _actions(conn, scope: Scope, selected_app) -> dict:
     return {
         "review_candidates": _no_contact(stats.review_candidates(conn, scope=scope)),
         "annual_upgrade_candidates": stats.annual_upgrade_candidates(conn, scope=scope),
-        "trial_watch": stats.trial_watch(
+        "recent_installs_without_subscription": stats.trial_watch(
             conn, days=LIMITS["trial_days"], scope=scope),
         # Not [] when tracking is off: an empty list here would read as "no
         # paying shop has gone quiet", which is a much better story than the
@@ -235,6 +236,7 @@ def full_export(
         "annotations": anno.recent(conn, scope, limit=LIMITS["verbatims"]),
         "overview": _overview(conn, scope),
         "customers": _customers(conn, scope),
+        "trials": current_trials(conn, scope),
         "actions": _actions(conn, scope, selected_app),
         "funnel": _funnel(conn, scope, selected_app),
         "churn": _churn(conn, scope),

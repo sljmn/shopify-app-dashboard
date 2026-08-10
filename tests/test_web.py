@@ -37,7 +37,7 @@ def ppa_env(monkeypatch, db, test_app):
     owned_tables = (
         "raw_app_events", "app_events", "charges", "subscriptions", "shops",
         "transactions", "sync_state", "usage_events", "ga4_daily", "annotations",
-        "tracking_events",
+        "tracking_events", "active_subscriptions",
     )
     for table in owned_tables:
         db.execute(f"alter table {table} alter column app_id set default {test_app.id}")
@@ -90,7 +90,7 @@ def test_selector_lists_every_app_and_unknown_slugs_404(
     ).status_code == 404
 
 
-@pytest.mark.parametrize("path", ["/", "/customers", "/reports/funnel",
+@pytest.mark.parametrize("path", ["/", "/customers", "/trials", "/reports/funnel",
                                   "/reports/retention", "/reports/traffic"])
 def test_pages_bounce_anonymous_browsers_to_google(db, path):
     """No page content without auth. A browser (no Authorization header) is
@@ -268,7 +268,53 @@ def test_customers_filters_render_results(db):
     assert "Test Shop" in r.text
 
 
-MD_PATHS = ["/index.md", "/customers.md", "/actions.md", "/reports/funnel.md",
+def test_trials_page_and_customer_detail_show_current_trial(db, test_app):
+    db.execute(
+        "insert into shops "
+        "(shop_gid, shop_name, shop_domain, install_state) "
+        "values ('trial-shop', 'Trial Merchant', 'trial.myshopify.com', 'installed')"
+    )
+    db.execute(
+        "insert into subscriptions "
+        "(id, shop_gid, monthly_amount, converted_at) "
+        "values ('trial-sub', 'trial-shop', 29, now())"
+    )
+    db.execute(
+        "insert into active_subscriptions "
+        "(shop_gid, legacy_subscription_id, billing_period, trial_ends_at, "
+        " cancel_at_end_of_cycle, item_description, observed_at) "
+        "values ('trial-shop', 'trial-sub', 'EVERY_30_DAYS', "
+        " now() + interval '5 days', true, 'Growth', now())"
+    )
+    db.execute(
+        "insert into sync_state (source, last_synced_at) "
+        "values ('partner_active_subscriptions', now())"
+    )
+    db.commit()
+
+    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    page = c.get(
+        "/trials?app=test-app", auth=("tester", "suite-only-credential")
+    )
+    assert page.status_code == 200
+    assert "Trial Merchant" in page.text
+    assert "Growth" in page.text
+    assert "$29.00" in page.text
+    assert "Cancelling" in page.text
+    assert 'href="https://trial.myshopify.com"' in page.text
+    assert 'href="/customers/trial-shop?app=test-app"' in page.text
+
+    detail = c.get(
+        "/customers/trial-shop?app=test-app",
+        auth=("tester", "suite-only-credential"),
+    )
+    assert detail.status_code == 200
+    assert "Trial" in detail.text
+    assert "$29.00 MRR after conversion" in detail.text
+    assert "cancellation scheduled" in detail.text
+
+
+MD_PATHS = ["/index.md", "/customers.md", "/trials.md", "/actions.md", "/reports/funnel.md",
             "/reports/churn.md", "/reports/retention.md", "/reports/traffic.md"]
 
 
@@ -1056,7 +1102,7 @@ def test_the_download_button_is_on_the_overview_and_nowhere_else(db):
     pages would offer seven ways to fetch the identical bytes."""
     c = _signed_in()
     assert 'href="/export.json"' in c.get("/").text
-    for path in ("/customers", "/actions", "/reports/funnel", "/reports/churn",
+    for path in ("/customers", "/trials", "/actions", "/reports/funnel", "/reports/churn",
                  "/reports/retention", "/reports/traffic", "/faq"):
         assert 'href="/export.json"' not in c.get(path).text, path
         # Copy MD stays everywhere: each page has its own twin.
