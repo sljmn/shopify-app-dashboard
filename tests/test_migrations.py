@@ -12,14 +12,15 @@ def test_core_tables_exist(db):
     names = {r[0] for r in cur.fetchall()}
     assert {"raw_app_events","charges","app_events","subscriptions",
             "shops","tracking_events","sync_state","schema_migrations",
-            "organizations","apps","operations_state"} <= names
+            "organizations","apps","operations_state",
+            "active_subscriptions"} <= names
 
 
 def test_every_app_owned_table_has_a_required_app_id(db):
     tables = {
         "raw_app_events", "app_events", "charges", "subscriptions", "shops",
         "transactions", "sync_state", "usage_events", "ga4_daily",
-        "annotations", "tracking_events",
+        "annotations", "tracking_events", "active_subscriptions",
     }
     rows = db.execute(
         """
@@ -29,6 +30,34 @@ def test_every_app_owned_table_has_a_required_app_id(db):
         """
     ).fetchall()
     assert {table for table, nullable in rows if nullable == "NO"} == tables
+
+
+def test_active_subscription_is_one_current_snapshot_per_app_shop(db, test_app):
+    db.execute(
+        "insert into shops (app_id, shop_gid, install_state) "
+        "values (%s, 'gid://partners/Shop/1', 'installed')",
+        (test_app.id,),
+    )
+    db.execute(
+        "insert into active_subscriptions "
+        "(app_id, shop_gid, legacy_subscription_id, observed_at) "
+        "values (%s, 'gid://partners/Shop/1', 'gid://shopify/AppSubscription/1', now())",
+        (test_app.id,),
+    )
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        db.execute(
+            "insert into active_subscriptions "
+            "(app_id, shop_gid, legacy_subscription_id, observed_at) "
+            "values (%s, 'gid://partners/Shop/1', 'duplicate', now())",
+            (test_app.id,),
+        )
+
+    db.execute(
+        "delete from shops where app_id=%s and shop_gid='gid://partners/Shop/1'",
+        (test_app.id,),
+    )
+    assert db.execute("select count(*) from active_subscriptions").fetchone()[0] == 0
 
 
 def test_multi_app_migration_refuses_ambiguous_existing_rows(db):

@@ -33,12 +33,12 @@
 - Create: `src/app_dashboard/migrations/012_active_subscriptions.sql`
 - Modify: `tests/test_migrations.py`
 
-- [ ] **Step 1: Add the failing migration assertions**
+- [x] **Step 1: Add the failing migration assertions**
 
 Assert `active_subscriptions` exists, has a required `app_id`, and accepts one
 row per `(app_id, shop_gid)` while rejecting duplicate snapshots for that pair.
 
-- [ ] **Step 2: Run the migration tests**
+- [x] **Step 2: Run the migration tests**
 
 ```bash
 .venv/bin/pytest tests/test_migrations.py -q
@@ -46,7 +46,7 @@ row per `(app_id, shop_gid)` while rejecting duplicate snapshots for that pair.
 
 Expected: failure because the table does not exist.
 
-- [ ] **Step 3: Add migration 012**
+- [x] **Step 3: Add migration 012**
 
 Create the table with this ownership boundary:
 
@@ -71,7 +71,7 @@ create table active_subscriptions (
 
 Add indexes on `trial_ends_at` and `legacy_subscription_id` scoped by app.
 
-- [ ] **Step 4: Run the migration tests and commit**
+- [x] **Step 4: Run the migration tests and commit**
 
 ```bash
 .venv/bin/pytest tests/test_migrations.py -q
@@ -236,4 +236,3 @@ Expected: all tests and invariants pass.
 
 Verify All apps, one selected app, Trials, a trial merchant, free plan display,
 internal merchant links, and storefront links on the running local server.
-
