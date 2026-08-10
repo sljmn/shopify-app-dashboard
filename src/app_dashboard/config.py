@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # inheriting somebody else's allowlist is a standing back door.
     google_allowed_domains: str
 
+    # Versioned catalog of Partner organizations and apps. The singular app
+    # settings below remain while their callers are migrated to AppConfig.
+    apps_config_path: str = "config/apps.yml"
+
     # --- identity ----------------------------------------------------------
     # The Shopify app being measured. The dashboard calls itself
     # "<app_name> Analytics".

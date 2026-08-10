@@ -638,6 +638,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
+    { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -656,6 +657,7 @@ requires-dist = [
     { name = "jinja2" },
     { name = "psycopg", extras = ["binary"] },
     { name = "pydantic-settings" },
+    { name = "pyyaml" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 

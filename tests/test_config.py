@@ -17,6 +17,7 @@ def test_settings_loads_from_env(monkeypatch):
     assert s.database_url == "postgresql://x"
     assert s.poll_interval_minutes == 15
     assert s.poll_overlap_minutes == 60
+    assert s.apps_config_path == "config/apps.yml"
     assert s.dashboard_users_map == {"ada": "pw", "grace": "pw2"}
 
 

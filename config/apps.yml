@@ -1,0 +1,84 @@
+organizations:
+  - partner_org_id: "3508770"
+    name: Newcraft
+    token_env: SHOPIFY_PARTNER_TOKEN_3508770
+    apps:
+      - slug: eu-tax-exemption-easy
+        name: EU Tax Exemption Easy
+        partner_app_id: gid://partners/App/287860785153
+        annual_plan_amounts: ["99.90", "249.90", "499.00"]
+        listing_url: https://apps.shopify.com/tax-exemption
+      - slug: happy-birthday-marketing-app
+        name: Happy Birthday Marketing App
+        partner_app_id: gid://partners/App/236536791041
+        annual_plan_amounts: ["150.00", "400.00"]
+        listing_url: https://apps.shopify.com/happy-birthday-app-new-craft
+      - slug: delete-accounts
+        name: Delete Accounts
+        partner_app_id: gid://partners/App/398765064193
+      - slug: kiezer-quiz-guided-selling
+        name: "Kiezer: Quiz & Guided Selling"
+        partner_app_id: gid://partners/App/282784366593
+      - slug: b2b-portal
+        name: B2B Portal
+        partner_app_id: gid://partners/App/331823972353
+      - slug: cancel-direct
+        name: New craft - Cancel Direct
+        partner_app_id: gid://partners/App/148340867073
+
+  - partner_org_id: "4626496"
+    name: Newcraft - Bol & Onbuy
+    token_env: SHOPIFY_PARTNER_TOKEN_4626496
+    apps:
+      - slug: bol-sync
+        name: Bol Sync
+        partner_app_id: gid://partners/App/299370676225
+        annual_plan_amounts: ["99.90", "290.00"]
+        listing_url: https://apps.shopify.com/bol-sync
+      - slug: onbuy-sync
+        name: Onbuy sync
+        partner_app_id: gid://partners/App/346436075521
+
+  - partner_org_id: "4653231"
+    name: Newcraft - Translate & EORI
+    token_env: SHOPIFY_PARTNER_TOKEN_4653231
+    apps:
+      - slug: image-translate-easy
+        name: Image Translate Easy
+        partner_app_id: gid://partners/App/303500361729
+        annual_plan_amounts: ["90.00"]
+        listing_url: https://apps.shopify.com/image-translate-easy
+      - slug: eori-checker
+        name: EORI Checker
+        partner_app_id: gid://partners/App/305810505729
+        annual_plan_amounts: ["190.00"]
+
+  - partner_org_id: "4742901"
+    name: Newcraft - ISBN
+    token_env: SHOPIFY_PARTNER_TOKEN_4742901
+    apps:
+      - slug: isbn-book-importer
+        name: ISBN Book Importer
+        partner_app_id: gid://partners/App/321327104001
+        annual_plan_amounts: ["100.00"]
+        listing_url: https://apps.shopify.com/books-import-easy
+
+  - partner_org_id: "4821379"
+    name: Newcraft - Boekhouden
+    token_env: SHOPIFY_PARTNER_TOKEN_4821379
+    apps:
+      - slug: acumulus
+        name: Acumulus
+        partner_app_id: gid://partners/App/377592840193
+      - slug: billit
+        name: Billit
+        partner_app_id: gid://partners/App/377592315905
+      - slug: jortt
+        name: Jortt
+        partner_app_id: gid://partners/App/377592086529
+      - slug: e-boekhouden
+        name: e-Boekhouden.nl
+        partner_app_id: gid://partners/App/377592643585
+      - slug: moneybird-sync
+        name: Moneybird Sync
+        partner_app_id: gid://partners/App/338542854145

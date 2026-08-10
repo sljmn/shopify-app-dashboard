@@ -23,6 +23,7 @@ dependencies = [
     "psycopg[binary]",
     "apscheduler",
     "pydantic-settings",
+    "pyyaml",
     "google-analytics-data>=0.23.0",
     "itsdangerous>=2.2.0",
 ]
