@@ -205,24 +205,24 @@ git commit -m "Add an app-scoped current trials workspace"
 **Files:**
 - Modify if needed: `scripts/check_invariants.py`
 
-- [ ] **Step 1: Apply migration 012 to the live local database**
+- [x] **Step 1: Apply migration 012 to the live local database**
 
 ```bash
 DATABASE_URL=postgresql://localhost:5432/app_dashboard_multi_real \
   .venv/bin/python -m app_dashboard.migrate
 ```
 
-- [ ] **Step 2: Run the active-subscription backfill for all configured apps**
+- [x] **Step 2: Run the active-subscription backfill for all configured apps**
 
 Execute the same scheduler function once and report per-app queried, stored,
 removed, trial, and failure counts without printing tokens or raw payloads.
 
-- [ ] **Step 3: Reconcile headline numbers**
+- [x] **Step 3: Reconcile headline numbers**
 
 Compare MRR, paying shops, active installations, and ARPU against Mantle. Explain
 any remaining row-level difference; do not declare parity from rounded totals.
 
-- [ ] **Step 4: Run complete verification**
+- [x] **Step 4: Run complete verification**
 
 ```bash
 .venv/bin/pytest -q
@@ -232,7 +232,7 @@ DATABASE_URL=postgresql://localhost:5432/app_dashboard_multi_real \
 
 Expected: all tests and invariants pass.
 
-- [ ] **Step 5: Browser smoke test and final commit**
+- [x] **Step 5: Browser smoke test and final commit**
 
 Verify All apps, one selected app, Trials, a trial merchant, free plan display,
 internal merchant links, and storefront links on the running local server.

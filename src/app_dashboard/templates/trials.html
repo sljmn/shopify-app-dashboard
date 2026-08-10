@@ -51,7 +51,7 @@
                 <td>{{ trial.item_description or trial.item_handle or "Unknown plan" }}<div class="sub">{{ trial.billing_period or "" }}</div></td>
                 <td>
                     <span class="trial-deadline{% if trial.days_left <= 7 %} soon{% endif %}">
-                        {% if trial.days_left == 0 %}Today{% elif trial.days_left == 1 %}Tomorrow{% else %}{{ trial.days_left }} days{% endif %}
+                        {% if trial.hours_left <= 24 %}{{ trial.hours_left }} hours{% else %}{{ trial.days_left }} days{% endif %}
                     </span>
                     <div class="sub">{{ trial.trial_ends_at.strftime("%b %-d, %Y") }}</div>
                 </td>

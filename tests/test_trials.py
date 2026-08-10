@@ -48,7 +48,7 @@ def test_current_trials_are_scoped_and_join_the_exact_subscription(
             "values (%s, %s, %s, %s, '2026-08-01Z')",
             (app_id, sub_id, gid, amount),
         )
-    _trial(db, test_app.id, "soon", "sub-soon", "2026-08-13Z", cancel=True)
+    _trial(db, test_app.id, "soon", "sub-soon", "2026-08-11T20:00:00Z", cancel=True)
     _trial(db, test_app.id, "later", "sub-later", "2026-08-25Z")
     _trial(db, test_app.id, "expired", "sub-expired", "2026-08-10Z")
     _trial(db, other.id, "other", "sub-other", "2026-08-20Z")
@@ -63,7 +63,8 @@ def test_current_trials_are_scoped_and_join_the_exact_subscription(
     report = current_trials(db, Scope.for_app(test_app.id), now=NOW)
 
     assert [row["shop"] for row in report["rows"]] == ["Soon Shop", "Later Shop"]
-    assert report["rows"][0]["days_left"] == 2
+    assert report["rows"][0]["hours_left"] == 8
+    assert report["rows"][0]["days_left"] == 1
     assert report["count"] == 2
     assert report["ending_soon"] == 1
     assert report["cancel_scheduled"] == 1

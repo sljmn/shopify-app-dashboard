@@ -56,7 +56,8 @@ def current_trials(
 
     for row in rows:
         seconds_left = (row["trial_ends_at"] - now).total_seconds()
-        row["days_left"] = max(0, ceil(seconds_left / 86400))
+        row["hours_left"] = max(1, ceil(seconds_left / 3600))
+        row["days_left"] = max(1, ceil(seconds_left / 86400))
 
     app_predicate = "true" if scope.app_id is None else "a.id = %s"
     app_params = () if scope.app_id is None else (scope.app_id,)

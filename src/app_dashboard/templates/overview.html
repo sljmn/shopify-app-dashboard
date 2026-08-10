@@ -18,7 +18,7 @@
     {{ ui.stat("active_mrr", "$" ~ "%.2f"|format(stats.active_mrr),
                compare=comparison.active_mrr) }}
     {{ ui.stat("paying", stats.paying,
-               extra="/ $" ~ "%.0f"|format(stats.arpu) ~ " ARPU",
+               extra="/ $" ~ "%.2f"|format(stats.arpu) ~ " ARPU",
                compare=comparison.paying) }}
     {{ ui.stat("installs_30d", stats.installs_30d, tone="up",
                compare=comparison.installs_30d) }}
