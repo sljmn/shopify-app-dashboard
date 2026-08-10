@@ -61,7 +61,7 @@ organizations:
       - slug: isbn-book-importer
         name: ISBN Book Importer
         partner_app_id: gid://partners/App/321327104001
-        annual_plan_amounts: ["100.00"]
+        annual_plan_amounts: ["100.00", "390.00"]
         listing_url: https://apps.shopify.com/books-import-easy
 
   - partner_org_id: "4821379"
