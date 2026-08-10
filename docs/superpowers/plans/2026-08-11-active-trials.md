@@ -89,30 +89,30 @@ git commit -m "Store current Shopify subscription snapshots"
 - Create: `tests/test_active_subscriptions.py`
 - Modify: `tests/test_scheduler.py`
 
-- [ ] **Step 1: Add failing Partner API mapping tests**
+- [x] **Step 1: Add failing Partner API mapping tests**
 
 Cover Shopify-GID conversion, a populated snapshot, `nil` subscription, and
 GraphQL errors. The mapped result must expose `trial_ends_at`,
 `cancel_at_end_of_cycle`, `legacy_subscription_id`, plan metadata, and payload.
 
-- [ ] **Step 2: Add failing refresh tests**
+- [x] **Step 2: Add failing refresh tests**
 
 Insert installed shops, return one active snapshot and one `nil`, and prove the
 refresh upserts the first, deletes the stale second, records its own sync-state
 source, and does not query uninstalled shops.
 
-- [ ] **Step 3: Implement query and refresh**
+- [x] **Step 3: Implement query and refresh**
 
 Add `fetch_active_subscription(client, *, app_id, shop_id) -> dict | None`.
 Implement `sync_active_subscriptions(conn, client, app, sleep=time.sleep)` with
 bound SQL parameters, sequential requests, and the existing throttle.
 
-- [ ] **Step 4: Register an independent six-hour scheduler job**
+- [x] **Step 4: Register an independent six-hour scheduler job**
 
 Use the existing `run_all_apps` isolation wrapper. Delay the first scheduled
 run five minutes so boot-time lifecycle and transaction refreshes finish first.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 ```bash
 .venv/bin/pytest tests/test_partner_api.py tests/test_active_subscriptions.py tests/test_scheduler.py -q

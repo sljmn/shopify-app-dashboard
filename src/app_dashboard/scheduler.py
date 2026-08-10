@@ -1,10 +1,11 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app_dashboard.catalog import AppConfig
+from app_dashboard.active_subscriptions import sync_active_subscriptions
 from app_dashboard.digest import send_weekly_digest
 from app_dashboard.ops import check_stale_sync
 from app_dashboard.partner_api import PartnerClient
@@ -69,6 +70,24 @@ def run_transactions_job(conn_factory, apps: list[AppConfig], settings) -> list[
     install/uninstall alerts run on."""
     results = run_all_apps(conn_factory, apps, settings, _sync_one_transactions)
     logger.info("all transaction syncs completed: %s", results)
+    return results
+
+
+def _sync_one_active_subscriptions(conn_factory, client, app, settings) -> dict:
+    conn = conn_factory()
+    try:
+        return sync_active_subscriptions(conn, client, app)
+    finally:
+        conn.close()
+
+
+def run_active_subscriptions_job(
+    conn_factory, apps: list[AppConfig], settings
+) -> list[dict]:
+    results = run_all_apps(
+        conn_factory, apps, settings, _sync_one_active_subscriptions
+    )
+    logger.info("all active subscription syncs completed: %s", results)
     return results
 
 
@@ -140,6 +159,16 @@ def start_scheduler(
         "interval",
         hours=1,
         next_run_time=datetime.now(),
+    )
+    # Shopify exposes trial and scheduled-cancellation state only through a
+    # per-shop query. Refresh independently so hundreds of calls never delay
+    # the 15-minute lifecycle feed.
+    scheduler.add_job(
+        lambda: run_active_subscriptions_job(conn_factory, apps, settings),
+        "interval",
+        hours=6,
+        next_run_time=datetime.now() + timedelta(minutes=5),
+        id="active_subscriptions",
     )
     # GA4 aggregates move slowly and the API has a daily token quota, so hourly
     # is plenty; the first run still happens at boot.

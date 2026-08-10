@@ -1,7 +1,12 @@
 import httpx
 import pytest
 
-from app_dashboard.partner_api import fetch_app_events, fetch_transactions, PartnerClient
+from app_dashboard.partner_api import (
+    PartnerClient,
+    fetch_active_subscription,
+    fetch_app_events,
+    fetch_transactions,
+)
 
 
 def _client(payload, status=200, seen=None):
@@ -50,6 +55,58 @@ def test_graphql_errors_raise_instead_of_keyerror():
     payload = {"data": None, "errors": [{"message": "Invalid API version"}]}
     with pytest.raises(RuntimeError, match="Invalid API version"):
         fetch_app_events(_client(payload), app_id="2")
+
+
+def test_fetch_active_subscription_converts_gids_and_maps_current_state():
+    seen = []
+    payload = {"data": {"activeSubscription": {
+        "billingPeriod": "EVERY_30_DAYS",
+        "trialEndsAt": "2026-08-20T12:00:00Z",
+        "cancelAtEndOfCycle": True,
+        "legacySubscriptionId": "gid://shopify/AppSubscription/9",
+        "items": [{
+            "handle": "starter",
+            "description": "Starter",
+            "price": {"active": True, "currency": "USD"},
+        }],
+    }}}
+
+    snapshot = fetch_active_subscription(
+        _client(payload, seen=seen),
+        app_id="gid://partners/App/2",
+        shop_id="gid://partners/Shop/1",
+    )
+
+    assert '"appId":"gid://shopify/App/2"' in seen[0]
+    assert '"shopId":"gid://shopify/Shop/1"' in seen[0]
+    assert snapshot == {
+        "legacy_subscription_id": "gid://shopify/AppSubscription/9",
+        "billing_period": "EVERY_30_DAYS",
+        "trial_ends_at": "2026-08-20T12:00:00Z",
+        "cancel_at_end_of_cycle": True,
+        "item_handle": "starter",
+        "item_description": "Starter",
+        "currency_code": "USD",
+        "payload": payload["data"]["activeSubscription"],
+    }
+
+
+def test_fetch_active_subscription_preserves_a_nil_snapshot():
+    assert fetch_active_subscription(
+        _client({"data": {"activeSubscription": None}}),
+        app_id="gid://partners/App/2",
+        shop_id="gid://partners/Shop/1",
+    ) is None
+
+
+def test_active_subscription_graphql_errors_raise():
+    payload = {"data": None, "errors": [{"message": "Access denied"}]}
+    with pytest.raises(RuntimeError, match="Access denied"):
+        fetch_active_subscription(
+            _client(payload),
+            app_id="gid://partners/App/2",
+            shop_id="gid://partners/Shop/1",
+        )
 
 
 def _transactions(*nodes, has_next=False):

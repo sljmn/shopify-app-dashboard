@@ -52,6 +52,25 @@ query AppEvents($appId: ID!, $after: String) {{
 """
 
 
+# Current subscription state is not part of app.events. In particular,
+# trialEndsAt and cancelAtEndOfCycle only exist on this per-shop query.
+_ACTIVE_SUBSCRIPTION_QUERY = """
+query ActiveSubscription($appId: ID!, $shopId: ID!) {
+  activeSubscription(appId: $appId, shopId: $shopId) {
+    billingPeriod
+    trialEndsAt
+    cancelAtEndOfCycle
+    legacySubscriptionId
+    items {
+      handle
+      description
+      price { active currency }
+    }
+  }
+}
+"""
+
+
 # The money feed. A different root query from `app.events`, and the only source
 # of what was actually collected: events describe subscription state, so refunds,
 # credits and adjustments never appear in them at all.
@@ -124,6 +143,44 @@ class PartnerClient:
             headers={"X-Shopify-Access-Token": token},
             transport=transport,
         )
+
+
+def _shopify_gid(partner_gid: str) -> str:
+    return partner_gid.replace("gid://partners/", "gid://shopify/", 1)
+
+
+def fetch_active_subscription(
+    client: PartnerClient, *, app_id: str, shop_id: str
+) -> dict | None:
+    response = client.http.post(
+        "",
+        json={
+            "query": _ACTIVE_SUBSCRIPTION_QUERY,
+            "variables": {
+                "appId": _shopify_gid(app_id),
+                "shopId": _shopify_gid(shop_id),
+            },
+        },
+    )
+    response.raise_for_status()
+    body = response.json()
+    if body.get("errors"):
+        raise RuntimeError(f"Partner API GraphQL errors: {body['errors']}")
+    node = body["data"]["activeSubscription"]
+    if node is None:
+        return None
+    item = (node.get("items") or [{}])[0]
+    price = item.get("price") or {}
+    return {
+        "legacy_subscription_id": node.get("legacySubscriptionId"),
+        "billing_period": node.get("billingPeriod"),
+        "trial_ends_at": node.get("trialEndsAt"),
+        "cancel_at_end_of_cycle": bool(node.get("cancelAtEndOfCycle")),
+        "item_handle": item.get("handle"),
+        "item_description": item.get("description"),
+        "currency_code": price.get("currency"),
+        "payload": node,
+    }
 
 
 def fetch_app_events(

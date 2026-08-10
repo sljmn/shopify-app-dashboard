@@ -1,6 +1,10 @@
 from dataclasses import replace
 
-from app_dashboard.scheduler import run_all_apps, run_sync_job
+from app_dashboard.scheduler import (
+    run_active_subscriptions_job,
+    run_all_apps,
+    run_sync_job,
+)
 
 
 class FakeConn:
@@ -28,6 +32,18 @@ def test_run_sync_job_closes_connection_even_if_sync_raises(monkeypatch, test_ap
     result = run_sync_job(lambda: conn, apps=[test_app], settings=object())
     assert conn.closed_count == 1
     assert result == [{"app": test_app.slug, "ok": False, "error": "sync failed"}]
+
+
+def test_active_subscription_job_closes_each_app_connection(monkeypatch, test_app):
+    conn = FakeConn()
+    monkeypatch.setattr(
+        "app_dashboard.scheduler.sync_active_subscriptions",
+        lambda *args, **kwargs: {"queried": 0},
+    )
+
+    run_active_subscriptions_job(lambda: conn, [test_app], object())
+
+    assert conn.closed_count == 1
 
 
 def test_all_apps_continue_after_failure_and_share_org_clients(
@@ -101,4 +117,10 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, t
     assert digest[0]["day_of_week"] == "tue"
     assert digest[0]["hour"] == 7 and digest[0]["minute"] == 0
     assert digest[0]["timezone"] == "Europe/Berlin"
+    active_subscriptions = [
+        kw for trigger, kw in fake.jobs
+        if trigger == "interval" and kw.get("id") == "active_subscriptions"
+    ]
+    assert len(active_subscriptions) == 1
+    assert active_subscriptions[0]["hours"] == 6
     assert started["yes"] is True
