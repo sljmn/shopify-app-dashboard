@@ -21,12 +21,12 @@ CHURN_TYPES = {
 }
 
 
-def _get_charge(conn: psycopg.Connection, charge_gid: str) -> dict | None:
+def _get_charge(conn: psycopg.Connection, app_id: int, charge_gid: str) -> dict | None:
     row = conn.execute(
         """select amount, currency_code, subscription_id, plan_interval, plan_amount, flex_billing,
                   test
-           from charges where gid = %s""",
-        (charge_gid,),
+           from charges where app_id = %s and gid = %s""",
+        (app_id, charge_gid),
     ).fetchone()
     if row is None:
         # Charges are upserted from the events feed itself (upsert_charges runs
@@ -53,17 +53,17 @@ def _get_charge(conn: psycopg.Connection, charge_gid: str) -> dict | None:
     }
 
 
-def _insert_event(conn, shop_gid, platform_event_id, clean_type, occurred_at,
+def _insert_event(conn, app_id, shop_gid, platform_event_id, clean_type, occurred_at,
                    net_change, charge=None, previous_subscription_id=None,
                    uninstall_reason=None, uninstall_description=None):
     conn.execute(
         """
         insert into app_events
-            (platform_event_id, type, occurred_at, net_change, plan_amount, plan_interval,
+            (app_id, platform_event_id, type, occurred_at, net_change, plan_amount, plan_interval,
              plan_currency_code, previous_subscription_id, shop_gid,
              uninstall_reason, uninstall_description)
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        on conflict (platform_event_id) do update set
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        on conflict (app_id, platform_event_id) do update set
             -- Only the churn-feedback columns refresh on replay, so a widened
             -- query backfills history. Everything else stays immutable, and the
             -- row keeps its id, which derive_all_dirty's high-water mark needs.
@@ -73,7 +73,7 @@ def _insert_event(conn, shop_gid, platform_event_id, clean_type, occurred_at,
                                              app_events.uninstall_description)
         """,
         (
-            platform_event_id, clean_type, occurred_at, net_change,
+            app_id, platform_event_id, clean_type, occurred_at, net_change,
             charge["plan_amount"] if charge else None,
             charge["plan_interval"] if charge else None,
             charge["currency_code"] if charge else None,
@@ -85,7 +85,7 @@ def _insert_event(conn, shop_gid, platform_event_id, clean_type, occurred_at,
     )
 
 
-def _upsert_subscription(conn, sub_id, shop_gid, monthly_amount=None,
+def _upsert_subscription(conn, app_id, sub_id, shop_gid, monthly_amount=None,
                           converted_at=None, churned_at=None, clear_churn=False):
     """Upsert one subscription's state.
 
@@ -98,20 +98,22 @@ def _upsert_subscription(conn, sub_id, shop_gid, monthly_amount=None,
     """
     conn.execute(
         """
-        insert into subscriptions (id, shop_gid, monthly_amount, converted_at, churned_at)
-        values (%s, %s, %s, %s, %s)
-        on conflict (id) do update set
+        insert into subscriptions (app_id, id, shop_gid, monthly_amount, converted_at, churned_at)
+        values (%s, %s, %s, %s, %s, %s)
+        on conflict (app_id, id) do update set
             shop_gid = excluded.shop_gid,
             monthly_amount = coalesce(excluded.monthly_amount, subscriptions.monthly_amount),
             converted_at = coalesce(excluded.converted_at, subscriptions.converted_at),
             churned_at = case when %s then null
                               else coalesce(excluded.churned_at, subscriptions.churned_at) end
         """,
-        (sub_id, shop_gid, monthly_amount, converted_at, churned_at, clear_churn),
+        (app_id, sub_id, shop_gid, monthly_amount, converted_at, churned_at, clear_churn),
     )
 
 
-def derive_installation(conn: psycopg.Connection, shop_gid: str) -> list[str]:
+def derive_installation(
+    conn: psycopg.Connection, app_id: int, shop_gid: str
+) -> list[str]:
     """Replay one install's raw events in order, upsert clean app_events + subscriptions.
 
     Re-running is idempotent: app_events insert is keyed on platform_event_id
@@ -126,10 +128,10 @@ def derive_installation(conn: psycopg.Connection, shop_gid: str) -> list[str]:
                payload->>'reason' as uninstall_reason,
                payload->>'description' as uninstall_description
         from raw_app_events
-        where shop_gid = %s
+        where app_id = %s and shop_gid = %s
         order by occurred_at, id
         """,
-        (shop_gid,),
+        (app_id, shop_gid),
     ).fetchall()
 
     # What this shop is paying, per subscription id, not as one running total.
@@ -156,17 +158,17 @@ def derive_installation(conn: psycopg.Connection, shop_gid: str) -> list[str]:
          uninstall_reason, uninstall_description) in rows:
         if raw_type in INSTALL_TYPES:
             clean_type = INSTALL_TYPES[raw_type]
-            _insert_event(conn, shop_gid, raw_id, clean_type, occurred_at, Decimal("0"))
-            upsert_shop_state(conn, shop_gid, install_state="installed", at=occurred_at,
+            _insert_event(conn, app_id, shop_gid, raw_id, clean_type, occurred_at, Decimal("0"))
+            upsert_shop_state(conn, app_id, shop_gid, install_state="installed", at=occurred_at,
                               shop_domain=shop_domain, shop_name=shop_name)
             emitted.append(clean_type)
 
         elif raw_type in UNINSTALL_TYPES:
             net_change = -total()
-            _insert_event(conn, shop_gid, raw_id, "uninstalled", occurred_at, net_change,
+            _insert_event(conn, app_id, shop_gid, raw_id, "uninstalled", occurred_at, net_change,
                           uninstall_reason=uninstall_reason,
                           uninstall_description=uninstall_description)
-            upsert_shop_state(conn, shop_gid, install_state="uninstalled", at=occurred_at,
+            upsert_shop_state(conn, app_id, shop_gid, install_state="uninstalled", at=occurred_at,
                               shop_domain=shop_domain, shop_name=shop_name,
                               uninstall_reason=uninstall_reason,
                               uninstall_description=uninstall_description)
@@ -180,11 +182,11 @@ def derive_installation(conn: psycopg.Connection, shop_gid: str) -> list[str]:
             # (which does join, on install_state) had already let it go. Two
             # tiles, one dataset, different answers.
             for sub_id in live:
-                _upsert_subscription(conn, sub_id, shop_gid, churned_at=occurred_at)
+                _upsert_subscription(conn, app_id, sub_id, shop_gid, churned_at=occurred_at)
             live.clear()
 
         elif raw_type in ACTIVATION_TYPES:
-            charge = _get_charge(conn, charge_gid)
+            charge = _get_charge(conn, app_id, charge_gid)
             if charge is None:
                 continue
             new_monthly = charge["monthly"]
@@ -213,27 +215,27 @@ def derive_installation(conn: psycopg.Connection, shop_gid: str) -> list[str]:
             # mrr_movements, retention_cohorts and paying_at, all of which filter
             # on converted_at -- so the MRR chart read below the MRR tile.
             _upsert_subscription(
-                conn, sub_id, shop_gid, monthly_amount=new_monthly,
+                conn, app_id, sub_id, shop_gid, monthly_amount=new_monthly,
                 converted_at=None if sub_id in converted else occurred_at,
                 clear_churn=True,
             )
             converted.add(sub_id)
 
-            _insert_event(conn, shop_gid, raw_id, clean_type, occurred_at, net_change,
+            _insert_event(conn, app_id, shop_gid, raw_id, clean_type, occurred_at, net_change,
                           charge=charge, previous_subscription_id=previous_subscription_id)
             emitted.append(clean_type)
             most_recent_subscription = sub_id
 
         elif raw_type in CHURN_TYPES:
-            charge = _get_charge(conn, charge_gid)
+            charge = _get_charge(conn, app_id, charge_gid)
             if charge is None:
                 continue
             # Only this subscription stops. Cancelling the subscription a plan
             # change superseded must not zero out its replacement.
             net_change = -live.pop(charge["subscription_id"], Decimal("0"))
-            _insert_event(conn, shop_gid, raw_id, "unsubscribed", occurred_at,
+            _insert_event(conn, app_id, shop_gid, raw_id, "unsubscribed", occurred_at,
                           net_change, charge=charge)
-            _upsert_subscription(conn, charge["subscription_id"], shop_gid,
+            _upsert_subscription(conn, app_id, charge["subscription_id"], shop_gid,
                                   churned_at=occurred_at)
             emitted.append("unsubscribed")
 
@@ -241,12 +243,15 @@ def derive_installation(conn: psycopg.Connection, shop_gid: str) -> list[str]:
     return emitted
 
 
-def derive_all_dirty(conn: psycopg.Connection, since) -> dict[str, int]:
+def derive_all_dirty(
+    conn: psycopg.Connection, app_id: int, since
+) -> dict[str, int]:
     installs = [
         row[0]
         for row in conn.execute(
-            "select distinct shop_gid from raw_app_events where ingested_at >= %s",
-            (since,),
+            """select distinct shop_gid from raw_app_events
+               where app_id = %s and ingested_at >= %s""",
+            (app_id, since),
         ).fetchall()
     ]
     # Snapshot the high-water mark before replaying: derive_installation
@@ -255,32 +260,39 @@ def derive_all_dirty(conn: psycopg.Connection, since) -> dict[str, int]:
     # already recorded on a prior run. Only rows with a genuinely new
     # (post-snapshot) id are new app_events, since ON CONFLICT (platform_event_id)
     # DO NOTHING means already-seen events never get a new id.
-    (snapshot,) = conn.execute("select coalesce(max(id), 0) from app_events").fetchone()
+    (snapshot,) = conn.execute(
+        "select coalesce(max(id), 0) from app_events where app_id = %s", (app_id,)
+    ).fetchone()
 
     for shop_gid in installs:
-        derive_installation(conn, shop_gid)
+        derive_installation(conn, app_id, shop_gid)
 
     counts: dict[str, int] = {
         row[0]: row[1]
         for row in conn.execute(
-            "select type, count(*) from app_events where id > %s group by type",
-            (snapshot,),
+            """select type, count(*) from app_events
+               where app_id = %s and id > %s group by type""",
+            (app_id, snapshot),
         ).fetchall()
     }
     return counts
 
 
-def derive_installations(conn: psycopg.Connection, ids) -> dict[str, int]:
+def derive_installations(
+    conn: psycopg.Connection, app_id: int, ids
+) -> dict[str, int]:
     """Derive an explicit set of installs (e.g. those touched by the current
     sync), isolating failures so one bad install can't abort the batch --
     unlike derive_all_dirty's plain loop, a raise here is caught and logged
     per-install so the rest still land and the sync cursor keeps advancing.
     """
-    (snapshot,) = conn.execute("select coalesce(max(id), 0) from app_events").fetchone()
+    (snapshot,) = conn.execute(
+        "select coalesce(max(id), 0) from app_events where app_id = %s", (app_id,)
+    ).fetchone()
 
     for shop_gid in ids:
         try:
-            derive_installation(conn, shop_gid)
+            derive_installation(conn, app_id, shop_gid)
         except Exception:
             logger.warning(
                 "derive_installation failed for %r; skipping", shop_gid, exc_info=True
@@ -289,8 +301,9 @@ def derive_installations(conn: psycopg.Connection, ids) -> dict[str, int]:
     counts: dict[str, int] = {
         row[0]: row[1]
         for row in conn.execute(
-            "select type, count(*) from app_events where id > %s group by type",
-            (snapshot,),
+            """select type, count(*) from app_events
+               where app_id = %s and id > %s group by type""",
+            (app_id, snapshot),
         ).fetchall()
     }
     return counts

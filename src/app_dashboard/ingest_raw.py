@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import psycopg
 
-from app_dashboard.config import get_settings
+from app_dashboard.catalog import AppConfig
 
 # AppSubscription carries no billing-interval field (confirmed by introspecting
 # the Partner API 2026-08: it exposes only amount/billingOn/id/name/test), so the
@@ -17,12 +17,13 @@ from app_dashboard.config import get_settings
 DEFAULT_PLAN_INTERVAL = "EVERY_30_DAYS"
 
 
-def plan_interval_for(amount) -> str:
-    annual = get_settings().annual_plan_amounts_set
-    return "ANNUAL" if Decimal(str(amount)) in annual else DEFAULT_PLAN_INTERVAL
+def plan_interval_for(amount, annual_amounts: frozenset[Decimal]) -> str:
+    return "ANNUAL" if Decimal(str(amount)) in annual_amounts else DEFAULT_PLAN_INTERVAL
 
 
-def upsert_raw_events(conn: psycopg.Connection, events: list[dict]) -> int:
+def upsert_raw_events(
+    conn: psycopg.Connection, app: AppConfig, events: list[dict]
+) -> int:
     if not events:
         return 0
     inserted = 0
@@ -31,14 +32,14 @@ def upsert_raw_events(conn: psycopg.Connection, events: list[dict]) -> int:
             cur.execute(
                 """
                 insert into raw_app_events
-                    (id, type, occurred_at, shop_gid, charge_gid, payload)
-                values (%(id)s, %(type)s, %(occurred_at)s, %(shop_gid)s,
+                    (app_id, id, type, occurred_at, shop_gid, charge_gid, payload)
+                values (%(app_id)s, %(id)s, %(type)s, %(occurred_at)s, %(shop_gid)s,
                         %(charge_gid)s, %(payload)s)
-                on conflict (shop_gid, type, occurred_at, coalesce_charge)
+                on conflict (app_id, shop_gid, type, occurred_at, coalesce_charge)
                 do update set payload = excluded.payload
                 returning (xmax = 0) as was_inserted
                 """,
-                {**e, "payload": json.dumps(e.get("payload") or {})},
+                {**e, "app_id": app.id, "payload": json.dumps(e.get("payload") or {})},
             )
             # Refreshing payload on conflict lets a widened GraphQL query
             # backfill fields we didn't originally ask for (uninstall reasons
@@ -51,7 +52,9 @@ def upsert_raw_events(conn: psycopg.Connection, events: list[dict]) -> int:
     return inserted
 
 
-def upsert_transactions(conn: psycopg.Connection, rows: list[dict]) -> int:
+def upsert_transactions(
+    conn: psycopg.Connection, app: AppConfig, rows: list[dict]
+) -> int:
     """Store the money feed, keyed on the Partner API's own transaction id.
 
     Amounts are refreshed on conflict rather than left alone: Shopify settles a
@@ -68,19 +71,19 @@ def upsert_transactions(conn: psycopg.Connection, rows: list[dict]) -> int:
             cur.execute(
                 """
                 insert into transactions
-                    (id, type, created_at, shop_gid, charge_gid, billing_interval,
+                    (app_id, id, type, created_at, shop_gid, charge_gid, billing_interval,
                      gross_amount, shopify_fee, net_amount, currency_code)
-                values (%(id)s, %(type)s, %(created_at)s, %(shop_gid)s, %(charge_gid)s,
+                values (%(app_id)s, %(id)s, %(type)s, %(created_at)s, %(shop_gid)s, %(charge_gid)s,
                         %(billing_interval)s, %(gross_amount)s, %(shopify_fee)s,
                         %(net_amount)s, %(currency_code)s)
-                on conflict (id) do update set
+                on conflict (app_id, id) do update set
                     gross_amount = excluded.gross_amount,
                     shopify_fee = excluded.shopify_fee,
                     net_amount = excluded.net_amount,
                     billing_interval = excluded.billing_interval
                 returning (xmax = 0) as was_inserted
                 """,
-                row,
+                {**row, "app_id": app.id},
             )
             if cur.fetchone()[0]:
                 inserted += 1
@@ -88,7 +91,9 @@ def upsert_transactions(conn: psycopg.Connection, rows: list[dict]) -> int:
     return inserted
 
 
-def upsert_charges(conn: psycopg.Connection, events: list[dict]) -> int:
+def upsert_charges(
+    conn: psycopg.Connection, app: AppConfig, events: list[dict]
+) -> int:
     """Upsert charge rows from the AppSubscription objects inline on
     subscription events. The AppSubscription IS the subscription, so its gid
     doubles as subscription_id. plan_interval is inferred from the amount (see
@@ -105,10 +110,10 @@ def upsert_charges(conn: psycopg.Connection, events: list[dict]) -> int:
             cur.execute(
                 """
                 insert into charges
-                    (gid, amount, currency_code, subscription_id,
+                    (app_id, gid, amount, currency_code, subscription_id,
                      plan_interval, plan_amount, test)
-                values (%s, %s, %s, %s, %s, %s, %s)
-                on conflict (gid) do update set
+                values (%s, %s, %s, %s, %s, %s, %s, %s)
+                on conflict (app_id, gid) do update set
                     amount = excluded.amount,
                     currency_code = excluded.currency_code,
                     plan_interval = excluded.plan_interval,
@@ -116,11 +121,12 @@ def upsert_charges(conn: psycopg.Connection, events: list[dict]) -> int:
                     test = excluded.test
                 """,
                 (
+                    app.id,
                     charge["id"],
                     amount,
                     charge["amount"]["currencyCode"],
                     charge["id"],
-                    plan_interval_for(amount),
+                    plan_interval_for(amount, app.annual_plan_amounts),
                     amount,
                     bool(charge.get("test")),
                 ),

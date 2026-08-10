@@ -1,7 +1,7 @@
 import psycopg
 
 
-def upsert_shop_state(conn: psycopg.Connection, shop_gid: str, *,
+def upsert_shop_state(conn: psycopg.Connection, app_id: int, shop_gid: str, *,
                        install_state: str, at, shop_domain=None, shop_name=None,
                        plan_monthly=None, uninstall_reason=None,
                        uninstall_description=None) -> None:
@@ -16,11 +16,11 @@ def upsert_shop_state(conn: psycopg.Connection, shop_gid: str, *,
     uninstalled_at = at if install_state == "uninstalled" else None
     conn.execute(
         """
-        insert into shops (shop_gid, shop_domain, shop_name, install_state,
+        insert into shops (app_id, shop_gid, shop_domain, shop_name, install_state,
                            installed_at, uninstalled_at,
                            uninstall_reason, uninstall_description)
-        values (%s, %s, %s, %s, %s, %s, %s, %s)
-        on conflict (shop_gid) do update set
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        on conflict (app_id, shop_gid) do update set
             shop_domain = coalesce(shops.shop_domain, excluded.shop_domain),
             shop_name = coalesce(shops.shop_name, excluded.shop_name),
             install_state = excluded.install_state,
@@ -40,6 +40,6 @@ def upsert_shop_state(conn: psycopg.Connection, shop_gid: str, *,
                                          else shops.uninstall_description end,
             updated_at = now()
         """,
-        (shop_gid, shop_domain, shop_name, install_state, at, uninstalled_at,
+        (app_id, shop_gid, shop_domain, shop_name, install_state, at, uninstalled_at,
          uninstall_reason, uninstall_description),
     )

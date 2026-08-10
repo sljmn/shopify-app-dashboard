@@ -1,6 +1,8 @@
 import os
+from decimal import Decimal
 
 import pytest
+from psycopg.types.json import Jsonb
 
 # Settings has required fields, and app_dashboard.web builds the app at import time, so
 # without these pytest fails during *collection* rather than in a test. Set
@@ -30,6 +32,7 @@ os.environ.update({
 })
 
 from app_dashboard.config import get_settings  # noqa: E402
+from app_dashboard.catalog import AppConfig  # noqa: E402
 from app_dashboard.db import connect, run_migrations  # noqa: E402
 
 
@@ -59,3 +62,70 @@ def db():
         conn.execute(f"truncate {', '.join(tables)} restart identity cascade")
     yield conn
     conn.close()
+
+
+@pytest.fixture
+def app_factory(db):
+    sequence = 0
+
+    def create(
+        *,
+        slug: str | None = None,
+        name: str | None = None,
+        annual_plan_amounts: frozenset[Decimal] = frozenset({Decimal("190.00")}),
+    ) -> AppConfig:
+        nonlocal sequence
+        sequence += 1
+        slug = slug or f"app-{sequence}"
+        name = name or f"App {sequence}"
+        partner_org_id = f"test-org-{sequence}"
+        organization_id = db.execute(
+            """
+            insert into organizations (partner_org_id, name, token_env)
+            values (%s, %s, %s) returning id
+            """,
+            (partner_org_id, f"Organization {sequence}", f"TOKEN_{sequence}"),
+        ).fetchone()[0]
+        partner_app_id = f"gid://partners/App/{sequence}"
+        app_id = db.execute(
+            """
+            insert into apps (
+                organization_id, partner_app_id, slug, name, annual_plan_amounts
+            ) values (%s, %s, %s, %s, %s) returning id
+            """,
+            (
+                organization_id,
+                partner_app_id,
+                slug,
+                name,
+                Jsonb([str(value) for value in sorted(annual_plan_amounts)]),
+            ),
+        ).fetchone()[0]
+        return AppConfig(
+            id=app_id,
+            organization_id=organization_id,
+            slug=slug,
+            name=name,
+            partner_app_id=partner_app_id,
+            partner_org_id=partner_org_id,
+            organization_name=f"Organization {sequence}",
+            partner_token_env=f"TOKEN_{sequence}",
+            partner_token=f"token-{sequence}",
+            annual_plan_amounts=annual_plan_amounts,
+            listing_url=None,
+            usage_token_env=None,
+            usage_token=None,
+            usage_event_types=frozenset(),
+            usage_activation_event=None,
+            usage_live_event=None,
+            ga4_property_id=None,
+            ga4_credentials_env=None,
+            ga4_credentials_json=None,
+        )
+
+    return create
+
+
+@pytest.fixture
+def test_app(app_factory):
+    return app_factory(slug="test-app", name="Test App")
