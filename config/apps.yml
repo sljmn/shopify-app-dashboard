@@ -22,6 +22,7 @@ organizations:
       - slug: b2b-portal
         name: B2B Portal
         partner_app_id: gid://partners/App/331823972353
+        annual_plan_amounts: ["150.00"]
       - slug: cancel-direct
         name: New craft - Cancel Direct
         partner_app_id: gid://partners/App/148340867073

@@ -33,6 +33,8 @@ def test_repository_catalog_contains_all_sixteen_apps():
     assert tax.annual_plan_amounts == {
         Decimal("99.90"), Decimal("249.90"), Decimal("499.00")
     }
+    b2b = next(app for app in apps if app.slug == "b2b-portal")
+    assert b2b.annual_plan_amounts == {Decimal("150.00")}
 
 
 def test_catalog_requires_every_referenced_secret(tmp_path):
