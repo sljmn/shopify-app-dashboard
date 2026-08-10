@@ -16,7 +16,7 @@ opposite problems with opposite fixes, and lifecycle data alone cannot tell them
 ## The request
 
 ```
-POST https://<your-dashboard-host>/ingest/usage
+POST https://<your-dashboard-host>/ingest/usage/<app-slug>
 Content-Type: application/json
 X-Usage-Token: <the shared secret>
 ```
@@ -43,8 +43,8 @@ Response is `200` with a count of what happened:
 
 ## The events
 
-The accepted event names are configured on the dashboard side via `USAGE_EVENT_TYPES`, and two of
-them are singled out: `USAGE_ACTIVATION_EVENT` is what "activated" means, and `USAGE_LIVE_EVENT` is
+The accepted event names are configured under that app's `usage` block in `config/apps.yml`. Two of
+them are singled out: `activation_event` is what "activated" means, and `live_event` is
 what proves the app is actually running for shoppers. The defaults suit an app that lets merchants
 build something a shopper then sees:
 
@@ -55,7 +55,7 @@ build something a shopper then sees:
 | `offer_impression` | That thing is shown to a shopper. **This is the live event.** |
 | `offer_conversion` | A shopper acts on it |
 
-Rename them to whatever your app actually does, set `USAGE_EVENT_TYPES` to match, and keep the
+Rename them to whatever your app actually does, set `usage.event_types` to match, and keep the
 activation and live roles pointed at the right two. Anything outside the configured list is rejected
 with `422` and nothing is stored, so the dashboard has to learn a new event name before the app
 starts sending it.
@@ -81,7 +81,7 @@ because mapping domains to GIDs is a per-shop lookup and sending the GID is much
 ## Batching, retries, failures
 
 - Up to **500 events** per request, **1 MB** total body.
-- **Retries are free.** Ingestion is idempotent on `(shop_gid, event_id)`: resending an event you
+- **Retries are free.** Ingestion is idempotent on `(app_id, shop_gid, event_id)`: resending an event you
   already sent stores nothing and reports it as a duplicate. A stored event is never overwritten,
   so a retry cannot corrupt anything either. If you time out and do not know whether it landed, just
   send it again.

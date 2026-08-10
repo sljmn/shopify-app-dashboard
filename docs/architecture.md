@@ -160,7 +160,8 @@ reaching the pages, not a flaky test.
 - **Country and industry only exist if you imported them.** The Partner API exposes no merchant
   location or industry at all. `import_shops_csv` backfills them from a vendor export, and they go
   stale for every shop that installs after that import ran.
-- **There is no product-usage data** beyond what the app itself posts to `POST /ingest/usage`.
+- **There is no product-usage data** beyond what each app posts to
+  `POST /ingest/usage/<app-slug>`.
   "Installed and silent" (`stats.trial_watch`) is a proxy for activation risk, not a measurement.
 - **GA4 undercounts installs.** Consent banners and blockers suppress the browser-side event while
   the install still happens; `stats.install_reconciliation` states the gap rather than hiding it.
@@ -185,7 +186,8 @@ which is what the `.md` twins and curl see. Nothing here is indexable: `<meta na
 `base.html`, an `X-Robots-Tag` header in `security.py` for the responses with no `<head>`, and
 `/robots.txt`.
 
-`POST /ingest/usage` is the one route that bypasses interactive auth. It takes a shared secret in
+`POST /ingest/usage/<app-slug>` is the one route that bypasses interactive auth. It takes that
+app's shared secret in
 `X-Usage-Token`, caps its body, and is rate-limited. Do not rebuild it around SSO sessions; the
 caller is your app's backend, not a browser.
 
@@ -215,4 +217,4 @@ it will not run.
 | `docs/partner-api-notes.md` | what the Partner API actually does, as opposed to what it looks like it does |
 | `docs/deploy.md` | deploy, secrets, replay, backfills |
 | `docs/exports.md` | the `.md` twins and `/export.json` |
-| `docs/usage-events-integration.md` | the `POST /ingest/usage` contract, to hand to your app developer |
+| `docs/usage-events-integration.md` | the per-app usage ingest contract, to hand to your app developer |

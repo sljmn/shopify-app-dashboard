@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 {% block content %}
 <h1>Overview</h1>
 
@@ -27,6 +27,25 @@
     {{ ui.stat("net_30d", "$" ~ "%.2f"|format(money.net_30d), extra="net",
                compare=comparison.net_30d) }}
 </div>
+
+{% if app_comparison %}
+<div class="table-card">
+    <table>
+        <thead><tr><th>App</th><th class="num">MRR</th><th class="num">Paying</th><th class="num">Installs 30d</th><th class="num">Churn 30d</th></tr></thead>
+        <tbody>
+            {% for row in app_comparison %}
+            <tr>
+                <td><a href="/?app={{ row.app.slug|urlencode }}">{{ row.app.name }}</a></td>
+                <td class="num">${{ "%.2f"|format(row.stats.active_mrr) }}</td>
+                <td class="num">{{ row.stats.paying }}</td>
+                <td class="num">{{ row.stats.installs_30d }}</td>
+                <td class="num">{{ row.stats.churn_30d }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
 
 <div class="card">
     <div class="card-head">
@@ -156,7 +175,7 @@
         {% for c in countries %}
         <div class="bar-row">
             <span class="bar-label">{% if c.other %}{{ c.country }}{% else %}<a
-                href="/customers?country={{ c.country|urlencode }}">{{ c.country }}</a>{% endif %}</span>
+                href="/customers?country={{ c.country|urlencode }}{% if selected_app %}&amp;app={{ selected_app.slug|urlencode }}{% endif %}">{{ c.country }}</a>{% endif %}</span>
             <span class="bar-pair">
                 <span class="bar-track"><span class="bar" style="width: {{ 100 * c.installed / country_max }}%"></span></span>
                 <span class="bar-track"><span class="bar gone" style="width: {{ 100 * c.ever / country_max }}%"></span></span>
@@ -176,7 +195,7 @@
         {% for p in plans %}
         <div class="bar-row">
             <span class="bar-label">{% if p.interval %}<a
-                href="/customers?plan={{ p.interval|urlencode }}">{{ p.label }}</a>{% else %}{{ p.label }}{% endif %}</span>
+                href="/customers?plan={{ p.interval|urlencode }}{% if selected_app %}&amp;app={{ selected_app.slug|urlencode }}{% endif %}">{{ p.label }}</a>{% else %}{{ p.label }}{% endif %}</span>
             <span class="bar-track"><span class="bar" style="width: {{ 100 * p.mrr / (plans[0].mrr or 1) }}%"></span></span>
             <span class="bar-val">{{ p.count }} &middot; ${{ "%.0f"|format(p.mrr) }}</span>
         </div>
@@ -191,7 +210,7 @@
         {% for r in reasons %}
         <div class="bar-row">
             <span class="bar-label"><a
-                href="/reports/churn?bucket={{ r.label|urlencode }}#all">{{ r.label }}</a></span>
+                href="/reports/churn?bucket={{ r.label|urlencode }}{% if selected_app %}&amp;app={{ selected_app.slug|urlencode }}{% endif %}#all">{{ r.label }}</a></span>
             <span class="bar-track"><span class="bar down" style="width: {{ r.pct }}%"></span></span>
             <span class="bar-val">{{ r.count }}</span>
         </div>
@@ -199,7 +218,7 @@
         <p class="sub">No uninstall reasons recorded yet.</p>
         {% endfor %}
         <p class="sub">Top five, and each one links to the merchants who said it. Full breakdown,
-        timing, and comments on <a href="/reports/churn">Churn</a>.</p>
+        timing, and comments on <a href="/reports/churn{{ scope_qs }}">Churn</a>.</p>
     </div>
 </div>
 
@@ -213,12 +232,15 @@
     {% if note_error %}<p class="form-error">{{ note_error }}</p>{% endif %}
     {% if can_annotate %}
     <form class="anno-form" method="post" action="/annotations">
+        <input type="hidden" name="app" value="{{ selected_app.slug }}">
         <input type="date" name="on_date" value="{{ today }}" max="{{ today }}" required
                aria-label="Date it happened">
         <input type="text" name="note" maxlength="{{ note_max }}" required
                placeholder="Raised the price" aria-label="What happened">
         <button type="submit">Add note</button>
     </form>
+    {% elif not selected_app %}
+    <p class="sub">Select an app to add a note.</p>
     {% else %}
     <p class="sub">Adding a note needs a browser session. This request authenticated some other
     way.</p>
@@ -229,7 +251,7 @@
         {% for n in notes %}
         <div class="anno-row">
             <span class="anno-when">{{ n.on_date.strftime("%b %-d, %Y") }}</span>
-            <span>{{ n.note }}<span class="anno-who">{{ n.author }}</span></span>
+            <span>{% if not selected_app %}<strong>{{ n.app_name }}</strong> &middot; {% endif %}{{ n.note }}<span class="anno-who">{{ n.author }}</span></span>
             {% if can_annotate %}
             {# Two clicks to delete, using a native disclosure: the CSP allows no
                inline script, so a confirm() dialog would never fire. #}
@@ -237,6 +259,7 @@
                 <summary aria-label="Delete this note">Delete</summary>
                 <form method="post" action="/annotations/delete">
                     <input type="hidden" name="id" value="{{ n.id }}">
+                    <input type="hidden" name="app" value="{{ n.app_slug }}">
                     <button type="submit">Delete for good</button>
                 </form>
             </details>

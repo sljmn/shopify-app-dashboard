@@ -4,6 +4,7 @@ from html import unescape
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from app_dashboard.auth import SESSION_COOKIE, issue_session
 from app_dashboard.web import create_app
@@ -13,8 +14,7 @@ SESSION_SECRET = "test-session-secret-long-enough-to-pass"
 
 
 @pytest.fixture(autouse=True)
-def ppa_env(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost:5432/app_dashboard_test")
+def ppa_env(monkeypatch, db, test_app):
     monkeypatch.setenv("PARTNER_API_TOKEN", "x")
     monkeypatch.setenv("PARTNER_ORG_ID", "1")
     monkeypatch.setenv("PARTNER_APP_ID", "2")
@@ -33,6 +33,23 @@ def ppa_env(monkeypatch):
     # page's name does not appear where it should not, and a name that never
     # renders anywhere would make those assertions vacuously true.
     monkeypatch.setenv("APP_NAME", "Zarquon Widgets")
+    monkeypatch.setenv("TOKEN_1", "test-partner-token")
+    owned_tables = (
+        "raw_app_events", "app_events", "charges", "subscriptions", "shops",
+        "transactions", "sync_state", "usage_events", "ga4_daily", "annotations",
+        "tracking_events",
+    )
+    for table in owned_tables:
+        db.execute(f"alter table {table} alter column app_id set default {test_app.id}")
+    yield
+    cleanup = db
+    if cleanup.closed:
+        from app_dashboard.db import connect
+        cleanup = connect()
+    for table in owned_tables:
+        cleanup.execute(f"alter table {table} alter column app_id drop default")
+    if cleanup is not db:
+        cleanup.close()
 
 
 def keep_open(conn):
@@ -51,6 +68,25 @@ def test_healthz_open(db):
     app = create_app(conn_factory=lambda: db)
     c = TestClient(app)
     assert c.get("/healthz").status_code == 200
+
+
+def test_selector_lists_every_app_and_unknown_slugs_404(
+    db, app_factory, monkeypatch
+):
+    other = app_factory(slug="other-app", name="Other App")
+    monkeypatch.setenv("TOKEN_2", "second-partner-token")
+    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+
+    combined = c.get("/", auth=("tester", "suite-only-credential"))
+    assert combined.status_code == 200
+    assert "All apps" in combined.text
+    assert "Test App" in combined.text and other.name in combined.text
+    assert c.get(
+        "/?app=other-app", auth=("tester", "suite-only-credential")
+    ).status_code == 200
+    assert c.get(
+        "/?app=does-not-exist", auth=("tester", "suite-only-credential")
+    ).status_code == 404
 
 
 @pytest.mark.parametrize("path", ["/", "/customers", "/reports/funnel",
@@ -153,7 +189,7 @@ def test_report_pages_render(db):
     from app_dashboard.db import connect
     app = create_app(conn_factory=connect)
     c = TestClient(app)
-    for name, marker in (("funnel", "Lifecycle funnel"), ("traffic", "No traffic data yet"),
+    for name, marker in (("funnel", "Lifecycle funnel"), ("traffic", "Select one app"),
                          ("retention", "Retention")):
         r = c.get(f"/reports/{name}", auth=("tester", "suite-only-credential"))
         assert r.status_code == 200
@@ -504,13 +540,26 @@ def _usage_body(**over):
 
 
 @pytest.fixture
-def ingest_client(db, monkeypatch):
-    monkeypatch.setenv("USAGE_INGEST_TOKEN", USAGE_TOKEN)
+def ingest_client(db, test_app, monkeypatch):
+    monkeypatch.setenv("TEST_APP_USAGE_TOKEN", USAGE_TOKEN)
+    db.execute(
+        """update apps set usage_token_env = %s, usage_event_types = %s,
+                  usage_activation_event = %s, usage_live_event = %s
+           where id = %s""",
+        (
+            "TEST_APP_USAGE_TOKEN",
+            Jsonb(["offer_created", "offer_impression", "offer_conversion"]),
+            "offer_created",
+            "offer_impression",
+            test_app.id,
+        ),
+    )
+    db.commit()
     return TestClient(create_app(conn_factory=lambda: keep_open(db)))
 
 
 def test_ingest_stores_a_batch_with_the_token(ingest_client, db):
-    r = ingest_client.post("/ingest/usage", json=_usage_body(),
+    r = ingest_client.post("/ingest/usage/test-app", json=_usage_body(),
                            headers={"X-Usage-Token": USAGE_TOKEN})
     assert r.status_code == 200
     assert r.json()["stored"] == 1
@@ -524,7 +573,7 @@ def test_ingest_stores_a_batch_with_the_token(ingest_client, db):
     {"X-Usage-Token": USAGE_TOKEN + "x"},  # prefix of the real token
 ])
 def test_ingest_refuses_every_wrong_token_identically(ingest_client, db, headers):
-    r = ingest_client.post("/ingest/usage", json=_usage_body(), headers=headers)
+    r = ingest_client.post("/ingest/usage/test-app", json=_usage_body(), headers=headers)
     assert r.status_code == 401
     assert r.json() == {"detail": "Unauthorized"}
     assert db.execute("select count(*) from usage_events").fetchone()[0] == 0
@@ -535,7 +584,11 @@ def test_ingest_refuses_everything_when_no_token_is_configured(db, monkeypatch):
     cannot tell the two apart."""
     monkeypatch.delenv("USAGE_INGEST_TOKEN", raising=False)
     c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
-    r = c.post("/ingest/usage", json=_usage_body(), headers={"X-Usage-Token": "anything"})
+    r = c.post(
+        "/ingest/usage/test-app",
+        json=_usage_body(),
+        headers={"X-Usage-Token": "anything"},
+    )
     assert r.status_code == 401
     assert r.json() == {"detail": "Unauthorized"}
 
@@ -543,14 +596,18 @@ def test_ingest_refuses_everything_when_no_token_is_configured(db, monkeypatch):
 def test_ingest_does_not_accept_a_dashboard_session_or_basic_auth(ingest_client):
     """The ingest secret is the only key to this door: a signed-in human, or
     anyone holding dashboard credentials, still cannot write events."""
-    r = ingest_client.post("/ingest/usage", json=_usage_body(), auth=("tester", "suite-only-credential"))
+    r = ingest_client.post(
+        "/ingest/usage/test-app",
+        json=_usage_body(),
+        auth=("tester", "suite-only-credential"),
+    )
     assert r.status_code == 401
 
 
 def test_ingest_rejects_an_oversized_body_before_parsing_it(ingest_client, db):
     from app_dashboard.usage import MAX_BODY_BYTES
     r = ingest_client.post(
-        "/ingest/usage",
+        "/ingest/usage/test-app",
         content=b'{"events": [' + b"x" * (MAX_BODY_BYTES + 1024) + b"]}",
         headers={"X-Usage-Token": USAGE_TOKEN, "Content-Type": "application/json"})
     assert r.status_code == 413
@@ -558,7 +615,7 @@ def test_ingest_rejects_an_oversized_body_before_parsing_it(ingest_client, db):
 
 
 def test_ingest_rejects_an_unknown_event_type(ingest_client, db):
-    r = ingest_client.post("/ingest/usage", json=_usage_body(event_type="drop_table"),
+    r = ingest_client.post("/ingest/usage/test-app", json=_usage_body(event_type="drop_table"),
                            headers={"X-Usage-Token": USAGE_TOKEN})
     assert r.status_code == 422
     assert db.execute("select count(*) from usage_events").fetchone()[0] == 0
@@ -566,10 +623,58 @@ def test_ingest_rejects_an_unknown_event_type(ingest_client, db):
 
 def test_ingest_is_safe_to_retry(ingest_client):
     headers = {"X-Usage-Token": USAGE_TOKEN}
-    first = ingest_client.post("/ingest/usage", json=_usage_body(), headers=headers).json()
-    second = ingest_client.post("/ingest/usage", json=_usage_body(), headers=headers).json()
+    first = ingest_client.post(
+        "/ingest/usage/test-app", json=_usage_body(), headers=headers
+    ).json()
+    second = ingest_client.post(
+        "/ingest/usage/test-app", json=_usage_body(), headers=headers
+    ).json()
     assert first["stored"] == 1
     assert second["stored"] == 0 and second["duplicates"] == 1
+
+
+def test_usage_tokens_and_event_ids_are_isolated_per_app(
+    db, test_app, app_factory, monkeypatch
+):
+    other = app_factory(slug="other-app", name="Other App")
+    monkeypatch.setenv("TOKEN_2", "second-partner-token")
+    monkeypatch.setenv("FIRST_USAGE_TOKEN", "first-secret")
+    monkeypatch.setenv("SECOND_USAGE_TOKEN", "second-secret")
+    event_types = Jsonb(["offer_created", "offer_impression"])
+    db.execute(
+        """update apps set
+                  usage_token_env = case when slug = 'test-app'
+                                         then 'FIRST_USAGE_TOKEN'
+                                         else 'SECOND_USAGE_TOKEN' end,
+                  usage_event_types = %s,
+                  usage_activation_event = 'offer_created',
+                  usage_live_event = 'offer_impression'
+           where id = any(%s)""",
+        (event_types, [test_app.id, other.id]),
+    )
+    db.commit()
+    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+
+    first = c.post(
+        "/ingest/usage/test-app",
+        json=_usage_body(),
+        headers={"X-Usage-Token": "first-secret"},
+    )
+    second = c.post(
+        "/ingest/usage/other-app",
+        json=_usage_body(),
+        headers={"X-Usage-Token": "second-secret"},
+    )
+    crossed = c.post(
+        "/ingest/usage/other-app",
+        json=_usage_body(event_id="crossed"),
+        headers={"X-Usage-Token": "first-secret"},
+    )
+
+    assert first.json()["stored"] == 1
+    assert second.json()["stored"] == 1
+    assert crossed.status_code == 401
+    assert db.execute("select count(*) from usage_events").fetchone()[0] == 2
 
 
 def test_event_properties_render_escaped_if_they_ever_reach_a_page(ingest_client, db):
@@ -577,7 +682,7 @@ def test_event_properties_render_escaped_if_they_ever_reach_a_page(ingest_client
     Jinja-autoescaped. This pins that: a script tag pushed through the ingest
     endpoint cannot come back as markup."""
     ingest_client.post(
-        "/ingest/usage",
+        "/ingest/usage/test-app",
         json=_usage_body(properties={"offer_name": "<script>alert(1)</script>"}),
         headers={"X-Usage-Token": USAGE_TOKEN})
     r = ingest_client.get("/reports/funnel", auth=("tester", "suite-only-credential"))
@@ -596,9 +701,7 @@ def test_funnel_shows_an_honest_empty_state_before_any_usage_data(db):
 
 
 def test_customer_detail_page_and_its_markdown_twin(db):
-    """The .md route is registered before the HTML one on purpose: {shop_domain}
-    compiles to a greedy [^/]+, so /customers/x.myshopify.com.md would otherwise
-    be served as a shop named "x.myshopify.com.md"."""
+    """Customer identity is the stable shop GID, not a mutable domain."""
     db.execute("insert into shops (shop_gid, shop_domain, shop_name, install_state, "
                "owner_name, email) values ('g1', 'x.myshopify.com', 'Ex', 'installed', "
                "'Jo Smith', 'jo@example.com')")
@@ -609,11 +712,11 @@ def test_customer_detail_page_and_its_markdown_twin(db):
     db.commit()
 
     c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
-    page = c.get("/customers/x.myshopify.com", auth=("tester", "suite-only-credential"))
+    page = c.get("/customers/g1", auth=("tester", "suite-only-credential"))
     assert page.status_code == 200
     assert "Ex" in page.text
 
-    md = c.get("/customers/x.myshopify.com.md", auth=("tester", "suite-only-credential"))
+    md = c.get("/customers/g1.md", auth=("tester", "suite-only-credential"))
     assert md.status_code == 200
     assert md.headers["content-type"].startswith("text/markdown")
     assert "x.myshopify.com" in md.text
@@ -621,7 +724,7 @@ def test_customer_detail_page_and_its_markdown_twin(db):
     assert "Jo Smith" not in md.text
     assert "jo@example.com" not in md.text
 
-    assert c.get("/customers/nope.myshopify.com", auth=("tester", "suite-only-credential")).status_code == 404
+    assert c.get("/customers/nope", auth=("tester", "suite-only-credential")).status_code == 404
 
 
 def test_customer_detail_needs_auth(db):
@@ -868,7 +971,7 @@ def test_the_delete_control_is_hidden_from_a_reader_who_cannot_use_it(db):
     page = basic.get("/", auth=("tester", "suite-only-credential"))
     assert "visible to all" in unescape(page.text)
     assert 'class="anno-del"' not in page.text
-    assert 'class="anno-del"' in _signed_in().get("/").text
+    assert 'class="anno-del"' in _signed_in().get("/?app=test-app").text
 
 
 # --- JSON export --------------------------------------------------------------
@@ -943,8 +1046,8 @@ def test_the_window_is_stated_on_the_page(db):
     # The traffic page shows an empty state rather than a range control when
     # there is nothing to range over, so it needs a row to have a window at all.
     _ga4_row("2026-08-01")
-    assert "Last 180 days" in c.get("/reports/traffic?days=180").text
-    assert "Last 90 days" in c.get("/reports/traffic?days=7").text
+    assert "Last 180 days" in c.get("/reports/traffic?days=180&app=test-app").text
+    assert "Last 90 days" in c.get("/reports/traffic?days=7&app=test-app").text
 
 
 def test_the_markdown_twin_honours_the_same_window(db):
@@ -953,7 +1056,9 @@ def test_the_markdown_twin_honours_the_same_window(db):
     c = _signed_in()
     assert "MRR by month, last 24 months" in c.get("/index.md?months=24").text
     assert "MRR by month, last 12 months" in c.get("/index.md?months=banana").text
-    assert "last 180 days" in c.get("/reports/traffic.md?days=180").text
+    assert "last 180 days" in c.get(
+        "/reports/traffic.md?days=180&app=test-app"
+    ).text
 
 
 def test_the_headline_tiles_ignore_the_range(db):

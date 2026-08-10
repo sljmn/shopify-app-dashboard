@@ -24,7 +24,7 @@ COLUMN_MAP = {
 }
 
 
-def import_shops_csv(conn: psycopg.Connection, path: str) -> int:
+def import_shops_csv(conn: psycopg.Connection, app_id: int, path: str) -> int:
     """Update shop identity fields from a CSV export, matched on shop_domain.
 
     Backfills the fields the Partner API does not expose (country, industry,
@@ -52,9 +52,9 @@ def import_shops_csv(conn: psycopg.Connection, path: str) -> int:
                     shop_name = coalesce(nullif(%(shop_name)s, ''), shop_name),
                     country = coalesce(nullif(%(country)s, ''), country),
                     industry = coalesce(nullif(%(industry)s, ''), industry)
-                where shop_domain = %(shop_domain)s
+                where app_id = %(app_id)s and shop_domain = %(shop_domain)s
                 """,
-                values,
+                {**values, "app_id": app_id},
             )
             if cur.rowcount:
                 imported += 1
@@ -68,11 +68,21 @@ def import_shops_csv(conn: psycopg.Connection, path: str) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3 or sys.argv[1] != "shops":
-        print("usage: python -m app_dashboard.import_shops_csv shops <path>", file=sys.stderr)
+    if len(sys.argv) != 4 or sys.argv[1] != "shops":
+        print(
+            "usage: python -m app_dashboard.import_shops_csv shops <app-slug> <path>",
+            file=sys.stderr,
+        )
         sys.exit(1)
     from app_dashboard.db import connect
 
     logging.basicConfig(level=logging.INFO)
-    n = import_shops_csv(connect(), sys.argv[2])
+    conn = connect()
+    row = conn.execute(
+        "select id from apps where slug = %s and active", (sys.argv[2],)
+    ).fetchone()
+    if row is None:
+        print(f"unknown active app: {sys.argv[2]}", file=sys.stderr)
+        sys.exit(2)
+    n = import_shops_csv(conn, row[0], sys.argv[3])
     print(f"imported {n} shop rows")

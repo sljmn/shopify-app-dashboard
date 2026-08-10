@@ -12,6 +12,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app_dashboard.config import get_settings
+from app_dashboard.scope import Scope
 
 # Long enough for "raised the price and grandfathered everyone below 40
 # installs", short enough that nobody writes an essay into a chart marker. The
@@ -56,17 +57,24 @@ def _clean_note(value: str | None) -> str:
     return note
 
 
-def add(conn: psycopg.Connection, *, on_date, note: str | None, author: str) -> dict:
+def add(
+    conn: psycopg.Connection,
+    *,
+    app_id: int,
+    on_date,
+    note: str | None,
+    author: str,
+) -> dict:
     """Store one note. Raises AnnotationError with a readable message.
 
     `author` comes from the verified session, never from the form: a field the
     browser supplies is a field anyone can set.
     """
     row = conn.execute(
-        """insert into annotations (on_date, note, author)
-           values (%s, %s, %s)
+        """insert into annotations (app_id, on_date, note, author)
+           values (%s, %s, %s, %s)
            returning id, on_date, note, author, created_at""",
-        (_clean_date(on_date), _clean_note(note), author),
+        (app_id, _clean_date(on_date), _clean_note(note), author),
     ).fetchone()
     return {"id": row[0], "on_date": row[1], "note": row[2],
             "author": row[3], "created_at": row[4]}
@@ -79,7 +87,9 @@ def _clean_id(value) -> int:
         raise AnnotationError("That note id is not a number.") from None
 
 
-def remove(conn: psycopg.Connection, *, annotation_id) -> dict | None:
+def remove(
+    conn: psycopg.Connection, *, app_id: int, annotation_id
+) -> dict | None:
     """Delete one note, returning the row that went, or None if it was already
     gone.
 
@@ -95,27 +105,35 @@ def remove(conn: psycopg.Connection, *, annotation_id) -> dict | None:
     -- the ones most likely to need correcting -- undeletable by anyone.
     """
     row = conn.execute(
-        """delete from annotations where id = %s
+        """delete from annotations where app_id = %s and id = %s
            returning id, on_date, note, author""",
-        (_clean_id(annotation_id),),
+        (app_id, _clean_id(annotation_id)),
     ).fetchone()
     if row is None:
         return None
     return {"id": row[0], "on_date": row[1], "note": row[2], "author": row[3]}
 
 
-def recent(conn: psycopg.Connection, limit: int = 100) -> list[dict]:
+def recent(
+    conn: psycopg.Connection, scope: Scope = Scope.all(), limit: int = 100
+) -> list[dict]:
     """Newest first, by the date the thing happened."""
     cur = conn.cursor(row_factory=dict_row)
+    predicate, params = scope.predicate("n")
     cur.execute(
-        """select id, on_date, note, author, created_at from annotations
-           order by on_date desc, id desc limit %s""",
-        (limit,),
+        f"""select n.id, n.app_id, a.slug as app_slug, a.name as app_name,
+                   n.on_date, n.note, n.author, n.created_at
+            from annotations n join apps a on a.id = n.app_id
+            where {predicate}
+            order by n.on_date desc, n.id desc limit %s""",
+        (*params, limit),
     )
     return cur.fetchall()
 
 
-def by_month(conn: psycopg.Connection) -> dict[str, list[dict]]:
+def by_month(
+    conn: psycopg.Connection, scope: Scope = Scope.all()
+) -> dict[str, list[dict]]:
     """Keyed by the same 'Mon YYYY' label the monthly charts use.
 
     Keyed on the label rather than on a date so the template can look a month up
@@ -123,13 +141,18 @@ def by_month(conn: psycopg.Connection) -> dict[str, list[dict]]:
     has to change with it -- which is why both use to_char with the same mask
     rather than one formatting in SQL and the other in Python.
     """
+    predicate, params = scope.predicate("n")
     rows = conn.execute(
-        """select to_char(on_date, 'Mon YYYY'), on_date, note, author
-           from annotations order by on_date, id"""
+        f"""select to_char(n.on_date, 'Mon YYYY'), n.on_date, n.note, n.author,
+                   n.app_id, a.slug, a.name
+            from annotations n join apps a on a.id = n.app_id
+            where {predicate} order by n.on_date, n.id""",
+        params,
     ).fetchall()
     out: dict[str, list[dict]] = {}
-    for label, on_date, note, author in rows:
+    for label, on_date, note, author, app_id, app_slug, app_name in rows:
         out.setdefault(label, []).append(
-            {"on_date": on_date, "note": note, "author": author}
+            {"on_date": on_date, "note": note, "author": author,
+             "app_id": app_id, "app_slug": app_slug, "app_name": app_name}
         )
     return out

@@ -6,8 +6,9 @@ class FakeClient: ...
 
 def _settings(**kw):
     from app_dashboard.config import Settings
-    return Settings(database_url="x", partner_api_token="t", partner_org_id="1",
-                    partner_app_id="2", dashboard_users="tester:suite-only-credential", **kw)
+    return Settings(
+        database_url="x", dashboard_users="tester:suite-only-credential", **kw
+    )
 
 
 def _txn(id, created_at, gross="19.0", net="18.45", type="AppSubscriptionSale"):
@@ -29,8 +30,7 @@ def test_run_sync_ingests_derives_and_notifies(db, test_app, monkeypatch):
                "values (%s,'ai1','j@x.com','')", (test_app.id,)); db.commit()
     sent = []
     from app_dashboard.config import Settings
-    s = Settings(database_url="x", partner_api_token="t", partner_org_id="1",
-                 partner_app_id="2", dashboard_users="tester:suite-only-credential",
+    s = Settings(database_url="x", dashboard_users="tester:suite-only-credential",
                  slack_webhook_url="http://hook")
     summary = run_sync(db, FakeClient(), test_app, s,
                        http_post=lambda url, json: sent.append(json) or type("R",(),{"status_code":200})())

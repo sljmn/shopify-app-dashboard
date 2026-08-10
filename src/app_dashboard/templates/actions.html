@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 {% block content %}
 <h1>Actions</h1>
 <p class="sub">Call sheets, recomputed on every page load. Nothing here writes anywhere:
@@ -19,7 +19,7 @@ work the lists, then come back.</p>
             <tbody>
                 {% for r in at_risk %}
                 <tr>
-                    <td>{% if r.domain %}<a href="/customers/{{ r.domain }}">{{ r.shop }}</a>{% else %}{{ r.shop }}{% endif %}</td>
+                    <td><a href="/customers/{{ r.shop_gid|urlencode }}{{ scope_qs }}">{{ r.shop }}</a></td>
                     <td class="sub">{{ r.domain or "" }}</td>
                     <td class="num">${{ "%.0f"|format(r.monthly_amount) }}</td>
                     <td class="num">{{ r.days_quiet }} days ago</td>
@@ -51,7 +51,7 @@ work the lists, then come back.</p>
             <tbody>
                 {% for r in review %}
                 <tr>
-                    <td>{% if r.domain %}<a href="/customers/{{ r.domain }}">{{ r.shop }}</a>{% else %}{{ r.shop }}{% endif %}<div class="sub">{{ r.domain or "" }}</div></td>
+                    <td><a href="/customers/{{ r.shop_gid|urlencode }}{{ scope_qs }}">{{ r.shop }}</a><div class="sub">{{ r.domain or "" }}</div></td>
                     <td class="sub">{{ r.country or "" }}</td>
                     <td class="num sub">{{ r.installed_at.strftime("%b %-d, %Y") if r.installed_at else "" }}</td>
                     <td class="num">{{ r.since.strftime("%b %-d, %Y") }}<div class="sub">{{ r.days }} days</div></td>
@@ -82,7 +82,7 @@ work the lists, then come back.</p>
             <tbody>
                 {% for r in annual %}
                 <tr>
-                    <td>{% if r.domain %}<a href="/customers/{{ r.domain }}">{{ r.shop }}</a>{% else %}{{ r.shop }}{% endif %}</td>
+                    <td><a href="/customers/{{ r.shop_gid|urlencode }}{{ scope_qs }}">{{ r.shop }}</a></td>
                     <td class="sub">{{ r.domain or "" }}</td>
                     <td class="sub">{{ r.country or "" }}</td>
                     <td class="num">{{ r.days }} days</td>
@@ -115,7 +115,7 @@ work the lists, then come back.</p>
             <tbody>
                 {% for r in trial %}
                 <tr>
-                    <td>{% if r.domain %}<a href="/customers/{{ r.domain }}">{{ r.shop }}</a>{% else %}{{ r.shop }}{% endif %}</td>
+                    <td><a href="/customers/{{ r.shop_gid|urlencode }}{{ scope_qs }}">{{ r.shop }}</a></td>
                     <td class="sub">{{ r.domain or "" }}</td>
                     <td class="sub">{{ r.country or "" }}</td>
                     <td class="num">{{ r.days }} days ago</td>

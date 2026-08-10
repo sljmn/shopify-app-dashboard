@@ -3,7 +3,7 @@
 <h1>{{ display_name }}</h1>
 <p class="sub">
     {{ domains|join(", ") }}
-    &middot; <a href="/customers">back to all customers</a>
+    &middot; <a href="/customers{{ scope_qs }}">back to customers</a>
 </p>
 
 {% for installation in apps %}

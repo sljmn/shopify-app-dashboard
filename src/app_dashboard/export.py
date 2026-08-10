@@ -34,6 +34,7 @@ from app_dashboard.faq import FAQ
 from app_dashboard.markdown_export import _no_contact, json_default
 from app_dashboard.metrics import METRICS
 from app_dashboard.ops import sync_health
+from app_dashboard.scope import Scope
 from app_dashboard.usage import (
     activation_cohorts,
     at_risk_shops,
@@ -75,69 +76,77 @@ def _definitions() -> dict:
     }
 
 
-def _overview(conn) -> dict:
-    summary = stats.overview_stats(conn)
-    collected = stats.collected_revenue(conn)
+def _overview(conn, scope: Scope) -> dict:
+    summary = stats.overview_stats(conn, scope)
+    collected = stats.collected_revenue(conn, scope)
     return {
         "summary": summary,
         "comparison": stats.overview_comparison(
-            conn, {**summary, "net_30d": collected["net_30d"]}),
+            conn, {**summary, "net_30d": collected["net_30d"]}, scope=scope),
         "unit_economics": stats.unit_economics(
-            conn, days=LIMITS["unit_economics_days"]),
-        "mrr_trend": stats.mrr_trend(conn, months=LIMITS["money_months"]),
-        "mrr_movements": stats.mrr_movements(conn, months=LIMITS["money_months"]),
+            conn, days=LIMITS["unit_economics_days"], scope=scope),
+        "mrr_trend": stats.mrr_trend(
+            conn, months=LIMITS["money_months"], scope=scope),
+        "mrr_movements": stats.mrr_movements(
+            conn, months=LIMITS["money_months"], scope=scope),
         "collected_revenue": collected,
         "revenue_by_month": stats.revenue_by_month(
-            conn, months=LIMITS["money_months"]),
+            conn, months=LIMITS["money_months"], scope=scope),
         "monthly_activity": stats.monthly_activity(
-            conn, months=LIMITS["activity_months"]),
-        "country_breakdown": stats.country_breakdown(conn, top=LIMITS["countries"]),
-        "plan_mix": stats.plan_mix(conn),
-        "recent_events": stats.recent_events(conn, limit=LIMITS["recent_events"]),
+            conn, months=LIMITS["activity_months"], scope=scope),
+        "country_breakdown": stats.country_breakdown(
+            conn, top=LIMITS["countries"], scope=scope),
+        "plan_mix": stats.plan_mix(conn, scope),
+        "recent_events": stats.recent_events(
+            conn, limit=LIMITS["recent_events"], scope=scope),
     }
 
 
-def _customers(conn) -> dict:
+def _customers(conn, scope: Scope) -> dict:
     """Every shop, not a page of them.
 
     The limit is the count rather than a constant, so this cannot truncate:
     the page paginates at 50 and the markdown twin caps at 1000, and both of
     those are display decisions that have no business being in an archive.
     """
-    total = count_customers(conn)
+    total = count_customers(conn, scope=scope)
     return {
         "total": total,
-        "shops": _no_contact(list_customers(conn, limit=total)),
-        "facets": distinct_facets(conn),
+        "shops": _no_contact(list_customers(conn, limit=total, scope=scope)),
+        "facets": distinct_facets(conn, scope),
     }
 
 
-def _actions(conn) -> dict:
-    tracking = has_usage_data(conn)
+def _actions(conn, scope: Scope, selected_app) -> dict:
+    tracking = bool(selected_app and has_usage_data(conn, selected_app))
     return {
-        "review_candidates": _no_contact(stats.review_candidates(conn)),
-        "annual_upgrade_candidates": stats.annual_upgrade_candidates(conn),
-        "trial_watch": stats.trial_watch(conn, days=LIMITS["trial_days"]),
+        "review_candidates": _no_contact(stats.review_candidates(conn, scope=scope)),
+        "annual_upgrade_candidates": stats.annual_upgrade_candidates(conn, scope=scope),
+        "trial_watch": stats.trial_watch(
+            conn, days=LIMITS["trial_days"], scope=scope),
         # Not [] when tracking is off: an empty list here would read as "no
         # paying shop has gone quiet", which is a much better story than the
         # truth, which is that nothing can tell.
-        "at_risk": at_risk_shops(conn) if tracking else None,
+        "at_risk": at_risk_shops(conn, selected_app) if tracking else None,
         "at_risk_note": None if tracking else (
             "No usage events have arrived from the app yet, so whether a paying "
             "shop has gone quiet is unknown rather than none."),
     }
 
 
-def _funnel(conn) -> dict:
-    tracking = has_usage_data(conn)
+def _funnel(conn, scope: Scope, selected_app) -> dict:
+    tracking = bool(selected_app and has_usage_data(conn, selected_app))
     return {
-        "lifecycle": stats.funnel_stats(conn),
+        "lifecycle": stats.funnel_stats(conn, scope),
         "monthly_conversion": stats.monthly_conversion(
-            conn, months=LIMITS["conversion_months"]),
+            conn, months=LIMITS["conversion_months"], scope=scope),
         "activation": {
-            "time_to_activation": time_to_activation(conn) if tracking else None,
+            "time_to_activation": (
+                time_to_activation(conn, selected_app) if tracking else None
+            ),
             "cohorts": activation_cohorts(
-                conn, months=LIMITS["activation_months"]) if tracking else None,
+                conn, selected_app, months=LIMITS["activation_months"]
+            ) if tracking else None,
             "note": None if tracking else (
                 "Activation is unknown rather than zero: the Partner API carries "
                 "no product usage, so the app has to report it and has not yet."),
@@ -145,42 +154,55 @@ def _funnel(conn) -> dict:
     }
 
 
-def _churn(conn) -> dict:
+def _churn(conn, scope: Scope) -> dict:
     return {
-        "reasons": stats.uninstall_reasons(conn),
-        "verbatims": stats.uninstall_verbatims(conn, limit=LIMITS["verbatims"]),
-        "time_to_uninstall": stats.time_to_uninstall(conn),
-        "composition": stats.churn_composition(conn),
+        "reasons": stats.uninstall_reasons(conn, scope),
+        "verbatims": stats.uninstall_verbatims(
+            conn, limit=LIMITS["verbatims"], scope=scope),
+        "time_to_uninstall": stats.time_to_uninstall(conn, scope),
+        "composition": stats.churn_composition(conn, scope),
         # No window and no filters: every uninstall there has ever been.
-        "uninstalls": stats.churn_rows(conn),
-        "store_deaths": stats.store_deaths(conn, limit=LIMITS["store_deaths"]),
+        "uninstalls": stats.churn_rows(conn, scope=scope),
+        "store_deaths": stats.store_deaths(
+            conn, limit=LIMITS["store_deaths"], scope=scope),
     }
 
 
-def _retention(conn) -> dict:
+def _retention(conn, scope: Scope) -> dict:
     return {
         "installed": stats.install_retention_cohorts(
-            conn, max_offset=LIMITS["retention_offsets"]),
+            conn, max_offset=LIMITS["retention_offsets"], scope=scope),
         "paying": stats.retention_cohorts(
-            conn, max_offset=LIMITS["retention_offsets"]),
+            conn, max_offset=LIMITS["retention_offsets"], scope=scope),
     }
 
 
-def _traffic(conn) -> dict:
+def _traffic(conn, selected_app) -> dict | None:
+    if selected_app is None:
+        return None
     days = LIMITS["traffic_days"]
+    app_id = selected_app.id
     return {
-        "summary": stats.traffic_summary(conn, days=days),
-        "install_reconciliation": stats.install_reconciliation(conn, days=days),
-        "monthly": stats.traffic_monthly(conn, months=LIMITS["traffic_months"]),
+        "summary": stats.traffic_summary(conn, app_id, days=days),
+        "install_reconciliation": stats.install_reconciliation(conn, app_id, days=days),
+        "monthly": stats.traffic_monthly(
+            conn, app_id, months=LIMITS["traffic_months"]),
         "breakdowns": {
-            key: stats.traffic_breakdown(conn, key, days=days,
+            key: stats.traffic_breakdown(conn, app_id, key, days=days,
                                          top=LIMITS["breakdown_rows"])
             for key in ("channel", "source", "country", "language")
         },
     }
 
 
-def full_export(conn, settings, now: datetime | None = None) -> dict:
+def full_export(
+    conn,
+    settings,
+    now: datetime | None = None,
+    *,
+    scope: Scope = Scope.all(),
+    selected_app=None,
+) -> dict:
     """Everything the dashboard knows, as one dict ready for json.dumps.
 
     Ordered so a human scrolling the file meets the caveats before the numbers.
@@ -189,6 +211,7 @@ def full_export(conn, settings, now: datetime | None = None) -> dict:
     return {
         "meta": {
             "generated_at": now.isoformat(timespec="seconds"),
+            "scope": selected_app.slug if selected_app else "all",
             "source": settings.public_base_url.rstrip("/"),
             "about": (
                 f"Every dataset behind the {settings.dashboard_name} dashboard, at "
@@ -208,15 +231,15 @@ def full_export(conn, settings, now: datetime | None = None) -> dict:
             "definitions_at": f"{settings.public_base_url.rstrip('/')}/faq.md",
         },
         "definitions": _definitions(),
-        "sync_health": sync_health(conn, settings.poll_interval_minutes),
-        "annotations": anno.recent(conn, limit=LIMITS["verbatims"]),
-        "overview": _overview(conn),
-        "customers": _customers(conn),
-        "actions": _actions(conn),
-        "funnel": _funnel(conn),
-        "churn": _churn(conn),
-        "retention": _retention(conn),
-        "traffic": _traffic(conn),
+        "sync_health": sync_health(conn, settings.poll_interval_minutes, scope),
+        "annotations": anno.recent(conn, scope, limit=LIMITS["verbatims"]),
+        "overview": _overview(conn, scope),
+        "customers": _customers(conn, scope),
+        "actions": _actions(conn, scope, selected_app),
+        "funnel": _funnel(conn, scope, selected_app),
+        "churn": _churn(conn, scope),
+        "retention": _retention(conn, scope),
+        "traffic": _traffic(conn, selected_app),
         "faq": [{"question": q, "answer": paragraphs} for q, paragraphs in FAQ],
     }
 
@@ -228,7 +251,16 @@ def filename(now: datetime | None = None, slug: str = "analytics") -> str:
     return f"{slug}-{now:%Y-%m-%d}.json"
 
 
-def render(conn, settings, now: datetime | None = None) -> str:
+def render(
+    conn,
+    settings,
+    now: datetime | None = None,
+    *,
+    scope: Scope = Scope.all(),
+    selected_app=None,
+) -> str:
     now = now or datetime.now(timezone.utc)
-    return json.dumps(full_export(conn, settings, now), indent=2,
+    return json.dumps(full_export(
+        conn, settings, now, scope=scope, selected_app=selected_app
+    ), indent=2,
                       default=json_default)

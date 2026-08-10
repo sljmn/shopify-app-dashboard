@@ -1,13 +1,18 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 {% block content %}
 <h1>Traffic</h1>
 
-{% if not summary.sessions %}
+{% if needs_app %}
+<div class="card empty-state">
+    <h2>Select one app</h2>
+    <p>Traffic belongs to one App Store listing and is not combined across apps.</p>
+</div>
+{% elif not summary.sessions %}
 <div class="card empty-state">
     <h2>No traffic data yet</h2>
     <p>This page reads {% if GA4_PROPERTY_ID %}GA4 property {{ GA4_PROPERTY_ID }}{% else %}a GA4
-    property{% endif %}, the App Store listing stream. Either GA4_PROPERTY_ID is unset, the sync
+    property{% endif %}, the App Store listing stream. Either GA4 is not configured for this app, the sync
     hasn't run yet, or the service account has lost access to the property.</p>
 </div>
 {% else %}

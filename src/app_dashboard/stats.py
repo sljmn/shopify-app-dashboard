@@ -733,7 +733,7 @@ def churn_rows(conn: psycopg.Connection, *, paid: str | None = None,
     rows = conn.execute(
         f"""
         with uninstalls as (
-            select e.app_id, a.slug, a.name, e.occurred_at,
+            select e.app_id, a.slug, a.name, e.shop_gid, e.occurred_at,
                    e.uninstall_reason as reason,
                    e.uninstall_description as note,
                    coalesce(s.shop_name, s.shop_domain, e.shop_gid) as shop,
@@ -760,7 +760,7 @@ def churn_rows(conn: psycopg.Connection, *, paid: str | None = None,
     ).fetchall()
 
     out = []
-    for (app_id, app_slug, app_name, at, reason, note, shop, domain, country,
+    for (app_id, app_slug, app_name, shop_gid, at, reason, note, shop, domain, country,
          installed_at, paid_amount) in rows:
         days = (at - installed_at).days if installed_at else None
         buckets = [classify(r)[0] for r in split_reasons(reason)]
@@ -768,6 +768,7 @@ def churn_rows(conn: psycopg.Connection, *, paid: str | None = None,
             continue
         out.append({
             "app_id": app_id, "app_slug": app_slug, "app_name": app_name,
+            "shop_gid": shop_gid,
             "at": at, "shop": shop, "domain": domain, "country": country,
             "installed_at": installed_at, "days": days,
             "paid": paid_amount is not None, "monthly_amount": paid_amount,
@@ -796,7 +797,7 @@ def uninstall_verbatims(
         f"""
         select e.occurred_at, e.uninstall_reason, e.uninstall_description,
                coalesce(s.shop_name, s.shop_domain, e.shop_gid), s.shop_domain,
-               a.slug, a.name
+               a.slug, a.name, e.shop_gid
         from app_events e
         join apps a on a.id = e.app_id
         join raw_app_events r
@@ -814,14 +815,14 @@ def uninstall_verbatims(
     ).fetchall()
 
     grouped: dict[str, list[dict]] = {}
-    for at, reason, note, shop, domain, app_slug, app_name in rows:
+    for at, reason, note, shop, domain, app_slug, app_name, shop_gid in rows:
         # A merchant can pick several reasons; the note belongs to the whole
         # exit, so file it under the first one rather than duplicating it.
         buckets = [classify(r)[0] for r in split_reasons(reason)]
         label = buckets[0] if buckets else "No reason selected"
         grouped.setdefault(label, []).append(
             {"at": at, "note": note, "shop": shop, "domain": domain,
-             "app_slug": app_slug, "app_name": app_name}
+             "app_slug": app_slug, "app_name": app_name, "shop_gid": shop_gid}
         )
     return [
         {"label": label, "notes": notes}
@@ -848,7 +849,7 @@ def review_candidates(
     predicate, params = scope.predicate("sub")
     rows = conn.execute(
         f"""
-        select coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
+        select s.shop_gid, coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
                s.shop_domain, s.country,
                min(sub.converted_at) as paying_since,
                max(s.installed_at) as installed_at,
@@ -868,11 +869,11 @@ def review_candidates(
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
-        {"shop": shop, "domain": domain, "country": country,
+        {"shop_gid": shop_gid, "shop": shop, "domain": domain, "country": country,
          "installed_at": installed_at, "since": since,
          "days": (now - since).days, "mrr": mrr,
          "app_slug": app_slug, "app_name": app_name}
-        for shop, domain, country, since, installed_at, mrr, app_slug, app_name in rows
+        for shop_gid, shop, domain, country, since, installed_at, mrr, app_slug, app_name in rows
     ]
 
 
@@ -885,7 +886,7 @@ def annual_upgrade_candidates(
     predicate, params = scope.predicate("sub")
     rows = conn.execute(
         f"""
-        select coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
+        select s.shop_gid, coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
                s.shop_domain, s.country, sub.converted_at, sub.monthly_amount,
                a.slug, a.name
         from subscriptions sub
@@ -903,10 +904,10 @@ def annual_upgrade_candidates(
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
-        {"shop": shop, "domain": domain, "country": country, "since": since,
+        {"shop_gid": shop_gid, "shop": shop, "domain": domain, "country": country, "since": since,
          "days": (now - since).days, "mrr": mrr,
          "app_slug": app_slug, "app_name": app_name}
-        for shop, domain, country, since, mrr, app_slug, app_name in rows
+        for shop_gid, shop, domain, country, since, mrr, app_slug, app_name in rows
     ]
 
 
@@ -923,7 +924,7 @@ def trial_watch(
     predicate, params = scope.predicate("s")
     rows = conn.execute(
         f"""
-        select coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
+        select s.shop_gid, coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
                s.shop_domain, s.country, s.installed_at, a.slug, a.name
         from shops s
         join apps a on a.id = s.app_id
@@ -938,9 +939,9 @@ def trial_watch(
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
-        {"shop": shop, "domain": domain, "country": country, "installed_at": at,
+        {"shop_gid": shop_gid, "shop": shop, "domain": domain, "country": country, "installed_at": at,
          "days": (now - at).days, "app_slug": app_slug, "app_name": app_name}
-        for shop, domain, country, at, app_slug, app_name in rows
+        for shop_gid, shop, domain, country, at, app_slug, app_name in rows
     ]
 
 

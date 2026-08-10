@@ -14,6 +14,7 @@ from decimal import Decimal
 
 import httpx
 
+from app_dashboard.scope import Scope
 from app_dashboard.slack import escape
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ MIN_DAYS_BETWEEN_DIGESTS = 3
 TRIAL_WATCH_IN_DIGEST = 3
 
 
-def collect_digest(conn, now=None) -> dict:
+def collect_digest(conn, now=None, scope: Scope = Scope.all()) -> dict:
     from app_dashboard.stats import (
         mrr_at,
         mrr_movement_between,
@@ -42,26 +43,36 @@ def collect_digest(conn, now=None) -> dict:
     def count(sql, params):
         return conn.execute(sql, params).fetchone()[0]
 
+    event_predicate, event_params = scope.predicate("app_events")
     installs = count(
-        """select count(*) from app_events where type in ('installed', 'reinstalled')
-           and occurred_at >= %s""", (week_ago,))
+        f"""select count(*) from app_events where type in ('installed', 'reinstalled')
+            and occurred_at >= %s and {event_predicate}""",
+        (week_ago, *event_params))
     uninstalls = count(
-        "select count(*) from app_events where type = 'uninstalled' and occurred_at >= %s",
-        (week_ago,))
-    installed = count("select count(*) from shops where install_state = 'installed'", ())
+        f"""select count(*) from app_events where type = 'uninstalled'
+            and occurred_at >= %s and {event_predicate}""",
+        (week_ago, *event_params))
+    shop_predicate, shop_params = scope.predicate("shops")
+    installed = count(
+        f"select count(*) from shops where install_state = 'installed' and {shop_predicate}",
+        shop_params,
+    )
 
     # GA4 is day-grained and today is always partial, so both traffic windows
     # are seven whole days ending yesterday. Lifecycle counts above are
     # instant-grained and do include today; they come from a different source
     # and would be wrong to truncate.
+    ga_predicate, ga_params = scope.predicate("ga4_daily")
     sessions, installs_ga4 = conn.execute(
-        """select coalesce(sum(sessions), 0), coalesce(sum(installs), 0) from ga4_daily
-           where dimension = 'total' and date >= %s and date < %s""",
-        (week_ago.date(), now.date())).fetchone()
+        f"""select coalesce(sum(sessions), 0), coalesce(sum(installs), 0)
+            from ga4_daily where dimension = 'total' and date >= %s and date < %s
+              and {ga_predicate}""",
+        (week_ago.date(), now.date(), *ga_params)).fetchone()
     prior_sessions = conn.execute(
-        """select coalesce(sum(sessions), 0) from ga4_daily
-           where dimension = 'total' and date >= %s and date < %s""",
-        (two_weeks_ago.date(), week_ago.date())).fetchone()[0]
+        f"""select coalesce(sum(sessions), 0) from ga4_daily
+            where dimension = 'total' and date >= %s and date < %s
+              and {ga_predicate}""",
+        (two_weeks_ago.date(), week_ago.date(), *ga_params)).fetchone()[0]
 
     return {
         "installed": installed,
@@ -70,14 +81,14 @@ def collect_digest(conn, now=None) -> dict:
         "installed_delta": installs - uninstalls,
         "installs": installs,
         "uninstalls": uninstalls,
-        "paying": paying_at(conn, now),
-        "paying_delta": paying_at(conn, now) - paying_at(conn, week_ago),
-        "mrr": mrr_at(conn, now),
-        "mrr_delta": mrr_at(conn, now) - mrr_at(conn, week_ago),
-        "movement": mrr_movement_between(conn, week_ago, now),
-        "trial_watch": trial_watch(conn)[:TRIAL_WATCH_IN_DIGEST],
-        "trial_watch_total": len(trial_watch(conn)),
-        "review_candidates": len(review_candidates(conn)),
+        "paying": paying_at(conn, now, scope),
+        "paying_delta": paying_at(conn, now, scope) - paying_at(conn, week_ago, scope),
+        "mrr": mrr_at(conn, now, scope),
+        "mrr_delta": mrr_at(conn, now, scope) - mrr_at(conn, week_ago, scope),
+        "movement": mrr_movement_between(conn, week_ago, now, scope),
+        "trial_watch": trial_watch(conn, scope=scope)[:TRIAL_WATCH_IN_DIGEST],
+        "trial_watch_total": len(trial_watch(conn, scope=scope)),
+        "review_candidates": len(review_candidates(conn, scope=scope)),
         "sessions": sessions,
         "sessions_delta": sessions - prior_sessions,
         "listing_installs": installs_ga4,
@@ -150,11 +161,11 @@ def should_send(last_sent, now=None) -> bool:
     return (now - last_sent) >= timedelta(days=MIN_DAYS_BETWEEN_DIGESTS)
 
 
-def send_weekly_digest(conn, settings, http_post=httpx.post, now=None) -> bool:
+def send_weekly_digest(conn, apps, settings, http_post=httpx.post, now=None) -> bool:
     from app_dashboard.slack import post_alert
 
     row = conn.execute(
-        "select last_synced_at from sync_state where source = %s", (DIGEST_SOURCE,)
+        "select last_run_at from operations_state where source = %s", (DIGEST_SOURCE,)
     ).fetchone()
     if not should_send(row[0] if row else None, now):
         logger.info("weekly digest already sent recently; skipping")
@@ -163,13 +174,23 @@ def send_weekly_digest(conn, settings, http_post=httpx.post, now=None) -> bool:
         logger.info("SLACK_WEBHOOK_URL unset; skipping weekly digest")
         return False
 
-    text = render_digest(collect_digest(conn, now), settings.app_name)
+    aggregate = collect_digest(conn, now)
+    text = render_digest(aggregate, "All Shopify apps")
+    app_lines = []
+    for app in apps:
+        data = collect_digest(conn, now, Scope.for_app(app.id))
+        app_lines.append(
+            f"{app.name}: {_money(data['mrr'])} MRR, {data['installed']} installed, "
+            f"{data['installs']} installs / {data['uninstalls']} uninstalls."
+        )
+    if app_lines:
+        text += "\n\n*By app*\n" + "\n".join(app_lines)
     if not post_alert(settings.slack_webhook_url, {"text": text}, http_post=http_post):
         return False   # no timestamp written, so the next run retries
 
     conn.execute(
-        """insert into sync_state (source, last_synced_at) values (%s, now())
-           on conflict (source) do update set last_synced_at = now()""",
+        """insert into operations_state (source, last_run_at) values (%s, now())
+           on conflict (source) do update set last_run_at = now()""",
         (DIGEST_SOURCE,),
     )
     conn.commit()

@@ -46,9 +46,23 @@ FAQ: list[tuple[str, list[str]]] = [
 
             "This only works if the dashboard knows which prices are annual. "
             "AppSubscription carries no billing-interval field, so annual plans "
-            "are recognised by price via ANNUAL_PLAN_AMOUNTS. A price missing "
+            "are recognised per app by price via `annual_plan_amounts` in "
+            "config/apps.yml. A price missing "
             "from that list is treated as monthly, which is exactly the twelve-"
             "times overstatement described above.",
+        ],
+    ),
+    (
+        "What does All apps count?",
+        [
+            "All apps adds app installations, subscriptions, lifecycle events, "
+            "and payments across the catalog. The same Shopify shop installed "
+            "in two apps counts twice because those are two product relationships, "
+            "with separate revenue and churn.",
+
+            "Select one app when you need listing traffic or product activation. "
+            "Those sources have app-specific definitions and are intentionally not "
+            "blended into a combined conversion rate.",
         ],
     ),
     (

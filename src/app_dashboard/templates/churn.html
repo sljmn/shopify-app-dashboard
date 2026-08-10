@@ -71,8 +71,8 @@
         {% for n in group.notes %}
         <p class="verbatim">{{ n.note }}
             <span class="sub">&mdash;
-            {%- if n.domain %} <a href="/customers/{{ n.domain }}">{{ n.shop }}</a>
-            {%- else %} {{ n.shop }}{% endif %}, {{ n.at.strftime("%b %Y") }}</span></p>
+            <a href="/customers/{{ n.shop_gid|urlencode }}{{ scope_qs }}">{{ n.shop }}</a>,
+            {{ n.at.strftime("%b %Y") }}</span></p>
         {% endfor %}
         {% endfor %}
         <p class="sub">The bars above count which box a merchant ticked; these are what they typed
@@ -89,7 +89,7 @@
         which makes this the only per-merchant language signal that exists: neither the Partner
         API nor any import carries a shop locale. Counted across every answer ever given,
         not just the mandatory era. Visitor language for the listing itself lives on
-        <a href="/reports/traffic">Traffic</a>.</p>
+        <a href="/reports/traffic{{ scope_qs }}">Traffic</a>.</p>
         {% endif %}
     </div>
 </div>
@@ -97,6 +97,7 @@
 <h1 id="all">Every uninstall</h1>
 <form class="filters" hx-get="/reports/churn" hx-target="#churn-results" hx-select="#churn-results"
       hx-swap="outerHTML" hx-push-url="true">
+    {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
     <select name="paid">
         <option value="">Paid and never paid</option>
         <option value="yes" {% if paid == "yes" %}selected{% endif %}>Paid at some point</option>
@@ -144,7 +145,7 @@ window here will not move them.</p>
         <tbody>
             {% for r in rows %}
             <tr>
-                <td>{% if r.domain %}<a href="/customers/{{ r.domain }}">{{ r.shop }}</a>{% else %}{{ r.shop }}{% endif %}<div class="sub">{{ r.domain or "" }}</div></td>
+                <td><a href="/customers/{{ r.shop_gid|urlencode }}{{ scope_qs }}">{{ r.shop }}</a><div class="sub">{{ r.domain or "" }}</div></td>
                 <td class="sub">{{ r.installed_at.strftime("%b %-d, %Y") if r.installed_at else "unknown" }}</td>
                 <td class="sub">{{ r.at.strftime("%b %-d, %Y") }}</td>
                 <td class="num">{{ r.days if r.days is not none else "" }}</td>

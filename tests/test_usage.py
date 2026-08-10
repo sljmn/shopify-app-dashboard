@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -12,11 +13,32 @@ from app_dashboard.usage import (
     at_risk_shops,
     has_usage_data,
     ingest,
-    parse_batch,
+    parse_batch as parse_raw_batch,
     time_to_activation,
 )
 
 NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+EVENT_TYPES = frozenset({"offer_created", "offer_impression", "offer_conversion"})
+
+
+def parse_batch(raw, now=None):
+    return parse_raw_batch(raw, EVENT_TYPES, now=now)
+
+
+@pytest.fixture
+def usage_app(db, test_app):
+    tables = ("shops", "app_events", "subscriptions", "usage_events")
+    for table in tables:
+        db.execute(f"alter table {table} alter column app_id set default {test_app.id}")
+    app = replace(
+        test_app,
+        usage_event_types=EVENT_TYPES,
+        usage_activation_event="offer_created",
+        usage_live_event="offer_impression",
+    )
+    yield app
+    for table in tables:
+        db.execute(f"alter table {table} alter column app_id drop default")
 
 
 def _event(**over):
@@ -113,12 +135,15 @@ def test_the_same_event_id_from_two_shops_is_fine():
 
 # --- ingest ----------------------------------------------------------------
 
-def test_ingest_is_idempotent_and_never_overwrites(db):
-    first = ingest(db, parse_batch(_body(_event(properties={"offer": "bogo"})), now=NOW))
+def test_ingest_is_idempotent_and_never_overwrites(db, usage_app):
+    first = ingest(
+        db, usage_app.id,
+        parse_batch(_body(_event(properties={"offer": "bogo"})), now=NOW),
+    )
     assert first == {"received": 1, "stored": 1, "duplicates": 0, "rate_limited": 0}
 
     # Same key, different payload: the stored event must win.
-    second = ingest(db, parse_batch(
+    second = ingest(db, usage_app.id, parse_batch(
         _body(_event(event_type="offer_conversion", properties={"offer": "tampered"})), now=NOW))
     assert second["stored"] == 0 and second["duplicates"] == 1
 
@@ -127,11 +152,14 @@ def test_ingest_is_idempotent_and_never_overwrites(db):
     assert row == [("offer_created", {"offer": "bogo"})]
 
 
-def test_a_shop_over_the_daily_cap_is_dropped_without_failing_the_batch(db, monkeypatch):
+def test_a_shop_over_the_daily_cap_is_dropped_without_failing_the_batch(
+    db, usage_app, monkeypatch
+):
     monkeypatch.setattr("app_dashboard.usage.PER_SHOP_DAILY_CAP", 2)
-    ingest(db, parse_batch(_body(_event(event_id="a"), _event(event_id="b")), now=NOW))
+    ingest(db, usage_app.id, parse_batch(
+        _body(_event(event_id="a"), _event(event_id="b")), now=NOW))
 
-    result = ingest(db, parse_batch(
+    result = ingest(db, usage_app.id, parse_batch(
         _body(_event(event_id="c"), _event(shop_gid="gid://shopify/Shop/2", event_id="d")),
         now=NOW))
     # The flooding shop is dropped; the innocent one in the same batch is not.
@@ -141,12 +169,28 @@ def test_a_shop_over_the_daily_cap_is_dropped_without_failing_the_batch(db, monk
         ("gid://shopify/Shop/1",)).fetchone()[0] == 2
 
 
-def test_the_cap_is_a_rolling_day_not_all_time(db, monkeypatch):
+def test_the_cap_is_a_rolling_day_not_all_time(db, usage_app, monkeypatch):
     monkeypatch.setattr("app_dashboard.usage.PER_SHOP_DAILY_CAP", 1)
-    ingest(db, parse_batch(_body(_event(event_id="old")), now=NOW))
+    ingest(db, usage_app.id, parse_batch(_body(_event(event_id="old")), now=NOW))
     db.execute("update usage_events set received_at = now() - interval '2 days'")
     db.commit()
-    assert ingest(db, parse_batch(_body(_event(event_id="new")), now=NOW))["stored"] == 1
+    assert ingest(
+        db, usage_app.id, parse_batch(_body(_event(event_id="new")), now=NOW)
+    )["stored"] == 1
+
+
+def test_identical_usage_event_ids_are_isolated_per_app(
+    db, usage_app, app_factory
+):
+    other = app_factory(slug="other-app", name="Other App")
+    events = parse_batch(_body(_event()), now=NOW)
+
+    assert ingest(db, usage_app.id, events)["stored"] == 1
+    assert ingest(db, other.id, events)["stored"] == 1
+    assert db.execute(
+        """select app_id, count(*) from usage_events
+           group by app_id order by app_id"""
+    ).fetchall() == [(usage_app.id, 1), (other.id, 1)]
 
 
 # --- reports ---------------------------------------------------------------
@@ -165,13 +209,13 @@ def _usage(db, gid, event_type, when, received=None):
         (gid, f"{gid}-{event_type}-{when.isoformat()}", event_type, when, received))
 
 
-def test_empty_state_is_distinguishable_from_zero_activation(db):
+def test_empty_state_is_distinguishable_from_zero_activation(db, usage_app):
     _install(db, "s1", NOW - timedelta(days=10))
     db.commit()
-    assert has_usage_data(db) is False
+    assert has_usage_data(db, usage_app) is False
 
 
-def test_activation_cohorts_and_median(db):
+def test_activation_cohorts_and_median(db, usage_app):
     tracking_started = NOW - timedelta(days=60)
     fast = NOW - timedelta(days=40)
     slow = NOW - timedelta(days=39)
@@ -186,13 +230,13 @@ def test_activation_cohorts_and_median(db):
     _usage(db, "slow", "offer_created", slow + timedelta(days=5), tracking_started)
     db.commit()
 
-    summary = time_to_activation(db)
+    summary = time_to_activation(db, usage_app)
     assert summary["eligible"] == 3          # "old" is not in the denominator
     assert summary["activated"] == 2 and summary["never"] == 1
     assert summary["rate"] == 67
     assert summary["median_hours"] == pytest.approx(61, abs=2)   # median of 2h and 120h
 
-    rows = activation_cohorts(db, months=6)
+    rows = activation_cohorts(db, usage_app, months=6)
     assert len(rows) == 1
     assert rows[0]["cohort"] == 3
     assert rows[0]["within_48h"] == 1        # only "fast" made 48 hours
@@ -200,7 +244,7 @@ def test_activation_cohorts_and_median(db):
     assert rows[0]["rate_7d"] == 67
 
 
-def test_at_risk_lists_paying_shops_whose_offers_stopped_showing(db):
+def test_at_risk_lists_paying_shops_whose_offers_stopped_showing(db, usage_app):
     for gid in ("quiet", "busy", "unpaid"):
         _install(db, gid, NOW - timedelta(days=90), name=gid.title())
     for gid in ("quiet", "busy"):
@@ -211,19 +255,19 @@ def test_at_risk_lists_paying_shops_whose_offers_stopped_showing(db):
     _usage(db, "unpaid", "offer_impression", datetime.now(timezone.utc) - timedelta(days=30))
     db.commit()
 
-    rows = at_risk_shops(db, days=14)
+    rows = at_risk_shops(db, usage_app, days=14)
     # "busy" served an offer yesterday; "unpaid" is quiet but pays nothing, so
     # it is a trial-watch problem, not a churn-risk one.
     assert [r["shop"] for r in rows] == ["Quiet"]
     assert rows[0]["days_quiet"] == 30
 
 
-def test_a_shop_that_predates_tracking_is_not_called_at_risk(db):
+def test_a_shop_that_predates_tracking_is_not_called_at_risk(db, usage_app):
     _install(db, "ancient", NOW - timedelta(days=300), name="Ancient")
     db.execute("insert into subscriptions (id, shop_gid, monthly_amount, converted_at) "
                "values ('c1', 'ancient', 19.00, now() - interval '200 days')")
     db.commit()
-    assert at_risk_shops(db, days=14) == []
+    assert at_risk_shops(db, usage_app, days=14) == []
 
 
 # --- hardening added after the pre-publication red team ---------------------

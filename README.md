@@ -1,6 +1,6 @@
 # Shopify App Dashboard
 
-Self-hosted analytics for your own Shopify app. It polls the Shopify Partner API and derives
+Self-hosted analytics for all of your Shopify apps in one dashboard. It polls the Shopify Partner API and derives
 installs, uninstalls with reasons, MRR and what moved it, collected revenue, cohort retention,
 churn, and activation.
 
@@ -17,15 +17,15 @@ churn, and activation.
 
 ![The Overview page](docs/screenshots/overview.png)
 
-## It is in use on a real app
+## Built for a real multi-app portfolio
 
-This is the dashboard behind [Promo Party](https://apps.shopify.com/promo-party-fgwp), a live app in
-the Shopify App Store, and it is the one its developers actually open. One Fly machine, one
-Postgres, polling the Partner API every 15 minutes, serving a real hostname since August 2026, when
-[Mantle](https://docs.heymantle.com/wind-down) shut down and the replacement had to exist.
+This fork tracks 16 apps across five Shopify Partner organizations. The default view aggregates
+app installations, subscriptions, lifecycle events, and payments; the selector narrows every
+supported report to one app. Traffic and product activation require one selected app because their
+definitions and source properties are app-specific.
 
-**The screenshots are not that app.** They come from `scripts/seed_demo.py`, which invents an app
-called Demo App and about two hundred fictional merchants. No real merchant, domain, contact or
+**The screenshots are synthetic.** `scripts/seed_demo.py` invents two apps and fictional merchants.
+No real merchant, domain, contact or
 revenue figure appears anywhere in this repository, in the screenshots, or in the git history.
 
 ## What it gives you
@@ -45,7 +45,7 @@ revenue figure appears anywhere in this repository, in the screenshots, or in th
 
 ## Install
 
-Requires Python 3.13, Postgres, and a Shopify Partner API token.
+Requires Python 3.13, Postgres, and one Shopify Partner API token per Partner organization.
 
 ### With Claude Code
 
@@ -54,7 +54,7 @@ asks you for the things it cannot know instead of inventing them, which for this
 difference between a correct dashboard and a confidently wrong one:
 
 ```text
-Set up https://github.com/kgelster/shopify-app-dashboard for my Shopify app.
+Set up this Shopify app dashboard for all apps in my Partner organizations.
 
 Clone it, then read README.md and docs/configuration.md first.
 
@@ -63,16 +63,14 @@ value:
 
 1. `uv sync`, then create the Postgres database and tell me the
    DATABASE_URL you used.
-2. Ask me for my Partner org id and app id, then walk me through creating a
-   Partner API token at
+2. Ask me for every Partner org and app id, then walk me through creating one
+   Partner API token per organization at
    partners.shopify.com/<org-id>/settings/partner_api_clients
    (that slug, not api_clients) and wait for me to paste it back.
-3. Ask me every price I charge, including annual ones with cents, then set
-   ANNUAL_PLAN_AMOUNTS to just the annual ones. Explain what happens if it
-   is wrong before you write it.
+3. Build `config/apps.yml`. Put annual prices, listing URL, usage contract and
+   GA4 property under each app; put only secret environment-variable names in YAML.
 4. Ask me what my app's core "the merchant actually used it" action is,
-   and set USAGE_EVENT_TYPES, USAGE_ACTIVATION_EVENT and USAGE_LIVE_EVENT
-   from that answer.
+   and set that app's `usage.event_types`, `activation_event` and `live_event`.
 5. Write .env from .env.example, generate a SESSION_SECRET, and confirm
    .env is gitignored. Never commit it, never print the token back to me.
 6. Run the migrations, start the app, and tell me when the first sync is
@@ -95,11 +93,10 @@ uv run python -m app_dashboard.migrate
 uv run uvicorn app_dashboard.web:app --reload
 ```
 
-Read [docs/configuration.md](docs/configuration.md) before the first run. Three settings decide
-whether the numbers are right, and `ANNUAL_PLAN_AMOUNTS` in particular will silently report annual
-subscribers at twelve times their real MRR if you leave it unset.
+Read [docs/configuration.md](docs/configuration.md) before the first run. Annual prices are per app;
+an omitted annual price silently reports that app's subscriber at twelve times its real MRR.
 
-The first sync replays your app's full history from the events feed, so there is no historical
+The first sync replays every app's full history from the events feed, so there is no historical
 import to arrange.
 
 ### Without a Partner token
@@ -143,7 +140,8 @@ kept out of each charge, measured per transaction rather than assumed to be 2.9%
 ### Funnel and activation
 
 The Partner API knows lifecycle only: installed, paid, left. Whether anyone ever *used* the app is
-invisible from that side, so activation is reported by the app itself through `POST /ingest/usage`.
+invisible from that side, so activation is reported by the app itself through
+`POST /ingest/usage/<app-slug>`.
 Until events arrive it reads unknown, never 0%.
 
 ![The Funnel page](docs/screenshots/funnel.png)
@@ -181,15 +179,14 @@ out the cookie it already issued.
 | [docs/architecture.md](docs/architecture.md) | The pipeline, which table is the truth for which number, and the traps. Read before changing `derive.py` or `stats.py`. |
 | [docs/deploy.md](docs/deploy.md) | Secrets, deploy, verification, forcing a replay, backfills. |
 | [docs/exports.md](docs/exports.md) | The `.md` twin of every page, and `/export.json`. |
-| [docs/usage-events-integration.md](docs/usage-events-integration.md) | The `POST /ingest/usage` contract. Hand this to whoever writes your app. |
+| [docs/usage-events-integration.md](docs/usage-events-integration.md) | The per-app usage ingest contract. Hand this to whoever writes your app. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Running the tests, and what is likely to be merged. |
 
 ## Scope
 
-This is what we run for our own app. It was built because Mantle shut down and the replacement had
-to exist; publishing it costs nothing and it may save someone else the same build. It is
-deliberately one Partner org, one app, one Postgres, one machine, with opinions where a product
-would have settings. It works; it is not a product.
+This is an independently maintained fork built to replace Mantle for a multi-app portfolio. It is
+deliberately one Postgres database and one application instance, with a versioned app catalog and
+one scheduler coordinating every app. It works; it is not a hosted product.
 
 **No support is promised, and that is not modesty.** Issues and pull requests are welcome and may
 sit for a while. Nobody is on call. There is no roadmap and no deprecation policy. If you need

@@ -65,7 +65,7 @@ METRICS: dict[str, Metric] = {
                    "projection, not cash.",
         rule="sum of monthly_amount over subscriptions that have not churned, on "
              "shops still installed. An annual plan counts as price / 12, but "
-             "only if its price is listed in ANNUAL_PLAN_AMOUNTS: the Partner "
+             "only if its price is listed for that app in config/apps.yml: the Partner "
              "API does not state a billing interval, so an unlisted price is "
              "treated as monthly and counted at twelve times its true value.",
         source="subscriptions joined to charges",

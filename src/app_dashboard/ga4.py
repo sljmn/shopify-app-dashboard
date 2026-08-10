@@ -26,6 +26,7 @@ from google.analytics.data_v1beta.types import (
 )
 from google.oauth2 import service_account
 
+from app_dashboard.catalog import AppConfig
 from app_dashboard.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ def fetch_rows(client, property_id: str, start: date, end: date) -> list[dict]:
     return list(merged.values())
 
 
-def upsert_rows(conn, rows: list[dict]) -> int:
+def upsert_rows(conn, app_id: int, rows: list[dict]) -> int:
     if not rows:
         return 0
     with conn.cursor() as cur:
@@ -124,24 +125,25 @@ def upsert_rows(conn, rows: list[dict]) -> int:
             cur.execute(
                 """
                 insert into ga4_daily
-                    (date, dimension, value, sessions, users,
+                    (app_id, date, dimension, value, sessions, users,
                      add_app_clicks, installs, ad_clicks)
-                values (%(date)s, %(dimension)s, %(value)s, %(sessions)s, %(users)s,
+                values (%(app_id)s, %(date)s, %(dimension)s, %(value)s,
+                        %(sessions)s, %(users)s,
                         %(add_app_clicks)s, %(installs)s, %(ad_clicks)s)
-                on conflict (date, dimension, value) do update set
+                on conflict (app_id, date, dimension, value) do update set
                     sessions = excluded.sessions,
                     users = excluded.users,
                     add_app_clicks = excluded.add_app_clicks,
                     installs = excluded.installs,
                     ad_clicks = excluded.ad_clicks
                 """,
-                row,
+                {**row, "app_id": app_id},
             )
     conn.commit()
     return len(rows)
 
 
-def sync_ga4(conn, client, property_id: str, *, lookback_days=DEFAULT_LOOKBACK_DAYS,
+def sync_ga4(conn, client, app: AppConfig, *, lookback_days=DEFAULT_LOOKBACK_DAYS,
              today=None, earliest=None) -> int:
     """Refresh a trailing window. On an empty table, pull everything instead.
 
@@ -151,9 +153,11 @@ def sync_ga4(conn, client, property_id: str, *, lookback_days=DEFAULT_LOOKBACK_D
     today = today or date.today()
     if earliest is None:
         earliest = get_settings().ga4_earliest_data
-    (existing,) = conn.execute("select count(*) from ga4_daily").fetchone()
+    (existing,) = conn.execute(
+        "select count(*) from ga4_daily where app_id = %s", (app.id,)
+    ).fetchone()
     start = earliest if not existing else today - timedelta(days=lookback_days)
-    rows = fetch_rows(client, property_id, start, today)
-    written = upsert_rows(conn, rows)
-    logger.info("ga4 sync wrote %s rows from %s to %s", written, start, today)
+    rows = fetch_rows(client, app.ga4_property_id or "", start, today)
+    written = upsert_rows(conn, app.id, rows)
+    logger.info("%s GA4 sync wrote %s rows from %s to %s", app.slug, written, start, today)
     return written

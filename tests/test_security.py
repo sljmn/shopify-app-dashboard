@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from app_dashboard.auth import SESSION_COOKIE, issue_session
 from app_dashboard.security import RateLimiter, client_key
@@ -16,8 +17,7 @@ SESSION_SECRET = "test-session-secret-long-enough-to-pass"
 
 
 @pytest.fixture(autouse=True)
-def ppa_env(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost:5432/app_dashboard_test")
+def ppa_env(monkeypatch, db, test_app):
     monkeypatch.setenv("PARTNER_API_TOKEN", "x")
     monkeypatch.setenv("PARTNER_ORG_ID", "1")
     monkeypatch.setenv("PARTNER_APP_ID", "2")
@@ -28,7 +28,21 @@ def ppa_env(monkeypatch):
     monkeypatch.setenv("GOOGLE_ALLOWED_DOMAINS", "example.com")
     monkeypatch.setenv("SESSION_SECRET", SESSION_SECRET)
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://dash.test")
-    monkeypatch.setenv("USAGE_INGEST_TOKEN", "ingest-secret")
+    monkeypatch.setenv("TOKEN_1", "test-partner-token")
+    monkeypatch.setenv("TEST_APP_USAGE_TOKEN", "ingest-secret")
+    db.execute(
+        """update apps set usage_token_env = %s, usage_event_types = %s,
+                  usage_activation_event = %s, usage_live_event = %s
+           where id = %s""",
+        (
+            "TEST_APP_USAGE_TOKEN",
+            Jsonb(["offer_created", "offer_impression"]),
+            "offer_created",
+            "offer_impression",
+            test_app.id,
+        ),
+    )
+    db.commit()
 
 
 def keep_open(conn):
@@ -126,7 +140,7 @@ def test_a_non_ascii_usage_token_is_rejected_not_a_500(db):
     # decodes it as latin-1, which is how a str with a codepoint above 127
     # reaches the comparison. httpx refuses to encode such a str itself, so
     # passing one here would test the client rather than the server.
-    response = client.post("/ingest/usage", json={"events": []},
+    response = client.post("/ingest/usage/test-app", json={"events": []},
                            headers={"X-Usage-Token": b"\xff\xfe"})
     assert response.status_code == 401
 
@@ -177,7 +191,7 @@ def test_a_signed_in_session_is_never_throttled(db):
 def test_repeated_bad_ingest_tokens_are_throttled(db):
     client = client_for(db)
     codes = [
-        client.post("/ingest/usage", json={"events": []},
+        client.post("/ingest/usage/test-app", json={"events": []},
                     headers={"X-Usage-Token": "nope"}).status_code
         for _ in range(25)
     ]

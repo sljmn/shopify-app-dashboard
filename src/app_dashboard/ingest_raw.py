@@ -7,8 +7,8 @@ from app_dashboard.catalog import AppConfig
 
 # AppSubscription carries no billing-interval field (confirmed by introspecting
 # the Partner API 2026-08: it exposes only amount/billingOn/id/name/test), so the
-# interval has to be inferred from the price. List your annual prices in
-# ANNUAL_PLAN_AMOUNTS; everything else is treated as a 30-day plan.
+# interval has to be inferred from the price. List each app's annual prices in
+# config/apps.yml; everything else is treated as a 30-day plan.
 #
 # Getting this wrong is silent and expensive in both directions. An annual price
 # missing from the list is counted at twelve times its real MRR. The way to

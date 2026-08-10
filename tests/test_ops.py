@@ -3,7 +3,14 @@ so its predicate and its de-dupe get direct tests rather than being trusted."""
 
 from types import SimpleNamespace
 
+import pytest
+
 from app_dashboard.ops import build_stale_message, check_stale_sync, sync_health
+
+
+@pytest.fixture(autouse=True)
+def app_exists(test_app):
+    return test_app
 
 
 def _settings(webhook="http://hook", poll_interval_minutes=15):
@@ -26,9 +33,9 @@ def _capture():
 
 def _synced(db, ago_sql):
     db.execute(
-        "insert into sync_state (source, cursor, last_synced_at) "
-        f"values ('partner_api', 'c', now() - interval '{ago_sql}') "
-        "on conflict (source) do update set last_synced_at = excluded.last_synced_at"
+        "insert into sync_state (app_id, source, cursor, last_synced_at) "
+        f"select id, 'partner_api', 'c', now() - interval '{ago_sql}' from apps limit 1 "
+        "on conflict (app_id, source) do update set last_synced_at = excluded.last_synced_at"
     )
     db.commit()
 
@@ -52,53 +59,58 @@ def test_a_sync_that_never_ran_is_stale_not_green(db):
     assert health["last_synced_at"] is None and health["age_minutes"] is None
 
 
-def test_health_counts_recent_ingestion_and_shops(db):
+def test_health_counts_recent_ingestion_and_shops(db, test_app):
     _synced(db, "5 minutes")
-    db.execute("insert into shops (shop_gid, install_state) values ('s1','installed')")
     db.execute(
-        "insert into raw_app_events (id, type, occurred_at, shop_gid, payload, ingested_at) "
-        "values ('r1','RELATIONSHIP_INSTALLED', now(), 's1', '{}', now())")
+        "insert into shops (app_id, shop_gid, install_state) values (%s,'s1','installed')",
+        (test_app.id,),
+    )
     db.execute(
-        "insert into raw_app_events (id, type, occurred_at, shop_gid, payload, ingested_at) "
-        "values ('r2','RELATIONSHIP_INSTALLED', now(), 's1', '{}', now() - interval '3 days')")
+        "insert into raw_app_events (app_id, id, type, occurred_at, shop_gid, payload, ingested_at) "
+        "values (%s,'r1','RELATIONSHIP_INSTALLED', now(), 's1', '{}', now())",
+        (test_app.id,))
+    db.execute(
+        "insert into raw_app_events (app_id, id, type, occurred_at, shop_gid, payload, ingested_at) "
+        "values (%s,'r2','RELATIONSHIP_INSTALLED', now(), 's1', '{}', now() - interval '3 days')",
+        (test_app.id,))
     db.commit()
     health = sync_health(db, poll_interval_minutes=15)
     assert health["events_24h"] == 1 and health["shops"] == 1
 
 
-def test_fresh_sync_posts_nothing(db):
+def test_fresh_sync_posts_nothing(db, test_app):
     _synced(db, "10 minutes")
     sent, post = _capture()
-    assert check_stale_sync(db, _settings(), http_post=post) is False
+    assert check_stale_sync(db, test_app, _settings(), http_post=post) is False
     assert sent == []
 
 
-def test_stale_sync_alerts_once_per_episode(db):
+def test_stale_sync_alerts_once_per_episode(db, test_app):
     _synced(db, "3 hours")
     sent, post = _capture()
-    assert check_stale_sync(db, _settings(), http_post=post) is True
+    assert check_stale_sync(db, test_app, _settings(), http_post=post) is True
     assert len(sent) == 1
     # Still stale on the next tick: the point of the flag is that this is quiet.
-    assert check_stale_sync(db, _settings(), http_post=post) is False
+    assert check_stale_sync(db, test_app, _settings(), http_post=post) is False
     assert len(sent) == 1
 
 
-def test_recovery_rearms_the_alert(db):
+def test_recovery_rearms_the_alert(db, test_app):
     _synced(db, "3 hours")
     sent, post = _capture()
-    check_stale_sync(db, _settings(), http_post=post)
+    check_stale_sync(db, test_app, _settings(), http_post=post)
     _synced(db, "1 minute")
-    assert check_stale_sync(db, _settings(), http_post=post) is False
+    assert check_stale_sync(db, test_app, _settings(), http_post=post) is False
     assert db.execute(
         "select stale_alerted_at from sync_state where source='partner_api'"
     ).fetchone()[0] is None
     # A second outage after recovery must alert again.
     _synced(db, "3 hours")
-    assert check_stale_sync(db, _settings(), http_post=post) is True
+    assert check_stale_sync(db, test_app, _settings(), http_post=post) is True
     assert len(sent) == 2
 
 
-def test_a_failed_post_leaves_the_alert_armed(db):
+def test_a_failed_post_leaves_the_alert_armed(db, test_app):
     _synced(db, "3 hours")
     calls = []
 
@@ -106,18 +118,20 @@ def test_a_failed_post_leaves_the_alert_armed(db):
         calls.append(json)
         return SimpleNamespace(status_code=500)
 
-    assert check_stale_sync(db, _settings(), http_post=failing) is False
+    assert check_stale_sync(db, test_app, _settings(), http_post=failing) is False
     assert db.execute(
         "select stale_alerted_at from sync_state where source='partner_api'"
     ).fetchone()[0] is None
-    assert check_stale_sync(db, _settings(), http_post=failing) is False
+    assert check_stale_sync(db, test_app, _settings(), http_post=failing) is False
     assert len(calls) == 2   # retried rather than silently swallowed
 
 
-def test_no_webhook_configured_is_a_noop(db):
+def test_no_webhook_configured_is_a_noop(db, test_app):
     _synced(db, "3 hours")
     sent, post = _capture()
-    assert check_stale_sync(db, _settings(webhook=None), http_post=post) is False
+    assert check_stale_sync(
+        db, test_app, _settings(webhook=None), http_post=post
+    ) is False
     assert sent == []
 
 
@@ -128,7 +142,7 @@ def test_stale_message_carries_no_merchant_data():
     assert "—" not in text          # no em dash
 
 
-def test_both_thresholds_scale_with_the_poll_interval(db):
+def test_both_thresholds_scale_with_the_poll_interval(db, test_app):
     """A 75-minute-old sync is normal at a 30-minute interval and a dead
     pipeline at 15. Neither threshold may be a fixed number of minutes, or
     raising POLL_INTERVAL_MINUTES silently turns every slow poll into an alert."""
@@ -139,9 +153,9 @@ def test_both_thresholds_scale_with_the_poll_interval(db):
     assert sync_health(db, poll_interval_minutes=30)["stale"] is False
 
     sent, post = _capture()
-    assert check_stale_sync(db, _settings(poll_interval_minutes=30),
+    assert check_stale_sync(db, test_app, _settings(poll_interval_minutes=30),
                             http_post=post) is False
     assert sent == []
-    assert check_stale_sync(db, _settings(poll_interval_minutes=15),
+    assert check_stale_sync(db, test_app, _settings(poll_interval_minutes=15),
                             http_post=post) is True
     assert len(sent) == 1

@@ -3,6 +3,7 @@
 <h1>Customers</h1>
 <form class="filters" hx-get="/customers" hx-target="#customers-results" hx-select="#customers-results"
       hx-swap="outerHTML" hx-push-url="true">
+    {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
     <select name="install_state">
         <option value="">Installed and uninstalled</option>
         {% for s in facets.states %}

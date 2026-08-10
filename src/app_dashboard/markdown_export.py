@@ -27,6 +27,7 @@ from app_dashboard.customers import count_customers, distinct_facets, list_custo
 from app_dashboard.faq import FAQ
 from app_dashboard.metrics import METRICS
 from app_dashboard.ops import sync_health
+from app_dashboard.scope import Scope
 from app_dashboard.ranges import (
     CHURN_DAYS,
     MONEY_MONTHS,
@@ -151,9 +152,10 @@ READING_NOTES = """## How to read this
 
 def _overview(conn, settings, query: dict) -> str:
     months = choice(query.get("months"), MONEY_MONTHS, 12)
-    s = stats.overview_stats(conn)
-    health = sync_health(conn, settings.poll_interval_minutes)
-    notes = anno.recent(conn)
+    scope = query["_scope"]
+    s = stats.overview_stats(conn, scope)
+    health = sync_health(conn, settings.poll_interval_minutes, scope)
+    notes = anno.recent(conn, scope)
     return "\n".join([
         "# Overview\n",
         f"{s['installed']} shop{'' if s['installed'] == 1 else 's'} currently "
@@ -172,7 +174,11 @@ def _overview(conn, settings, query: dict) -> str:
         "states, so they compare to their own value 30 days ago; `installs_30d`, "
         "`uninstalls_30d` and `net_30d` are counts over a window, so they compare to the "
         "30 days before this one. `pct` is null when the earlier value was zero.\n",
-        _json(stats.overview_comparison(conn, {**s, "net_30d": stats.collected_revenue(conn)["net_30d"]})),
+        _json(stats.overview_comparison(
+            conn,
+            {**s, "net_30d": stats.collected_revenue(conn, scope)["net_30d"]},
+            scope=scope,
+        )),
         "\n## Annotations\n",
         "Hand-written notes marking why a number moved, newest first. These are the only rows "
         "on this dashboard a person typed, so they carry no more authority than whoever typed "
@@ -189,15 +195,15 @@ def _overview(conn, settings, query: dict) -> str:
         "the raw counts behind that rate: at this size it is a handful of events, so LTV "
         "is an order of magnitude, not a forecast. `ltv` is null when nobody churned in "
         "the window, because no departures is not evidence of no churn.\n",
-        _json(stats.unit_economics(conn)),
+        _json(stats.unit_economics(conn, scope=scope)),
         f"\n## MRR by month, last {months} months\n",
         "Sum of subscriptions converted by each month's end and not yet churned.\n",
-        _json(stats.mrr_trend(conn, months)),
+        _json(stats.mrr_trend(conn, months, scope)),
         "\n## What moved MRR\n",
         "Each month's change split into new, reactivation, expansion, contraction, and "
         "churned. The five sum exactly to the change in the MRR series above. A shop that "
         "paid before, stopped, and came back is a reactivation, not a new customer.\n",
-        _json(stats.mrr_movements(conn, months)),
+        _json(stats.mrr_movements(conn, months, scope)),
         "\n## Money actually collected\n",
         "Cash, not projection. Everything above is MRR (what the current subscriptions are "
         "worth per month); this is what Shopify billed and what reached the payout. Both "
@@ -211,84 +217,59 @@ def _overview(conn, settings, query: dict) -> str:
         "`refunded` is money that came back out, as a positive amount. Refunds, credits "
         "and adjustments exist ONLY in this feed -- no app event is emitted when money is "
         "returned -- so every other number on this dashboard is blind to them.\n",
-        _json(stats.collected_revenue(conn)),
+        _json(stats.collected_revenue(conn, scope)),
         "\n### By month\n",
-        _json(stats.revenue_by_month(conn, months)),
+        _json(stats.revenue_by_month(conn, months, scope)),
         "\n## Installs and uninstalls by month\n",
-        _json(stats.monthly_activity(conn)),
+        _json(stats.monthly_activity(conn, scope=scope)),
         "\n## Customers by country\n",
         "Country comes from the CSV importer, not the Partner API, and is frozen at "
         "as of 2026-08-07. Shops that installed after that date have none.\n",
-        _json(stats.country_breakdown(conn)),
+        _json(stats.country_breakdown(conn, scope=scope)),
         "\n## Plan mix\n",
-        _json(stats.plan_mix(conn)),
+        _json(stats.plan_mix(conn, scope)),
         "\n## Why merchants leave\n",
-        _json(stats.uninstall_reasons(conn)),
+        _json(stats.uninstall_reasons(conn, scope)),
     ])
 
 
-def customer_markdown(conn, settings, shop_domain: str, detail: dict,
+def customer_markdown(conn, settings, shop_gid: str, detail: dict,
                       now: datetime | None = None) -> str:
-    """One merchant's page as markdown. Not in PAGES: there is one of these per
-    shop rather than one per route, so it gets its own frontmatter builder.
-
-    Same contact rule as everywhere else here -- `customer_detail` never selects
-    shops.owner_name or shops.email, so there is nothing to strip.
-    """
+    """One merchant across every app it has installed, without contact details."""
     now = now or datetime.now(timezone.utc)
     base_url = settings.public_base_url.rstrip("/")
-    shop = detail["shop"]
-    name = shop["shop_name"] or shop_domain
+    name = detail["display_name"]
+    domains = ", ".join(detail["domains"]) or "No domain recorded"
     frontmatter = (
         "---\n"
         f"title: '{settings.dashboard_name}: {name}'\n"
         "description: >-\n"
-        f"  Lifecycle timeline, payment history and product usage for the shop "
-        f"{shop_domain}.\n"
+        f"  Lifecycle, payments and product usage for {shop_gid} across its apps.\n"
         "source_url:\n"
-        f"  html: '{base_url}/customers/{shop_domain}'\n"
-        f"  md: '{base_url}/customers/{shop_domain}.md'\n"
+        f"  html: '{base_url}/customers/{shop_gid}'\n"
+        f"  md: '{base_url}/customers/{shop_gid}.md'\n"
         f"generated_at: '{now.isoformat(timespec='seconds')}'\n"
         "---\n"
     )
     body = "\n".join([
         f"# {name}\n",
-        f"`{shop_domain}` is currently **{detail['current_state']}**"
-        + (f", installed {detail['install_count']} separate times"
-           if detail["install_count"] > 1 else "")
-        + f". {detail['money']['count']} payments totalling "
-          f"{Decimal(detail['money']['net']):.2f} USD net of fees.\n",
-        "## Timeline\n",
-        "Strict occurred_at order. The state above is read off the last lifecycle row "
-        "here, so the two cannot disagree. `chose_to_leave` is false for an uninstall "
-        "that was Shopify closing or freezing the store rather than the merchant "
-        "leaving; those merchants are never shown the exit survey.\n",
-        _json(detail["timeline"]),
-        "\n## Shop\n",
-        _json(shop),
-        "\n## Subscription\n",
-        _json(detail["subscription"]),
-        "\n## Payments\n",
-        "Newest first. `fee` is Shopify's revenue share, which is 0 below $1M of "
-        "lifetime earnings; the real deduction is `gross` minus `net` and is not a flat "
-        "rate. A negative row is a refund, credit or adjustment.\n",
-        _json(detail["payments"]),
-        "\n## Totals\n",
-        _json(detail["money"]),
-        "\n## Product usage\n",
-        f"Reported by {settings.app_name} itself, not the Partner API. Empty means the shop "
-        "predates tracking or never built an offer -- the two are not distinguishable "
-        "from here.\n",
-        _json(detail["usage"]),
+        f"Shop GID: `{shop_gid}`. Domains: {domains}. This merchant has records in "
+        f"{len(detail['apps'])} app{'' if len(detail['apps']) == 1 else 's'}.\n",
+        "## Apps\n",
+        "Each entry is scoped to one app and contains its lifecycle timeline, current "
+        "subscription, payment history, totals, and product usage. Contact names and "
+        "email addresses are deliberately absent.\n",
+        _json(detail["apps"]),
     ])
     return "\n".join([frontmatter, body, "", READING_NOTES])
 
 
 def _customers(conn, settings, query: dict) -> str:
+    scope = query["_scope"]
     filters = {k: query.get(k) or None
                for k in ("industry", "country", "search", "install_state")}
-    total = count_customers(conn, **filters)
-    rows = list_customers(conn, **filters, limit=1000)
+    total = count_customers(conn, **filters, scope=scope)
+    rows = list_customers(conn, **filters, limit=1000, scope=scope)
     slim = [
         {"shop_name": r["shop_name"], "shop_domain": r["shop_domain"],
          "country": r["country"], "industry": r["industry"],
@@ -308,7 +289,7 @@ def _customers(conn, settings, query: dict) -> str:
         "## Shops\n",
         _json(slim),
         "\n## Available filter values\n",
-        _json(distinct_facets(conn)),
+        _json(distinct_facets(conn, scope)),
     ])
 
 
@@ -326,12 +307,14 @@ def _no_contact(rows: list[dict]) -> list[dict]:
 
 
 def _actions(conn, settings, query: dict) -> str:
+    scope = query["_scope"]
+    selected_app = query.get("_app")
     trial_days = choice(query.get("trial_days"), TRIAL_DAYS, 14)
-    review = _no_contact(stats.review_candidates(conn))
-    annual = stats.annual_upgrade_candidates(conn)
-    trial = stats.trial_watch(conn, trial_days)
-    tracking = has_usage_data(conn)
-    at_risk = at_risk_shops(conn) if tracking else []
+    review = _no_contact(stats.review_candidates(conn, scope=scope))
+    annual = stats.annual_upgrade_candidates(conn, scope=scope)
+    trial = stats.trial_watch(conn, trial_days, scope)
+    tracking = bool(selected_app and has_usage_data(conn, selected_app))
+    at_risk = at_risk_shops(conn, selected_app) if tracking else []
     quiet = []
     if tracking:
         quiet = [
@@ -368,28 +351,30 @@ def _actions(conn, settings, query: dict) -> str:
 
 
 def _funnel(conn, settings, query: dict) -> str:
+    scope = query["_scope"]
+    selected_app = query.get("_app")
     parts = [
         "# Funnel\n",
         "Lifecycle funnel and install-month conversion. Percentages in the funnel are "
         "relative to every shop that ever installed.\n",
         "## Lifecycle funnel, all time\n",
-        _json(stats.funnel_stats(conn)),
+        _json(stats.funnel_stats(conn, scope)),
         "\n## Conversion by install month\n",
-        _json(stats.monthly_conversion(conn)),
+        _json(stats.monthly_conversion(conn, scope=scope)),
         "\n## Activation\n",
     ]
-    if has_usage_data(conn):
+    if selected_app and has_usage_data(conn, selected_app):
         parts += [
             "Whether merchants build an offer, reported by the app itself: the Partner API "
             "carries no product usage. Only shops that installed after tracking started are "
             "counted, because an earlier shop has no first-offer event to find and would "
             "otherwise read as a merchant who never activated. `median_hours` is a median, not "
             "a mean, so one merchant activating a year late does not distort it.\n",
-            _json(time_to_activation(conn)),
+            _json(time_to_activation(conn, selected_app)),
             "\n### By install cohort\n",
             "`within_48h` and `within_7d` count shops whose first `offer_created` landed inside "
             "that window after their install.\n",
-            _json(activation_cohorts(conn)),
+            _json(activation_cohorts(conn, selected_app)),
         ]
     else:
         parts.append(
@@ -399,13 +384,14 @@ def _funnel(conn, settings, query: dict) -> str:
 
 
 def _churn(conn, settings, query: dict) -> str:
+    scope = query["_scope"]
     since_days = choice(query.get("days"), CHURN_DAYS, None)
     rows = stats.churn_rows(conn, paid=query.get("paid"),
                             gave_reason=query.get("reason"),
                             bucket=query.get("bucket") or None,
-                            since_days=since_days)
-    deaths = stats.store_deaths(conn)
-    reasons = stats.uninstall_reasons(conn)
+                            since_days=since_days, scope=scope)
+    deaths = stats.store_deaths(conn, scope=scope)
+    reasons = stats.uninstall_reasons(conn, scope)
     return "\n".join([
         "# Churn\n",
         f"{len(rows)} merchant-chosen uninstalls, and {deaths['count']} stores Shopify "
@@ -424,11 +410,11 @@ def _churn(conn, settings, query: dict) -> str:
         "The free-text notes, grouped by the first canonical reason bucket the merchant "
         "selected. Verbatim and untranslated. The same notes appear one per row under "
         "Every uninstall below; this is the short read.\n",
-        _json(stats.uninstall_verbatims(conn)),
+        _json(stats.uninstall_verbatims(conn, scope=scope)),
         "\n## Time installed before leaving\n",
-        _json(stats.time_to_uninstall(conn)),
+        _json(stats.time_to_uninstall(conn, scope)),
         "\n## Paid versus never paid\n",
-        _json(stats.churn_composition(conn)),
+        _json(stats.churn_composition(conn, scope)),
         "\n## Every uninstall\n",
         "One row per uninstall event, newest first. `days` measures the stay that ended, "
         "so a shop that installed twice reports each stay separately. `note` is the "
@@ -444,6 +430,7 @@ def _churn(conn, settings, query: dict) -> str:
 
 
 def _retention(conn, settings, query: dict) -> str:
+    scope = query["_scope"]
     return "\n".join([
         "# Retention\n",
         "Two cohort grids. `cells` is indexed by months since the cohort started, and "
@@ -452,20 +439,25 @@ def _retention(conn, settings, query: dict) -> str:
         "## Installed retention\n",
         "Every shop that ever installed, by first-install month. A shop that uninstalled "
         "and came back counts as retained.\n",
-        _json(stats.install_retention_cohorts(conn)),
+        _json(stats.install_retention_cohorts(conn, scope=scope)),
         "\n## Paying retention\n",
         "Subscriptions only, by the month the subscription started.\n",
-        _json(stats.retention_cohorts(conn)),
+        _json(stats.retention_cohorts(conn, scope=scope)),
     ])
 
 
 def _traffic(conn, settings, query: dict) -> str:
     days = choice(query.get("days"), TRAFFIC_DAYS, 90)
-    summary = stats.traffic_summary(conn, days)
+    selected_app = query.get("_app")
+    if selected_app is None:
+        return "# Traffic\n\nSelect one app. Traffic belongs to one App Store listing."
+    app_id = selected_app.id
+    summary = stats.traffic_summary(conn, app_id, days)
     return "\n".join([
         "# Traffic\n",
         "App Store listing traffic from GA4 property "
-        f"{settings.ga4_property_id}, last {days} days. Installs here are the listing's "
+        f"{selected_app.ga4_property_id or 'not configured'}, last {days} days. "
+        "Installs here are the listing's "
         "own server-side event and will not match the Partner API install count exactly: "
         "ad and tracking blockers suppress some sessions, and reinstalls count "
         "differently.\n",
@@ -479,16 +471,16 @@ def _traffic(conn, settings, query: dict) -> str:
         "and is the truth. A positive `gap` is measurement loss -- consent banners, ad "
         "and tracking blockers, EU traffic -- not lost merchants, so every conversion "
         "rate in the funnel above is a floor rather than an estimate.\n",
-        _json(stats.install_reconciliation(conn, days)),
+        _json(stats.install_reconciliation(conn, app_id, days)),
         "\n## By month\n",
         "Always twelve months. This is the history rather than the window, so the range "
         "above does not move it.\n",
-        _json(stats.traffic_monthly(conn)),
+        _json(stats.traffic_monthly(conn, app_id)),
         "\n## Breakdowns\n",
         "`language` is the listing visitor's browser language, which is the only "
         "language signal that exists here: no upstream source "
         "carries a merchant locale.\n",
-        _json({key: stats.traffic_breakdown(conn, key, days)
+        _json({key: stats.traffic_breakdown(conn, app_id, key, days)
                for key in ("channel", "source", "country", "language")}),
     ])
 
@@ -515,6 +507,7 @@ def render_page(conn, page: str, settings, query: dict | None = None,
     """Build one page's markdown. `page` is a key of PAGES, whitelisted by the
     caller; nothing from the request reaches a query except as a bound value."""
     query = query or {}
+    query.setdefault("_scope", Scope.all())
     now = now or datetime.now(timezone.utc)
     base_url = settings.public_base_url.rstrip("/")
 
@@ -527,6 +520,8 @@ def render_page(conn, page: str, settings, query: dict | None = None,
         "traffic": _traffic, "faq": _faq,
     }[page](conn, settings, query)
 
-    return "\n".join([_frontmatter(page, base_url, now, settings.app_name,
+    selected_app = query.get("_app")
+    app_name = selected_app.name if selected_app else "Shopify Apps"
+    return "\n".join([_frontmatter(page, base_url, now, app_name,
                                 settings.dashboard_name),
                    body, "", READING_NOTES])

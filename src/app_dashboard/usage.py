@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 import psycopg
 from psycopg.types.json import Jsonb
 
-from app_dashboard.config import get_settings
+from app_dashboard.catalog import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # free-form bucket key past it.
 SHOP_GID_RE = re.compile(r"^gid://shopify/Shop/\d{1,32}$")
 
-# The only event names that exist, from USAGE_EVENT_TYPES. A name outside the
+# The only event names that exist, from the selected app's catalog entry. A name outside the
 # set is a bug in the app or an attacker probing, and either way storing it
 # would quietly corrupt the reports. Teaching the dashboard a new name is a
 # config change the operator has to make first, on purpose.
@@ -38,18 +38,6 @@ SHOP_GID_RE = re.compile(r"^gid://shopify/Shop/\d{1,32}$")
 # Two of them carry meaning beyond being counted: the activation event is what
 # "the merchant built something" means, and the live event is what proves it is
 # running for shoppers. Onboarding-completed alone is not activation.
-
-
-def event_types() -> frozenset[str]:
-    return get_settings().usage_event_types_set
-
-
-def activation_event() -> str:
-    return get_settings().usage_activation_event
-
-
-def live_event() -> str:
-    return get_settings().usage_live_event
 
 
 # No usage event can predate the Shopify App Store. An event older than this is
@@ -143,7 +131,11 @@ def _properties(value) -> dict:
     return value
 
 
-def parse_batch(raw: bytes, now: datetime | None = None) -> list[dict]:
+def parse_batch(
+    raw: bytes,
+    allowed_event_types: frozenset[str],
+    now: datetime | None = None,
+) -> list[dict]:
     """Turn a request body into validated events, or raise `UsageError`.
 
     Pure, so the whole validation surface is testable without a request or a
@@ -176,7 +168,7 @@ def parse_batch(raw: bytes, now: datetime | None = None) -> list[dict]:
         if not isinstance(event, dict):
             raise UsageError(422, f"events[{index}] must be an object")
         event_type = _text(event.get("event_type"), f"events[{index}].event_type")
-        if event_type not in event_types():
+        if event_type not in allowed_event_types:
             raise UsageError(422, f"events[{index}].event_type is not a known event")
         shop_gid = _text(event.get("shop_gid"), f"events[{index}].shop_gid")
         # Shape-checked, not existence-checked: the shop may legitimately not be
@@ -206,17 +198,20 @@ def parse_batch(raw: bytes, now: datetime | None = None) -> list[dict]:
     return parsed
 
 
-def _over_cap(conn: psycopg.Connection, shop_gids: set[str]) -> set[str]:
+def _over_cap(
+    conn: psycopg.Connection, app_id: int, shop_gids: set[str]
+) -> set[str]:
     rows = conn.execute(
         """select shop_gid, count(*) from usage_events
-           where shop_gid = any(%s) and received_at >= now() - interval '1 day'
+           where app_id = %s and shop_gid = any(%s)
+             and received_at >= now() - interval '1 day'
            group by shop_gid""",
-        (list(shop_gids),),
+        (app_id, list(shop_gids)),
     ).fetchall()
     return {gid for gid, count in rows if count >= PER_SHOP_DAILY_CAP}
 
 
-def ingest(conn: psycopg.Connection, events: list[dict]) -> dict:
+def ingest(conn: psycopg.Connection, app_id: int, events: list[dict]) -> dict:
     """Store validated events. Idempotent, and never destructive.
 
     ON CONFLICT DO NOTHING rather than DO UPDATE: a retry after a timeout is
@@ -224,7 +219,7 @@ def ingest(conn: psycopg.Connection, events: list[dict]) -> dict:
     caller gets back what actually happened, so a client that keeps re-sending
     the same batch can tell.
     """
-    capped = _over_cap(conn, {e["shop_gid"] for e in events})
+    capped = _over_cap(conn, app_id, {e["shop_gid"] for e in events})
     if capped:
         logger.warning("usage ingest: %d shop(s) over the daily cap, dropping their events",
                        len(capped))
@@ -239,10 +234,10 @@ def ingest(conn: psycopg.Connection, events: list[dict]) -> dict:
         for event in accepted:
             stored += conn.execute(
                 """insert into usage_events
-                       (shop_gid, event_id, event_type, occurred_at, properties)
-                   values (%s, %s, %s, %s, %s)
-                   on conflict (shop_gid, event_id) do nothing""",
-                (event["shop_gid"], event["event_id"], event["event_type"],
+                       (app_id, shop_gid, event_id, event_type, occurred_at, properties)
+                   values (%s, %s, %s, %s, %s, %s)
+                   on conflict (app_id, shop_gid, event_id) do nothing""",
+                (app_id, event["shop_gid"], event["event_id"], event["event_type"],
                  event["occurred_at"], Jsonb(event["properties"])),
             ).rowcount
     return {
@@ -255,7 +250,7 @@ def ingest(conn: psycopg.Connection, events: list[dict]) -> dict:
 
 # --- reports ---------------------------------------------------------------
 
-def has_usage_data(conn: psycopg.Connection) -> bool:
+def has_usage_data(conn: psycopg.Connection, app: AppConfig) -> bool:
     """Whether an ACTIVATION event has ever arrived.
 
     Drives the empty state, so a page says "waiting for the app" rather than
@@ -263,19 +258,21 @@ def has_usage_data(conn: psycopg.Connection) -> bool:
 
     Scoped to the activation event specifically, not to any event at all. Those
     are the same question only when the app is wired correctly. If
-    USAGE_ACTIVATION_EVENT names something the app never sends, every other
+    the catalog names an activation event the app never sends, every other
     event still flows, so "any event exists" is True, the empty state is
     skipped, and the funnel states 0% activation for merchants who all
     activated. Asking the narrower question makes that configuration read as
     unknown, which is what it is.
     """
     return conn.execute(
-        "select exists (select 1 from usage_events where event_type = %s)",
-        (activation_event(),),
+        "select exists (select 1 from usage_events where app_id = %s and event_type = %s)",
+        (app.id, app.usage_activation_event),
     ).fetchone()[0]
 
 
-def activation_cohorts(conn: psycopg.Connection, months: int = 6) -> list[dict]:
+def activation_cohorts(
+    conn: psycopg.Connection, app: AppConfig, months: int = 6
+) -> list[dict]:
     """Per install-month: what share of the cohort built their first offer
     within 48 hours, and within 7 days.
 
@@ -285,15 +282,17 @@ def activation_cohorts(conn: psycopg.Connection, months: int = 6) -> list[dict]:
     """
     rows = conn.execute(
         """
-        with tracking_start as (select min(received_at) as at from usage_events),
+        with tracking_start as (
+            select min(received_at) as at from usage_events where app_id = %s
+        ),
         installs as (
             select shop_gid, min(occurred_at) as first_install
-            from app_events where type = 'installed'
+            from app_events where app_id = %s and type = 'installed'
             group by shop_gid
         ),
         activation as (
             select shop_gid, min(occurred_at) as first_offer
-            from usage_events where event_type = %s
+            from usage_events where app_id = %s and event_type = %s
             group by shop_gid
         )
         select to_char(date_trunc('month', i.first_install), 'Mon YYYY'),
@@ -311,7 +310,7 @@ def activation_cohorts(conn: psycopg.Connection, months: int = 6) -> list[dict]:
         group by 2, 1
         order by 2
         """,
-        (activation_event(), months),
+        (app.id, app.id, app.id, app.usage_activation_event, months),
     ).fetchall()
     return [
         {
@@ -326,21 +325,23 @@ def activation_cohorts(conn: psycopg.Connection, months: int = 6) -> list[dict]:
     ]
 
 
-def time_to_activation(conn: psycopg.Connection) -> dict:
+def time_to_activation(conn: psycopg.Connection, app: AppConfig) -> dict:
     """Median hours from install to first offer, and the share who never got
     there. Median rather than mean: one merchant who activates a year later
     would drag an average into meaninglessness."""
     row = conn.execute(
         """
-        with tracking_start as (select min(received_at) as at from usage_events),
+        with tracking_start as (
+            select min(received_at) as at from usage_events where app_id = %s
+        ),
         installs as (
             select shop_gid, min(occurred_at) as first_install
-            from app_events where type = 'installed'
+            from app_events where app_id = %s and type = 'installed'
             group by shop_gid
         ),
         activation as (
             select shop_gid, min(occurred_at) as first_offer
-            from usage_events where event_type = %s
+            from usage_events where app_id = %s and event_type = %s
             group by shop_gid
         ),
         eligible as (
@@ -356,7 +357,7 @@ def time_to_activation(conn: psycopg.Connection) -> dict:
                    filter (where first_offer is not null)
         from eligible
         """,
-        (activation_event(),),
+        (app.id, app.id, app.id, app.usage_activation_event),
     ).fetchone()
     eligible, activated, median_hours = row
     return {
@@ -368,7 +369,9 @@ def time_to_activation(conn: psycopg.Connection) -> dict:
     }
 
 
-def at_risk_shops(conn: psycopg.Connection, days: int = 14) -> list[dict]:
+def at_risk_shops(
+    conn: psycopg.Connection, app: AppConfig, days: int = 14
+) -> list[dict]:
     """Paying shops whose offers have shown to nobody in `days`.
 
     A merchant paying every month for an app that is serving nothing will
@@ -378,22 +381,24 @@ def at_risk_shops(conn: psycopg.Connection, days: int = 14) -> list[dict]:
     rows = conn.execute(
         """
         select coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
-               s.shop_domain, sub.monthly_amount, max(u.occurred_at) as last_seen
+               s.shop_gid, s.shop_domain, sub.monthly_amount,
+               max(u.occurred_at) as last_seen
         from shops s
         join subscriptions sub
-          on sub.shop_gid = s.shop_gid and sub.churned_at is null
+          on sub.app_id = s.app_id and sub.shop_gid = s.shop_gid
+         and sub.churned_at is null
         join usage_events u
-          on u.shop_gid = s.shop_gid and u.event_type = %s
-        where s.install_state = 'installed'
-        group by 1, 2, 3
+          on u.app_id = s.app_id and u.shop_gid = s.shop_gid and u.event_type = %s
+        where s.app_id = %s and s.install_state = 'installed'
+        group by 1, 2, 3, 4
         having max(u.occurred_at) < now() - make_interval(days => %s)
         order by max(u.occurred_at)
         """,
-        (live_event(), days),
+        (app.usage_live_event, app.id, days),
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
-        {"shop": shop, "domain": domain, "monthly_amount": amount,
+        {"shop": shop, "shop_gid": shop_gid, "domain": domain, "monthly_amount": amount,
          "last_seen": last_seen, "days_quiet": (now - last_seen).days}
-        for shop, domain, amount, last_seen in rows
+        for shop, shop_gid, domain, amount, last_seen in rows
     ]

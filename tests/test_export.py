@@ -8,9 +8,18 @@ of everything.
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 from app_dashboard import export
 from app_dashboard.config import get_settings
 from app_dashboard.markdown_export import CONTACT_KEYS
+
+
+@pytest.fixture(autouse=True)
+def app_default(db, test_app):
+    db.execute(f"alter table shops alter column app_id set default {test_app.id}")
+    yield
+    db.execute("alter table shops alter column app_id drop default")
 
 
 def _payload(db):
@@ -107,13 +116,3 @@ def test_generated_at_is_the_time_it_was_asked_for(db):
     payload = export.full_export(db, get_settings(), now=stamped)
     assert payload["meta"]["generated_at"].startswith("2026-03-01T12:00:00")
     assert export.filename(stamped, slug="example-app") == "example-app-2026-03-01.json"
-
-
-def test_export_filename_slug_comes_from_the_app_name(monkeypatch):
-    """Two operators' downloads land in the same folder as often as not, so the
-    name has to say whose dashboard it came from as well as which day."""
-    monkeypatch.setenv("APP_NAME", "Acme Gift & Wrap")
-    assert get_settings().slug == "acme-gift-wrap"
-    monkeypatch.setenv("APP_SLUG", "acme")
-    get_settings.cache_clear()
-    assert get_settings().slug == "acme"

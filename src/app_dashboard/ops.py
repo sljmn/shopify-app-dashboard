@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 
 import httpx
 
+from app_dashboard.catalog import AppConfig
 from app_dashboard.pipeline import SOURCE
+from app_dashboard.scope import Scope
 
 logger = logging.getLogger(__name__)
 
@@ -25,21 +27,53 @@ PAGE_STALE_POLLS = 3
 ALERT_STALE_POLLS = 4
 
 
-def sync_health(conn, poll_interval_minutes: int) -> dict:
-    row = conn.execute(
-        "select last_synced_at from sync_state where source = %s", (SOURCE,)
-    ).fetchone()
-    last = row[0] if row else None
+def sync_health(
+    conn, poll_interval_minutes: int, scope: Scope = Scope.all()
+) -> dict:
+    app_predicate = "true" if scope.app_id is None else "a.id = %s"
+    app_params = () if scope.app_id is None else (scope.app_id,)
+    rows = conn.execute(
+        f"""select a.id, a.slug, a.name, s.last_synced_at
+            from apps a left join sync_state s
+              on s.app_id = a.id and s.source = %s
+            where a.active and {app_predicate}
+            order by a.name""",
+        (SOURCE, *app_params),
+    ).fetchall()
+    last_values = [row[3] for row in rows]
+    last = min(last_values) if last_values and all(last_values) else None
     age = None
     if last is not None:
         age = (datetime.now(timezone.utc) - last).total_seconds() / 60
 
+    event_predicate, event_params = scope.predicate("raw_app_events")
     events_24h = conn.execute(
-        "select count(*) from raw_app_events where ingested_at >= now() - interval '24 hours'"
+        f"""select count(*) from raw_app_events
+            where ingested_at >= now() - interval '24 hours' and {event_predicate}""",
+        event_params,
     ).fetchone()[0]
-    shops = conn.execute("select count(*) from shops").fetchone()[0]
+    shop_predicate, shop_params = scope.predicate("shops")
+    shops = conn.execute(
+        f"select count(*) from shops where {shop_predicate}", shop_params
+    ).fetchone()[0]
 
     page_threshold = PAGE_STALE_POLLS * poll_interval_minutes
+    now = datetime.now(timezone.utc)
+    app_health = []
+    for app_id, slug, name, synced_at in rows:
+        app_age = (
+            None
+            if synced_at is None
+            else (now - synced_at).total_seconds() / 60
+        )
+        app_health.append({
+            "app_id": app_id,
+            "slug": slug,
+            "name": name,
+            "last_synced_at": synced_at,
+            "age_minutes": None if app_age is None else round(app_age),
+            "stale": app_age is None or app_age > page_threshold,
+        })
     return {
         "last_synced_at": last,
         "age_minutes": None if age is None else round(age),
@@ -49,6 +83,8 @@ def sync_health(conn, poll_interval_minutes: int) -> dict:
         "page_threshold_minutes": page_threshold,
         "events_24h": events_24h,
         "shops": shops,
+        "apps": app_health,
+        "stale_apps": sum(1 for item in app_health if item["stale"]),
     }
 
 
@@ -62,7 +98,9 @@ def build_stale_message(age_minutes: int | None, base_url: str,
     )}
 
 
-def check_stale_sync(conn, settings, http_post=httpx.post) -> bool:
+def check_stale_sync(
+    conn, app: AppConfig, settings, http_post=httpx.post
+) -> bool:
     """Warn once per stale episode, not once per poll.
 
     The flag is stored next to the cursor rather than in memory so a machine
@@ -71,8 +109,9 @@ def check_stale_sync(conn, settings, http_post=httpx.post) -> bool:
     """
     threshold = ALERT_STALE_POLLS * settings.poll_interval_minutes
     row = conn.execute(
-        "select last_synced_at, stale_alerted_at from sync_state where source = %s",
-        (SOURCE,),
+        """select last_synced_at, stale_alerted_at from sync_state
+           where app_id = %s and source = %s""",
+        (app.id, SOURCE),
     ).fetchone()
     last, alerted_at = row if row else (None, None)
 
@@ -84,8 +123,9 @@ def check_stale_sync(conn, settings, http_post=httpx.post) -> bool:
         if alerted_at is not None:
             logger.info("sync recovered after a stale episode")
             conn.execute(
-                "update sync_state set stale_alerted_at = null where source = %s",
-                (SOURCE,),
+                """update sync_state set stale_alerted_at = null
+                   where app_id = %s and source = %s""",
+                (app.id, SOURCE),
             )
             conn.commit()
         return False
@@ -101,16 +141,17 @@ def check_stale_sync(conn, settings, http_post=httpx.post) -> bool:
 
     payload = build_stale_message(None if age is None else round(age),
                                   settings.public_base_url,
-                                  settings.dashboard_name)
+                                  f"{settings.dashboard_name}: {app.name}")
     if not post_alert(settings.slack_webhook_url, payload, http_post=http_post):
         return False   # leave the flag unset so the next poll retries
 
     conn.execute(
         """
-        insert into sync_state (source, stale_alerted_at) values (%s, now())
-        on conflict (source) do update set stale_alerted_at = now()
+        insert into sync_state (app_id, source, stale_alerted_at)
+        values (%s, %s, now())
+        on conflict (app_id, source) do update set stale_alerted_at = now()
         """,
-        (SOURCE,),
+        (app.id, SOURCE),
     )
     conn.commit()
     logger.warning("posted stale-sync warning to Slack")

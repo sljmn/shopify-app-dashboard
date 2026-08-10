@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from app_dashboard.digest import (
     DIGEST_SOURCE,
     collect_digest,
@@ -11,6 +13,16 @@ from app_dashboard.digest import (
 )
 
 NOW = datetime(2026, 8, 10, 14, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def app_defaults(db, test_app):
+    tables = ("shops", "subscriptions", "app_events", "ga4_daily")
+    for table in tables:
+        db.execute(f"alter table {table} alter column app_id set default {test_app.id}")
+    yield
+    for table in tables:
+        db.execute(f"alter table {table} alter column app_id drop default")
 
 
 def _settings(webhook="http://hook"):
@@ -88,16 +100,20 @@ def test_render_survives_an_empty_week(db):
     assert "no GA4 sessions" in text
 
 
-def test_digest_will_not_fire_twice_in_a_week(db):
+def test_digest_will_not_fire_twice_in_a_week(db, test_app):
     _seed(db)
     sent, post = _capture()
-    assert send_weekly_digest(db, _settings(), http_post=post, now=NOW) is True
+    assert send_weekly_digest(
+        db, [test_app], _settings(), http_post=post, now=NOW
+    ) is True
     assert len(sent) == 1
-    assert send_weekly_digest(db, _settings(), http_post=post, now=NOW) is False
+    assert send_weekly_digest(
+        db, [test_app], _settings(), http_post=post, now=NOW
+    ) is False
     assert len(sent) == 1
 
 
-def test_a_failed_post_is_retried_next_run(db):
+def test_a_failed_post_is_retried_next_run(db, test_app):
     _seed(db)
     calls = []
 
@@ -105,11 +121,13 @@ def test_a_failed_post_is_retried_next_run(db):
         calls.append(json)
         return SimpleNamespace(status_code=500)
 
-    assert send_weekly_digest(db, _settings(), http_post=failing, now=NOW) is False
+    assert send_weekly_digest(
+        db, [test_app], _settings(), http_post=failing, now=NOW
+    ) is False
     assert db.execute(
-        "select count(*) from sync_state where source = %s", (DIGEST_SOURCE,)
+        "select count(*) from operations_state where source = %s", (DIGEST_SOURCE,)
     ).fetchone()[0] == 0
-    send_weekly_digest(db, _settings(), http_post=failing, now=NOW)
+    send_weekly_digest(db, [test_app], _settings(), http_post=failing, now=NOW)
     assert len(calls) == 2
 
 
@@ -120,8 +138,10 @@ def test_should_send_guards_replays_and_restarts():
     assert should_send(monday - timedelta(days=7), monday) is True
 
 
-def test_no_webhook_is_a_noop(db):
+def test_no_webhook_is_a_noop(db, test_app):
     _seed(db)
     sent, post = _capture()
-    assert send_weekly_digest(db, _settings(webhook=None), http_post=post, now=NOW) is False
+    assert send_weekly_digest(
+        db, [test_app], _settings(webhook=None), http_post=post, now=NOW
+    ) is False
     assert sent == []

@@ -18,24 +18,21 @@ subtly wrong dashboard. Set them all before the first deploy:
 
 ```bash
 fly secrets set \
-  PARTNER_API_TOKEN=... \
-  PARTNER_ORG_ID=... \
-  PARTNER_APP_ID=... \
+  SHOPIFY_PARTNER_TOKEN_<org-id>=... \
   DASHBOARD_USERS="admin:$(python -c 'import secrets;print(secrets.token_urlsafe(24))')" \
   PUBLIC_BASE_URL=https://your-dashboard.example.com \
   GOOGLE_ALLOWED_DOMAINS=yourcompany.com \
   SESSION_SECRET=$(python -c 'import secrets;print(secrets.token_urlsafe(32))') \
-  APP_NAME="Your App" \
-  ANNUAL_PLAN_AMOUNTS=<your annual prices, comma separated> \
   TRUSTED_CLIENT_IP_HEADER=Fly-Client-IP
 ```
 
 `DATABASE_URL` is set for you by `fly postgres attach`. `.env.example` is the complete list,
-including the optional Google SSO, GA4, Slack and usage-ingest settings.
+including the optional Google SSO and Slack settings. Repeat the Partner token
+argument for every `token_env` referenced by `config/apps.yml`.
 
 Three of these decide whether the numbers are right rather than whether the app starts:
 
-- **`ANNUAL_PLAN_AMOUNTS`** must list every annual price you charge, with cents. `AppSubscription`
+- **Each app's `annual_plan_amounts`** must list every annual price it charges, with cents. `AppSubscription`
   carries no billing-interval field, so an unlisted annual price is counted as monthly, at twelve
   times its true MRR. Empty means every plan is monthly, and the app logs a warning at startup.
   Setting it *after* charges are stored does not correct them: a corrected price only reaches a
@@ -90,7 +87,9 @@ that widens the GraphQL query or corrects a stored value needs history replayed,
 appear to do nothing:
 
 ```sql
-update sync_state set cursor = null where source = 'partner_api';
+update sync_state set cursor = null
+where source = 'partner_api'
+  and app_id = (select id from apps where slug = 'example-app');
 ```
 
 Restart the app afterwards; the scheduler syncs at boot. Safe and repeatable: `raw_app_events`
@@ -102,7 +101,7 @@ events keep their existing `app_events.id`.
 The Partner API exposes neither. If you have a CSV export from a vendor that did:
 
 ```bash
-python -m app_dashboard.import_shops_csv shops path/to/export.csv
+python -m app_dashboard.import_shops_csv shops <app-slug> path/to/export.csv
 ```
 
 Retitle `COLUMN_MAP` in `src/app_dashboard/import_shops_csv.py` to match your export's header first. It is
@@ -119,5 +118,7 @@ Nothing in the Partner API reports reviews, so `shops.reviewed_at` is hand-maint
 for a review" call sheet is only ever as good as it is kept:
 
 ```sql
-update shops set reviewed_at = '2026-01-15' where shop_domain = 'example.myshopify.com';
+update shops set reviewed_at = '2026-01-15'
+where app_id = (select id from apps where slug = 'example-app')
+  and shop_domain = 'example.myshopify.com';
 ```

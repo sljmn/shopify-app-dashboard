@@ -164,6 +164,12 @@
         .confetti i:nth-child(3) { background: #4ED39A; transform: rotate(31deg) translateY(-2px); }
         .side-top { display: flex; align-items: flex-start; gap: 8px; }
         .side-top .wordmark { flex: 1; min-width: 0; }
+        .app-selector { padding: 0 10px; }
+        .app-selector select {
+            width: 100%; min-width: 0; height: 34px; border-radius: 6px;
+            border: 1px solid #3A334D; background: #171221; color: #fff;
+            padding: 0 28px 0 9px; font: 500 12.5px var(--body);
+        }
         /* Only ever visible in the collapsed layout, and only once the script
            has confirmed it can hide the nav it toggles. */
         .hamburger {
@@ -785,7 +791,7 @@
     {% block sidebar %}
     <aside class="sidebar">
         <div class="side-top">
-            <a class="wordmark" href="/">
+            <a class="wordmark" href="/{{ scope_qs }}">
                 <span class="confetti"><i></i><i></i><i></i></span>
                 <span>{{ APP_NAME|replace(" ", "&nbsp;")|safe }} <small>Analytics</small></span>
             </a>
@@ -798,9 +804,18 @@
                 </svg>
             </button>
         </div>
+        <form class="app-selector" action="{{ request.url.path }}" method="get">
+            {% for key, value in selector_params %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+            <select id="app-selector" name="app" aria-label="App">
+                <option value="">All apps</option>
+                {% for app in active_apps %}
+                <option value="{{ app.slug }}" {% if selected_app and selected_app.id == app.id %}selected{% endif %}>{{ app.name }}</option>
+                {% endfor %}
+            </select>
+        </form>
         <nav id="sidenav">
             {% for href, key, label, icon, subs in NAV %}
-            <a href="{{ href }}" {% if active == key %}aria-current="page"{% endif %}>
+            <a href="{{ href }}{{ scope_qs }}" {% if active == key %}aria-current="page"{% endif %}>
                 {#- The icon is a second read of the label, never a replacement:
                     every row keeps its text. -#}
                 <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor"
@@ -810,7 +825,7 @@
             </a>
             {% if active == key and subs %}
             <div class="subnav">
-                {% for text, anchor in subs %}<a href="{{ href }}#{{ anchor }}">{{ text }}</a>{% endfor %}
+                {% for text, anchor in subs %}<a href="{{ href }}{{ scope_qs }}#{{ anchor }}">{{ text }}</a>{% endfor %}
             </div>
             {% endif %}
             {% endfor %}
@@ -842,7 +857,7 @@
                 is the archive.</p>
                 <p>The <strong>ⓘ</strong> beside a number says what it counts and
                 which table it comes from.</p>
-                <p><a href="/faq">Why don't these numbers match?</a> covers MRR
+                <p><a href="/faq{{ scope_qs }}">Why don't these numbers match?</a> covers MRR
                 against cash, multi-select uninstall reasons, and GA4 against the
                 Partner API.</p>
                 <p>The strip on Overview says how fresh the numbers are.</p>
@@ -898,7 +913,7 @@
                 plain link with `download`: no fetch, no script, no CSP
                 exception, and the browser writes the file itself. -#}
             {% if active == "overview" %}
-            <a href="/export.json" download class="ghost">
+            <a href="/export.json{{ scope_qs }}" download class="ghost">
                 <svg viewBox="0 0 16 16" width="14" height="14" fill="none"
                      stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
                      stroke-linejoin="round" aria-hidden="true">
@@ -922,6 +937,10 @@
             event.currentTarget.setAttribute("aria-expanded", String(open));
         });
 
+        document.getElementById("app-selector")?.addEventListener("change", (event) => {
+            event.currentTarget.form.submit();
+        });
+
         // Copies this page's markdown mirror (frontmatter + prose + JSON) for
         // pasting into an agent. The URL is derived from the path rather than
         // templated in, so no route has to know about the button.
@@ -939,7 +958,8 @@
                 setTimeout(() => { label.textContent = "Copy MD"; }, 1800);
             };
             try {
-                const response = await fetch(path, {headers: {"Accept": "text/markdown"}});
+                const response = await fetch(path + location.search,
+                    {headers: {"Accept": "text/markdown"}});
                 if (!response.ok) throw new Error(response.status);
                 await navigator.clipboard.writeText(await response.text());
                 done("Copied");

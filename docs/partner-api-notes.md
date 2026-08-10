@@ -26,7 +26,7 @@ counterpart at all.
 
 **`AppSubscription` has no billing interval.** Introspection returns amount, billingOn, id, name and
 test, and nothing else. The interval has to be inferred from the price, which is what
-`ANNUAL_PLAN_AMOUNTS` exists for and why getting it wrong reports an annual subscriber at twelve
+per-app `annual_plan_amounts` exists for and why getting it wrong reports an annual subscriber at twelve
 times their real MRR. The one place the API states the interval outright is
 `AppSubscriptionSale.billingInterval` on a transaction, which the customer detail page falls back
 to.

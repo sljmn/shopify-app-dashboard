@@ -36,13 +36,13 @@ def months_ago(n: int, day_offset: int = 0) -> str:
     return (at + timedelta(days=day_offset)).isoformat()
 
 
-def _charge(db, gid, amount, interval="EVERY_30_DAYS", test=False):
+def _charge(db, app_id, gid, amount, interval="EVERY_30_DAYS", test=False):
     db.execute(
-        """insert into charges(gid, amount, currency_code, subscription_id,
+        """insert into charges(app_id, gid, amount, currency_code, subscription_id,
                                plan_interval, plan_amount, flex_billing, test)
-           values (%s, %s, 'USD', %s, %s, %s, false, %s)
-           on conflict (gid) do nothing""",
-        (gid, amount, gid, interval, amount, test),
+           values (%s, %s, %s, 'USD', %s, %s, %s, false, %s)
+           on conflict (app_id, gid) do nothing""",
+        (app_id, gid, amount, gid, interval, amount, test),
     )
 
 
@@ -52,7 +52,7 @@ def _ev(id, type, shop, at, charge=None, **payload):
 
 
 @pytest.fixture
-def world(db):
+def world(db, test_app):
     """One of every lifecycle shape the pipeline has to survive.
 
     Includes the awkward ones on purpose: a plan change (two subscription ids
@@ -71,8 +71,8 @@ def world(db):
         ("c-nocancel", "19.00", "EVERY_30_DAYS"),
         ("c-orphan", "19.00", "EVERY_30_DAYS"),
     ]:
-        _charge(db, gid, Decimal(amount), interval)
-    _charge(db, "c-test", Decimal("19.00"), test=True)
+        _charge(db, test_app.id, gid, Decimal(amount), interval)
+    _charge(db, test_app.id, "c-test", Decimal("19.00"), test=True)
     db.commit()
 
     events = [
@@ -120,9 +120,9 @@ def world(db):
         _ev("e24", "RELATIONSHIP_INSTALLED", "sh-test", months_ago(3)),
         _ev("e25", "SUBSCRIPTION_CHARGE_ACTIVATED", "sh-test", months_ago(3, 1), "c-test"),
     ]
-    upsert_raw_events(db, events)
+    upsert_raw_events(db, test_app, events)
     for shop in {e["shop_gid"] for e in events}:
-        derive_installation(db, shop)
+        derive_installation(db, test_app.id, shop)
 
     # Money that actually moved, including one refund. Deliberately not derived
     # from the events above: transactions are an independent feed, which is the
@@ -135,10 +135,10 @@ def world(db):
         ("t5", "AppSubscriptionSale", months_ago(0), "49.00", "47.58"),
     ]:
         db.execute(
-            """insert into transactions(id, type, created_at, gross_amount,
+            """insert into transactions(app_id, id, type, created_at, gross_amount,
                                         shopify_fee, net_amount, currency_code)
-               values (%s, %s, %s, %s, 0, %s, 'USD')""",
-            (tid, type, at, gross, net),
+               values (%s, %s, %s, %s, %s, 0, %s, 'USD')""",
+            (test_app.id, tid, type, at, gross, net),
         )
     db.commit()
     return db
@@ -182,7 +182,7 @@ def test_paying_shop_count_agrees_across_every_path_that_reports_it(world):
     funnel = next(s for s in stats.funnel_stats(world) if s["label"] == "Currently paying")
     live = world.execute(
         """select count(distinct sub.shop_gid) from subscriptions sub
-           join shops s on s.shop_gid = sub.shop_gid
+           join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
            where sub.churned_at is null and s.install_state = 'installed'"""
     ).fetchone()[0]
 
@@ -213,7 +213,8 @@ def test_an_uninstalled_shop_has_no_live_subscription(world):
     chart (which does not) drift apart the moment Shopify sends an uninstall
     without a matching cancel."""
     rows = world.execute(
-        """select sub.id from subscriptions sub join shops s on s.shop_gid = sub.shop_gid
+        """select sub.id from subscriptions sub
+           join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
            where sub.churned_at is null and s.install_state <> 'installed'"""
     ).fetchall()
     assert rows == []
@@ -263,8 +264,9 @@ def test_replaying_the_whole_history_changes_nothing(world):
             "select id, monthly_amount, converted_at, churned_at from subscriptions order by id"
         ).fetchall(),
     )
+    app_id = world.execute("select id from apps limit 1").fetchone()[0]
     for shop in [r[0] for r in world.execute("select shop_gid from shops").fetchall()]:
-        derive_installation(world, shop)
+        derive_installation(world, app_id, shop)
     after = (
         stats.overview_stats(world),
         stats.mrr_trend(world),
@@ -285,7 +287,7 @@ def test_install_state_matches_the_last_lifecycle_event(world):
         from shops s
         join lateral (
             select type from app_events e
-            where e.shop_gid = s.shop_gid
+            where e.app_id = s.app_id and e.shop_gid = s.shop_gid
               and e.type in ('installed', 'reinstalled', 'uninstalled')
             order by e.occurred_at desc, e.id desc limit 1
         ) last on true
@@ -314,7 +316,8 @@ def test_annual_plans_count_at_one_twelfth(world):
 
 def test_test_charges_contribute_to_nothing(world):
     assert world.execute(
-        "select count(*) from subscriptions sub join charges c on c.gid = sub.id where c.test"
+        """select count(*) from subscriptions sub
+           join charges c on c.app_id = sub.app_id and c.gid = sub.id where c.test"""
     ).fetchone()[0] == 0
     assert world.execute(
         "select count(*) from subscriptions where id = 'c-test'"
@@ -352,7 +355,10 @@ def test_no_orphaned_shop_gids(world):
     for table in ("subscriptions", "app_events"):
         orphans = world.execute(
             f"""select count(*) from {table} t
-                where not exists (select 1 from shops s where s.shop_gid = t.shop_gid)"""
+                where not exists (
+                    select 1 from shops s
+                    where s.app_id = t.app_id and s.shop_gid = t.shop_gid
+                )"""
         ).fetchone()[0]
         assert orphans == 0, f"{table} references a shop that does not exist"
 
@@ -360,6 +366,9 @@ def test_no_orphaned_shop_gids(world):
 def test_every_app_event_traces_back_to_a_raw_event(world):
     orphans = world.execute(
         """select count(*) from app_events e
-           where not exists (select 1 from raw_app_events r where r.id = e.platform_event_id)"""
+           where not exists (
+               select 1 from raw_app_events r
+               where r.app_id = e.app_id and r.id = e.platform_event_id
+           )"""
     ).fetchone()[0]
     assert orphans == 0

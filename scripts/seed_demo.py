@@ -1,5 +1,6 @@
 """Fill a database with a synthetic app's history, so the dashboard can be run
-without a Partner API token.
+without Partner API tokens. It creates two apps with overlapping shop GIDs so
+the combined dashboard and app selector both have meaningful data.
 
 Every merchant here is invented. Domains are prefixed `demo-` so a screenshot or
 a shared screen can never be mistaken for somebody's real install base, and the
@@ -13,10 +14,9 @@ produce a dashboard the real code path cannot, which would make it a liar.
 
     createdb app_dashboard_demo
     DATABASE_URL=postgresql://localhost:5432/app_dashboard_demo \
-    PARTNER_API_TOKEN=unused PARTNER_ORG_ID=0 PARTNER_APP_ID=0 \
     DASHBOARD_USERS=demo:demo-only-not-a-password \
     PUBLIC_BASE_URL=http://localhost:8000 GOOGLE_ALLOWED_DOMAINS=example.com \
-    ANNUAL_PLAN_AMOUNTS=190.00 NO_SCHEDULER=1 \
+    NO_SCHEDULER=1 \
       uv run python scripts/seed_demo.py --yes
 
 It TRUNCATES every table it seeds, so it refuses to run without --yes and prints
@@ -24,6 +24,7 @@ the database it is about to overwrite first.
 """
 
 import argparse
+from copy import deepcopy
 import random
 import re
 import sys
@@ -31,6 +32,9 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import urlparse
 
+from psycopg.types.json import Jsonb
+
+from app_dashboard.catalog import AppConfig
 from app_dashboard.config import get_settings
 from app_dashboard.db import connect, run_migrations
 from app_dashboard.derive import derive_installation
@@ -44,7 +48,7 @@ RNG = random.Random(20260809)
 MONTHS_OF_HISTORY = 22
 SHOP_COUNT = 190
 
-# Plans. The annual one has to appear in ANNUAL_PLAN_AMOUNTS or it is counted as
+# Plans. The annual one has to appear in each app catalog entry or it is counted as
 # monthly, at twelve times its true MRR -- the failure this seeder is also a
 # demonstration of.
 MONTHLY = Decimal("19.00")
@@ -399,13 +403,12 @@ def build_history(shops, now: datetime, mandatory_from: date):
     return events, transactions
 
 
-def seed_usage(conn, shops, now: datetime, tracking_from: datetime):
+def seed_usage(conn, app: AppConfig, shops, now: datetime, tracking_from: datetime):
     """Usage events, which the Partner API has none of. A shop that installed
     before tracking started has no activation event to find, which is why
     activation reads unknown rather than 0% for the early cohorts."""
-    settings = get_settings()
-    activation = settings.usage_activation_event
-    live = settings.usage_live_event
+    activation = app.usage_activation_event
+    live = app.usage_live_event
     rows = []
     n = 0
     for shop in shops:
@@ -436,15 +439,16 @@ def seed_usage(conn, shops, now: datetime, tracking_from: datetime):
         # 0 shops. Posting as it happens is also what a real integration does.
         cur.executemany(
             """insert into usage_events
-                   (shop_gid, event_id, event_type, occurred_at, properties, received_at)
-               values (%s, %s, %s, %s, %s, %s) on conflict do nothing""",
-            [(*row, row[3]) for row in rows],
+                   (app_id, shop_gid, event_id, event_type, occurred_at,
+                    properties, received_at)
+               values (%s, %s, %s, %s, %s, %s, %s) on conflict do nothing""",
+            [(app.id, *row, row[3]) for row in rows],
         )
     conn.commit()
     return len(rows)
 
 
-def seed_ga4(conn, now: datetime, days: int = 400):
+def seed_ga4(conn, app_id: int, now: datetime, days: int = 400):
     """App Store listing traffic. The Partner API exposes none of this at all."""
     rows = []
     for i in range(days):
@@ -479,32 +483,35 @@ def seed_ga4(conn, now: datetime, days: int = 400):
     with conn.cursor() as cur:
         cur.executemany(
             """insert into ga4_daily
-                   (date, dimension, value, sessions, users, add_app_clicks, installs, ad_clicks)
-               values (%s, %s, %s, %s, %s, %s, %s, %s)
-               on conflict (date, dimension, value) do nothing""",
-            rows,
+                   (app_id, date, dimension, value, sessions, users,
+                    add_app_clicks, installs, ad_clicks)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               on conflict (app_id, date, dimension, value) do nothing""",
+            [(app_id, *row) for row in rows],
         )
     conn.commit()
     return len(rows)
 
 
-def seed_side_tables(conn, shops, now: datetime):
+def seed_side_tables(conn, app_id: int, shops, now: datetime):
     """Country and industry (the CSV importer's job in real life), a few review
     dates, and the annotations that say why the chart moved."""
     with conn.cursor() as cur:
         cur.executemany(
-            """update shops set country = %s, industry = %s where shop_gid = %s""",
-            [(s["country"], s["industry"], s["gid"]) for s in shops],
+            """update shops set country = %s, industry = %s
+               where app_id = %s and shop_gid = %s""",
+            [(s["country"], s["industry"], app_id, s["gid"]) for s in shops],
         )
         reviewed = [s for s in shops if RNG.random() < 0.06 and "gone_at" not in s][:11]
         cur.executemany(
-            "update shops set reviewed_at = %s where shop_gid = %s",
-            [((now - timedelta(days=RNG.randrange(20, 500))).date(), s["gid"])
+            "update shops set reviewed_at = %s where app_id = %s and shop_gid = %s",
+            [((now - timedelta(days=RNG.randrange(20, 500))).date(), app_id, s["gid"])
              for s in reviewed],
         )
         cur.executemany(
-            "insert into annotations (on_date, note, author) values (%s, %s, %s)",
-            [((now - timedelta(days=ago)).date(), note, "demo@example.com")
+            """insert into annotations (app_id, on_date, note, author)
+               values (%s, %s, %s, %s)""",
+            [(app_id, (now - timedelta(days=ago)).date(), note, "demo@example.com")
              for ago, note in ANNOTATIONS],
         )
     conn.commit()
@@ -515,10 +522,65 @@ def wipe(conn):
     tables = [
         "raw_app_events", "app_events", "charges", "subscriptions", "shops",
         "transactions", "usage_events", "ga4_daily", "annotations",
-        "tracking_events", "sync_state",
+        "tracking_events", "sync_state", "operations_state", "apps", "organizations",
     ]
     conn.execute(f"truncate {', '.join(tables)} restart identity cascade")
     conn.commit()
+
+
+def create_demo_apps(conn) -> list[AppConfig]:
+    organization_id = conn.execute(
+        """insert into organizations (partner_org_id, name, token_env)
+           values ('demo-org', 'Demo Organization', 'DEMO_PARTNER_TOKEN')
+           returning id"""
+    ).fetchone()[0]
+    apps = []
+    for index, (slug, name) in enumerate((
+        ("demo-growth", "Demo Growth"),
+        ("demo-retention", "Demo Retention"),
+    ), start=1):
+        app_id = conn.execute(
+            """insert into apps (
+                   organization_id, partner_app_id, slug, name,
+                   annual_plan_amounts, usage_event_types,
+                   usage_activation_event, usage_live_event, active
+               ) values (%s, %s, %s, %s, %s, %s, %s, %s, true)
+               returning id""",
+            (
+                organization_id,
+                f"gid://partners/App/demo-{index}",
+                slug,
+                name,
+                Jsonb(["190.00"]),
+                Jsonb(["settings_completed", "offer_created", "offer_impression"]),
+                "offer_created",
+                "offer_impression",
+            ),
+        ).fetchone()[0]
+        apps.append(AppConfig(
+            id=app_id,
+            organization_id=organization_id,
+            slug=slug,
+            name=name,
+            partner_app_id=f"gid://partners/App/demo-{index}",
+            partner_org_id="demo-org",
+            organization_name="Demo Organization",
+            partner_token_env="DEMO_PARTNER_TOKEN",
+            partner_token="unused",
+            annual_plan_amounts=frozenset({ANNUAL}),
+            listing_url=None,
+            usage_token_env=None,
+            usage_token=None,
+            usage_event_types=frozenset({
+                "settings_completed", "offer_created", "offer_impression"
+            }),
+            usage_activation_event="offer_created",
+            usage_live_event="offer_impression",
+            ga4_property_id=None,
+            ga4_credentials_env=None,
+            ga4_credentials_json=None,
+        ))
+    return apps
 
 
 def main() -> int:
@@ -535,38 +597,35 @@ def main() -> int:
         print("Re-run with --yes if that is the database you meant.")
         return 2
 
-    if not settings.annual_plan_amounts_set:
-        print("ANNUAL_PLAN_AMOUNTS is empty, so the $190 annual plan in this dataset")
-        print("would be counted as monthly, at 12x its real MRR. Set ANNUAL_PLAN_AMOUNTS=190.00")
-        print("and run again.")
-        return 2
-
     print(f"Seeding {where} ...")
     conn = connect()
     run_migrations(conn)
     wipe(conn)
+    apps = create_demo_apps(conn)
 
     now = datetime.now(timezone.utc)
     mandatory_from = settings.reason_mandatory_from
-    shops = build_shops(now)
-    events, transactions = build_history(shops, now, mandatory_from)
-
-    upsert_charges(conn, events)
-    raw = upsert_raw_events(conn, events)
-    txns = upsert_transactions(conn, transactions)
-
-    for shop in shops:
-        derive_installation(conn, shop["gid"])
-
-    usage = seed_usage(conn, shops, now, now - timedelta(days=250))
-    ga4 = seed_ga4(conn, now)
-    reviewed = seed_side_tables(conn, shops, now)
-
-    conn.execute(
-        "insert into sync_state (source, cursor, last_synced_at) values (%s, null, now())"
-        " on conflict (source) do update set last_synced_at = now()",
-        ("partner_api",),
-    )
+    base_shops = build_shops(now)
+    totals = {"shops": 0, "raw": 0, "txns": 0, "usage": 0, "ga4": 0, "reviewed": 0}
+    for index, app in enumerate(apps):
+        shops = deepcopy(base_shops[: SHOP_COUNT - index * 70])
+        events, transactions = build_history(shops, now, mandatory_from)
+        upsert_charges(conn, app, events)
+        totals["raw"] += upsert_raw_events(conn, app, events)
+        totals["txns"] += upsert_transactions(conn, app, transactions)
+        for shop in shops:
+            derive_installation(conn, app.id, shop["gid"])
+        totals["usage"] += seed_usage(
+            conn, app, shops, now, now - timedelta(days=250)
+        )
+        totals["ga4"] += seed_ga4(conn, app.id, now)
+        totals["reviewed"] += seed_side_tables(conn, app.id, shops, now)
+        totals["shops"] += len(shops)
+        conn.execute(
+            """insert into sync_state (app_id, source, cursor, last_synced_at)
+               values (%s, 'partner_api', null, now())""",
+            (app.id,),
+        )
     conn.commit()
 
     (installed,) = conn.execute(
@@ -574,14 +633,15 @@ def main() -> int:
     ).fetchone()
     (mrr,) = conn.execute(
         """select coalesce(sum(s.monthly_amount), 0) from subscriptions s
-           join shops sh on sh.shop_gid = s.shop_gid
+           join shops sh on sh.app_id = s.app_id and sh.shop_gid = s.shop_gid
            where s.churned_at is null and sh.install_state = 'installed'"""
     ).fetchone()
 
-    print(f"  {len(shops)} shops, {installed} currently installed")
-    print(f"  {raw} raw events, {txns} transactions, {usage} usage events")
-    print(f"  {ga4} GA4 rows, {reviewed} marked as having reviewed, "
-          f"{len(ANNOTATIONS)} annotations")
+    print(f"  {len(apps)} apps, {totals['shops']} app installations, {installed} installed")
+    print(f"  {totals['raw']} raw events, {totals['txns']} transactions, "
+          f"{totals['usage']} usage events")
+    print(f"  {totals['ga4']} GA4 rows, {totals['reviewed']} marked as reviewed, "
+          f"{len(ANNOTATIONS) * len(apps)} annotations")
     print(f"  active MRR ${mrr}")
     print("\nRun it:  uv run uvicorn app_dashboard.web:app --reload")
     conn.close()

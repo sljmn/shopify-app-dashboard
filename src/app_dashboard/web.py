@@ -37,6 +37,7 @@ from app_dashboard.auth import (
 )
 from app_dashboard import annotations as anno
 from app_dashboard import export as json_export
+from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.config import get_settings
 from app_dashboard.customers import (
     PLAN_INTERVALS,
@@ -59,6 +60,7 @@ from app_dashboard.ranges import (
     choice,
 )
 from app_dashboard.scheduler import start_scheduler
+from app_dashboard.scope import Scope
 from app_dashboard.security import RateLimiter, SecurityHeadersMiddleware, client_key
 from app_dashboard.stats import (
     PLAN_LABELS,
@@ -198,18 +200,59 @@ def create_app(conn_factory) -> FastAPI:
     templates.env.globals["METRICS"] = METRICS
     templates.env.globals["COMPARE_LABEL"] = COMPARE_LABEL
     templates.env.globals["signed"] = signed
-    # Deployment identity, as globals for the same reason: a page that names the
-    # wrong app or somebody else's GA4 property is worse than one that names
-    # neither, and every template would otherwise have to be passed them.
-    templates.env.globals["GA4_PROPERTY_ID"] = settings.ga4_property_id
-    templates.env.globals["APP_NAME"] = settings.app_name
-    templates.env.globals["DASHBOARD_NAME"] = settings.dashboard_name
-    templates.env.globals["APP_LISTING_URL"] = settings.app_listing_url
+    templates.env.globals["DASHBOARD_NAME"] = "Shopify Apps Analytics"
+    templates.env.globals["APP_NAME"] = "Shopify Apps"
+    templates.env.globals["APP_LISTING_URL"] = ""
+    templates.env.globals["GA4_PROPERTY_ID"] = None
 
     allowed = allowed_principals(settings.google_allowed_domains)
     sso_enabled = bool(settings.google_client_id and settings.google_client_secret)
     login_limiter = RateLimiter(LOGIN_LIMIT, LOGIN_WINDOW)
     ingest_limiter = RateLimiter(INGEST_LIMIT, INGEST_WINDOW)
+
+    active_apps_cache: list[AppConfig] | None = None
+
+    def active_apps(conn) -> list[AppConfig]:
+        nonlocal active_apps_cache
+        if active_apps_cache is None:
+            active_apps_cache = list_apps(conn)
+        return active_apps_cache
+
+    def resolve_scope(
+        request: Request, conn
+    ) -> tuple[Scope, AppConfig | None, list[AppConfig]]:
+        apps = active_apps(conn)
+        slug = request.query_params.get("app")
+        if not slug:
+            return Scope.all(), None, apps
+        selected = next((candidate for candidate in apps if candidate.slug == slug), None)
+        if selected is None:
+            raise HTTPException(status_code=404, detail="Unknown app")
+        return Scope.for_app(selected.id), selected, apps
+
+    def page_context(
+        request: Request,
+        user: str,
+        active: str,
+        selected: AppConfig | None,
+        apps: list[AppConfig],
+    ) -> dict:
+        retained = [
+            (key, value)
+            for key, value in request.query_params.multi_items()
+            if key not in {"app", "page"}
+        ]
+        return {
+            "user": _display(request, user),
+            "active": active,
+            "active_apps": apps,
+            "selected_app": selected,
+            "scope_qs": f"?app={selected.slug}" if selected else "",
+            "selector_params": retained,
+            "APP_NAME": selected.name if selected else "Shopify Apps",
+            "APP_LISTING_URL": selected.listing_url if selected else "",
+            "GA4_PROPERTY_ID": selected.ga4_property_id if selected else None,
+        }
 
     def _basic_user(credentials: HTTPBasicCredentials | None) -> str | None:
         if credentials is None:
@@ -284,7 +327,12 @@ def create_app(conn_factory) -> FastAPI:
     async def lifespan(app: FastAPI):
         scheduler = None
         if not os.environ.get("NO_SCHEDULER"):
-            scheduler = start_scheduler(conn_factory, settings)
+            catalog_conn = conn_factory()
+            try:
+                scheduler_apps = active_apps(catalog_conn)
+            finally:
+                catalog_conn.close()
+            scheduler = start_scheduler(conn_factory, settings, scheduler_apps)
         yield
         if scheduler is not None:
             scheduler.shutdown()
@@ -377,7 +425,7 @@ def create_app(conn_factory) -> FastAPI:
     def healthz():
         return {"status": "ok"}
 
-    def _check_usage_token(request: Request) -> None:
+    def _check_usage_token(request: Request, selected_app: AppConfig) -> None:
         """Constant-time check of the ingest secret.
 
         Every failure returns the same flat 401 with no detail: a wrong token,
@@ -387,8 +435,9 @@ def create_app(conn_factory) -> FastAPI:
         key = client_key(request)
         if not ingest_limiter.check(key):
             raise HTTPException(status_code=429, detail="Too many requests")
-        if not _same_secret(request.headers.get(USAGE_TOKEN_HEADER),
-                            settings.usage_ingest_token):
+        if not _same_secret(
+            request.headers.get(USAGE_TOKEN_HEADER), selected_app.usage_token
+        ):
             ingest_limiter.record(key)
             raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -410,8 +459,8 @@ def create_app(conn_factory) -> FastAPI:
             chunks.append(chunk)
         return b"".join(chunks)
 
-    @app.post("/ingest/usage")
-    async def ingest_usage(request: Request):
+    @app.post("/ingest/usage/{app_slug}")
+    async def ingest_usage(request: Request, app_slug: str):
         """Product-usage events from the app itself.
 
         The one route with no interactive auth: it is machine-to-machine, and
@@ -419,15 +468,26 @@ def create_app(conn_factory) -> FastAPI:
         token check runs before the body is read, so an unauthenticated caller
         cannot make us buffer anything.
         """
-        _check_usage_token(request)
+        conn = conn_factory()
+        try:
+            selected_app = next(
+                (candidate for candidate in active_apps(conn) if candidate.slug == app_slug),
+                None,
+            )
+        finally:
+            conn.close()
+        if selected_app is None:
+            raise HTTPException(status_code=404, detail="Unknown app")
+
+        _check_usage_token(request, selected_app)
         raw = await _read_capped(request)
         try:
-            events = parse_batch(raw)
+            events = parse_batch(raw, selected_app.usage_event_types)
         except UsageError as exc:
             raise HTTPException(status_code=exc.status, detail=exc.message) from None
         conn = conn_factory()
         try:
-            result = ingest_usage_events(conn, events)
+            result = ingest_usage_events(conn, selected_app.id, events)
         finally:
             conn.close()
         return result
@@ -520,21 +580,29 @@ def create_app(conn_factory) -> FastAPI:
         months = choice(months, MONEY_MONTHS, 12)
         conn = conn_factory()
         try:
-            stats = overview_stats(conn)
-            activity = monthly_activity(conn)
-            events = recent_events(conn)
-            trend = mrr_trend(conn, months)
-            movements = mrr_movements(conn, months)
-            countries = country_breakdown(conn)
-            plans = plan_mix(conn)
-            reasons = uninstall_reasons(conn)
-            health = sync_health(conn, settings.poll_interval_minutes)
-            money = collected_revenue(conn)
-            revenue = revenue_by_month(conn, months)
+            scope, selected_app, apps = resolve_scope(request, conn)
+            stats = overview_stats(conn, scope)
+            activity = monthly_activity(conn, scope=scope)
+            events = recent_events(conn, scope=scope)
+            trend = mrr_trend(conn, months, scope)
+            movements = mrr_movements(conn, months, scope)
+            countries = country_breakdown(conn, scope=scope)
+            plans = plan_mix(conn, scope)
+            reasons = uninstall_reasons(conn, scope)
+            health = sync_health(conn, settings.poll_interval_minutes, scope)
+            money = collected_revenue(conn, scope)
+            revenue = revenue_by_month(conn, months, scope)
             comparison = overview_comparison(
-                conn, {**stats, "net_30d": money["net_30d"]})
-            notes = anno.recent(conn)
-            notes_by_month = anno.by_month(conn)
+                conn, {**stats, "net_30d": money["net_30d"]}, scope=scope)
+            notes = anno.recent(conn, scope)
+            notes_by_month = anno.by_month(conn, scope)
+            app_comparison = [] if selected_app else [
+                {
+                    "app": candidate,
+                    "stats": overview_stats(conn, Scope.for_app(candidate.id)),
+                }
+                for candidate in apps
+            ]
         finally:
             conn.close()
         activity_max = max(
@@ -554,7 +622,8 @@ def create_app(conn_factory) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "overview.html",
-            {"user": _display(request, user), "active": "overview", "stats": stats, "activity": activity,
+            {**page_context(request, user, "overview", selected_app, apps),
+             "stats": stats, "activity": activity,
              "health": health,
              "activity_max": activity_max, "events": events,
              "trend": trend, "trend_max": trend_max,
@@ -563,11 +632,12 @@ def create_app(conn_factory) -> FastAPI:
              "money": money, "revenue": revenue, "revenue_max": revenue_max,
              "plans": plans, "reasons": reasons["buckets"][:5],
              "comparison": comparison, "months": months,
+             "app_comparison": app_comparison,
              "month_choices": MONEY_MONTHS,
              "notes": notes, "notes_by_month": notes_by_month,
              "note_max": anno.NOTE_MAX, "today": date.today().isoformat(),
              # Only a cookie session may write. See the POST route.
-             "can_annotate": bool(_session_email(request)),
+             "can_annotate": bool(selected_app and _session_email(request)),
              "note_error": request.query_params.get("note_error")},
         )
 
@@ -613,12 +683,15 @@ def create_app(conn_factory) -> FastAPI:
         body = await _read_capped(request)
         return email, parse_qs(body.decode("utf-8", "replace"))
 
-    def _back_to_notes(error: str | None = None) -> RedirectResponse:
+    def _back_to_notes(
+        selected_app: AppConfig, error: str | None = None
+    ) -> RedirectResponse:
+        params = {"app": selected_app.slug}
         if error:
-            return RedirectResponse(
-                "/?" + urlencode({"note_error": error}) + "#annotations",
-                status_code=303)
-        return RedirectResponse("/#annotations", status_code=303)
+            params["note_error"] = error
+        return RedirectResponse(
+            "/?" + urlencode(params) + "#annotations", status_code=303
+        )
 
     @app.post("/annotations")
     async def add_annotation(request: Request,
@@ -627,15 +700,30 @@ def create_app(conn_factory) -> FastAPI:
         email, form = await _annotation_form(request)
         on_date = (form.get("on_date") or [""])[0]
         note = (form.get("note") or [""])[0]
+        app_slug = (form.get("app") or [request.query_params.get("app", "")])[0]
 
         conn = conn_factory()
         try:
-            anno.add(conn, on_date=on_date, note=note, author=email)
+            apps = active_apps(conn)
+            selected_app = next(
+                (candidate for candidate in apps if candidate.slug == app_slug), None
+            )
+            if selected_app is None and not app_slug and len(apps) == 1:
+                selected_app = apps[0]
+            if selected_app is None:
+                raise HTTPException(status_code=404, detail="Unknown app")
+            anno.add(
+                conn,
+                app_id=selected_app.id,
+                on_date=on_date,
+                note=note,
+                author=email,
+            )
         except anno.AnnotationError as exc:
-            return _back_to_notes(str(exc))
+            return _back_to_notes(selected_app, str(exc))
         finally:
             conn.close()
-        return _back_to_notes()
+        return _back_to_notes(selected_app)
 
     @app.post("/annotations/delete")
     async def delete_annotation(request: Request,
@@ -650,26 +738,42 @@ def create_app(conn_factory) -> FastAPI:
         """
         _, form = await _annotation_form(request)
         annotation_id = (form.get("id") or [""])[0]
+        app_slug = (form.get("app") or [request.query_params.get("app", "")])[0]
 
         conn = conn_factory()
         try:
-            gone = anno.remove(conn, annotation_id=annotation_id)
+            apps = active_apps(conn)
+            selected_app = next(
+                (candidate for candidate in apps if candidate.slug == app_slug), None
+            )
+            if selected_app is None and not app_slug and len(apps) == 1:
+                selected_app = apps[0]
+            if selected_app is None:
+                raise HTTPException(status_code=404, detail="Unknown app")
+            gone = anno.remove(
+                conn, app_id=selected_app.id, annotation_id=annotation_id
+            )
         except anno.AnnotationError as exc:
-            return _back_to_notes(str(exc))
+            return _back_to_notes(selected_app, str(exc))
         finally:
             conn.close()
         if gone is None:
             # Someone else deleted it first, or the page was stale. Nothing to
             # fix and nothing lost, so this is not an error the reader caused.
-            return _back_to_notes("That note was already gone.")
-        return _back_to_notes()
+            return _back_to_notes(selected_app, "That note was already gone.")
+        return _back_to_notes(selected_app)
 
     @app.get("/faq")
     def faq(request: Request, user: str = Depends(verify_creds)):
         """Why two numbers disagree, answered once rather than each time."""
+        conn = conn_factory()
+        try:
+            _, selected_app, apps = resolve_scope(request, conn)
+        finally:
+            conn.close()
         return templates.TemplateResponse(
             request, "faq.html",
-            {"user": _display(request, user), "active": "faq", "faq": FAQ},
+            {**page_context(request, user, "faq", selected_app, apps), "faq": FAQ},
         )
 
     @app.get("/customers")
@@ -694,24 +798,29 @@ def create_app(conn_factory) -> FastAPI:
         }
         conn = conn_factory()
         try:
-            total = count_customers(conn, **filters)
+            scope, selected_app, apps = resolve_scope(request, conn)
+            total = count_customers(conn, **filters, scope=scope)
             page = max(1, min(page, max(1, ceil(total / CUSTOMERS_PAGE_SIZE))))
             rows = list_customers(
                 conn, **filters,
                 limit=CUSTOMERS_PAGE_SIZE,
                 offset=(page - 1) * CUSTOMERS_PAGE_SIZE,
+                scope=scope,
             )
-            facets = distinct_facets(conn)
+            facets = distinct_facets(conn, scope)
         finally:
             conn.close()
         # Prev/next must carry the active filters, so build the query string
         # once here rather than reassembling it in the template.
-        base_qs = urlencode({k: v for k, v in filters.items() if v})
+        query_values = {k: v for k, v in filters.items() if v}
+        if selected_app:
+            query_values["app"] = selected_app.slug
+        base_qs = urlencode(query_values)
         return templates.TemplateResponse(
             request,
             "customers.html",
             {
-                "user": _display(request, user), "active": "customers",
+                **page_context(request, user, "customers", selected_app, apps),
                 "rows": rows,
                 "facets": facets,
                 "industry": industry or "",
@@ -729,34 +838,37 @@ def create_app(conn_factory) -> FastAPI:
             },
         )
 
-    def _detail_or_404(shop_domain: str) -> dict:
+    def _detail_or_404(request: Request, shop_gid: str) -> tuple[dict, AppConfig | None, list[AppConfig]]:
         conn = conn_factory()
         try:
-            detail = customer_detail(conn, shop_domain)
+            scope, selected_app, apps = resolve_scope(request, conn)
+            detail = customer_detail(conn, shop_gid, scope)
             if detail is None:
                 raise HTTPException(status_code=404, detail="No such shop")
             # Built inside the same connection: the markdown mirror is a second
             # view of exactly these rows, never a second set of queries.
-            detail["markdown"] = customer_markdown(conn, settings, shop_domain, detail)
+            detail["markdown"] = customer_markdown(conn, settings, shop_gid, detail)
         finally:
             conn.close()
-        return detail
+        return detail, selected_app, apps
 
     # Registered before the HTML route: `{shop_domain}` compiles to a greedy
     # [^/]+, so /customers/x.myshopify.com would swallow a trailing .md if the
     # HTML route were matched first.
-    @app.get("/customers/{shop_domain}.md")
-    def customer_markdown_page(shop_domain: str, user: str = Depends(verify_creds)):
-        return PlainTextResponse(_detail_or_404(shop_domain)["markdown"],
+    @app.get("/customers/{shop_gid:path}.md")
+    def customer_markdown_page(request: Request, shop_gid: str,
+                               user: str = Depends(verify_creds)):
+        detail, _, _ = _detail_or_404(request, shop_gid)
+        return PlainTextResponse(detail["markdown"],
                                  media_type="text/markdown; charset=utf-8")
 
-    @app.get("/customers/{shop_domain}")
-    def customer(request: Request, shop_domain: str,
+    @app.get("/customers/{shop_gid:path}")
+    def customer(request: Request, shop_gid: str,
                  user: str = Depends(verify_creds)):
-        detail = _detail_or_404(shop_domain)
+        detail, selected_app, apps = _detail_or_404(request, shop_gid)
         return templates.TemplateResponse(
             request, "customer.html",
-            {"user": _display(request, user), "active": "customers", **detail},
+            {**page_context(request, user, "customers", selected_app, apps), **detail},
         )
 
     # Markdown mirrors of every page, one URL per page, shaped like shopify.dev's
@@ -771,7 +883,11 @@ def create_app(conn_factory) -> FastAPI:
             raise HTTPException(status_code=404, detail="No such page")
         conn = conn_factory()
         try:
-            text = render_page(conn, page, settings, dict(request.query_params))
+            scope, selected_app, _ = resolve_scope(request, conn)
+            query = dict(request.query_params)
+            query["_scope"] = scope
+            query["_app"] = selected_app
+            text = render_page(conn, page, settings, query)
         finally:
             conn.close()
         return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
@@ -800,14 +916,18 @@ def create_app(conn_factory) -> FastAPI:
         """
         conn = conn_factory()
         try:
-            body = json_export.render(conn, settings)
+            scope, selected_app, _ = resolve_scope(request, conn)
+            body = json_export.render(
+                conn, settings, scope=scope, selected_app=selected_app
+            )
         finally:
             conn.close()
+        export_slug = selected_app.slug if selected_app else "shopify-apps"
         return Response(
             body,
             media_type="application/json",
             headers={"content-disposition":
-                     f'attachment; filename="{json_export.filename(slug=settings.slug)}"'},
+                     f'attachment; filename="{json_export.filename(slug=export_slug)}"'},
         )
 
     @app.get("/actions")
@@ -820,16 +940,18 @@ def create_app(conn_factory) -> FastAPI:
         trial_days = choice(trial_days, TRIAL_DAYS, 14)
         conn = conn_factory()
         try:
-            review = review_candidates(conn)
-            annual = annual_upgrade_candidates(conn)
-            trial = trial_watch(conn, trial_days)
-            tracking = has_usage_data(conn)
-            at_risk = at_risk_shops(conn) if tracking else []
+            scope, selected_app, apps = resolve_scope(request, conn)
+            review = review_candidates(conn, scope=scope)
+            annual = annual_upgrade_candidates(conn, scope=scope)
+            trial = trial_watch(conn, trial_days, scope)
+            tracking = bool(selected_app) and has_usage_data(conn, selected_app)
+            at_risk = at_risk_shops(conn, selected_app) if tracking else []
         finally:
             conn.close()
         return templates.TemplateResponse(
             request, "actions.html",
-            {"user": _display(request, user), "active": "actions", "review": review, "annual": annual,
+            {**page_context(request, user, "actions", selected_app, apps),
+             "review": review, "annual": annual,
              "trial": trial, "at_risk": at_risk, "tracking": tracking,
              "trial_days": trial_days, "trial_choices": TRIAL_DAYS},
         )
@@ -838,16 +960,20 @@ def create_app(conn_factory) -> FastAPI:
     def funnel(request: Request, user: str = Depends(verify_creds)):
         conn = conn_factory()
         try:
-            data = funnel_stats(conn)
-            monthly = monthly_conversion(conn)
-            tracking = has_usage_data(conn)
-            activation = activation_cohorts(conn) if tracking else []
-            activation_summary = time_to_activation(conn) if tracking else None
+            scope, selected_app, apps = resolve_scope(request, conn)
+            data = funnel_stats(conn, scope)
+            monthly = monthly_conversion(conn, scope=scope)
+            tracking = bool(selected_app) and has_usage_data(conn, selected_app)
+            activation = activation_cohorts(conn, selected_app) if tracking else []
+            activation_summary = (
+                time_to_activation(conn, selected_app) if tracking else None
+            )
         finally:
             conn.close()
         return templates.TemplateResponse(
             request, "funnel.html",
-            {"user": _display(request, user), "active": "funnel", "funnel": data, "monthly": monthly,
+            {**page_context(request, user, "funnel", selected_app, apps),
+             "funnel": data, "monthly": monthly,
              "tracking": tracking, "activation": activation,
              "activation_summary": activation_summary},
         )
@@ -862,18 +988,20 @@ def create_app(conn_factory) -> FastAPI:
         days = choice(days, CHURN_DAYS, None)
         conn = conn_factory()
         try:
+            scope, selected_app, apps = resolve_scope(request, conn)
             rows = churn_rows(conn, paid=paid, gave_reason=reason,
-                              bucket=bucket or None, since_days=days)
-            reasons = uninstall_reasons(conn)
-            timing = time_to_uninstall(conn)
-            composition = churn_composition(conn)
-            deaths = store_deaths(conn)
-            verbatims = uninstall_verbatims(conn)
+                              bucket=bucket or None, since_days=days, scope=scope)
+            reasons = uninstall_reasons(conn, scope)
+            timing = time_to_uninstall(conn, scope)
+            composition = churn_composition(conn, scope)
+            deaths = store_deaths(conn, scope=scope)
+            verbatims = uninstall_verbatims(conn, scope=scope)
         finally:
             conn.close()
         return templates.TemplateResponse(
             request, "churn.html",
-            {"user": _display(request, user), "active": "churn", "rows": rows, "reasons": reasons,
+            {**page_context(request, user, "churn", selected_app, apps),
+             "rows": rows, "reasons": reasons,
              "timing": timing, "composition": composition, "deaths": deaths,
              "verbatims": verbatims,
              "paid": paid or "", "gave_reason": reason or "",
@@ -884,13 +1012,15 @@ def create_app(conn_factory) -> FastAPI:
     def retention(request: Request, user: str = Depends(verify_creds)):
         conn = conn_factory()
         try:
-            data = retention_cohorts(conn)
-            installs = install_retention_cohorts(conn)
+            scope, selected_app, apps = resolve_scope(request, conn)
+            data = retention_cohorts(conn, scope=scope)
+            installs = install_retention_cohorts(conn, scope=scope)
         finally:
             conn.close()
         return templates.TemplateResponse(
             request, "retention.html",
-            {"user": _display(request, user), "active": "retention", "retention": data, "installs": installs},
+            {**page_context(request, user, "retention", selected_app, apps),
+             "retention": data, "installs": installs},
         )
 
     @app.get("/reports/traffic")
@@ -903,22 +1033,31 @@ def create_app(conn_factory) -> FastAPI:
         days = choice(days, TRAFFIC_DAYS, 90)
         conn = conn_factory()
         try:
-            summary = traffic_summary(conn, days)
-            reconciliation = install_reconciliation(conn, days)
-            monthly = traffic_monthly(conn)
-            breakdowns = {
-                key: traffic_breakdown(conn, key, days)
-                for key in ("channel", "source", "country", "language")
-            }
+            _, selected_app, apps = resolve_scope(request, conn)
+            if selected_app:
+                summary = traffic_summary(conn, selected_app.id, days)
+                reconciliation = install_reconciliation(conn, selected_app.id, days)
+                monthly = traffic_monthly(conn, selected_app.id)
+                breakdowns = {
+                    key: traffic_breakdown(conn, selected_app.id, key, days)
+                    for key in ("channel", "source", "country", "language")
+                }
+            else:
+                summary = {}
+                reconciliation = {}
+                monthly = []
+                breakdowns = {}
         finally:
             conn.close()
         monthly_max = max([m["sessions"] for m in monthly] + [1])
         return templates.TemplateResponse(
             request, "traffic.html",
-            {"user": _display(request, user), "active": "traffic", "summary": summary, "monthly": monthly,
+            {**page_context(request, user, "traffic", selected_app, apps),
+             "summary": summary, "monthly": monthly,
              "reconciliation": reconciliation,
              "monthly_max": monthly_max, "breakdowns": breakdowns,
-             "days": days, "day_choices": TRAFFIC_DAYS},
+             "days": days, "day_choices": TRAFFIC_DAYS,
+             "needs_app": selected_app is None},
         )
 
     return app

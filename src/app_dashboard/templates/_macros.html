@@ -59,6 +59,7 @@
     that only works with JavaScript is a control that silently stops working. -#}
 {% macro window_form(name, current, choices, unit, all_label=none) %}
 <form class="filters range" method="get">
+    {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
     <select name="{{ name }}" aria-label="Time range">
         {% if all_label %}<option value="">{{ all_label }}</option>{% endif %}
         {% for value in choices %}
