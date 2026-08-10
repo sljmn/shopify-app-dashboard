@@ -7,6 +7,7 @@ from decimal import Decimal
 import psycopg
 
 from app_dashboard.config import get_settings
+from app_dashboard.scope import Scope
 from app_dashboard.uninstall_reasons import (
     bucket_counts,
     classify,
@@ -16,22 +17,41 @@ from app_dashboard.uninstall_reasons import (
 
 # Every paying subscription joins back to the charge it came from, which is
 # where the billing interval lives.
-_ACTIVE_PAYING = """
-    from subscriptions sub join shops s on s.shop_gid = sub.shop_gid
-    where sub.churned_at is null and s.install_state = 'installed'
-"""
+def _active_paying(scope: Scope) -> tuple[str, tuple]:
+    predicate, params = scope.predicate("sub")
+    return (
+        f"""
+        from subscriptions sub
+        join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
+        where sub.churned_at is null and s.install_state = 'installed'
+          and {predicate}
+        """,
+        params,
+    )
 
 
-def overview_stats(conn: psycopg.Connection) -> dict:
+def overview_stats(conn: psycopg.Connection, scope: Scope = Scope.all()) -> dict:
     def one(sql, params=()):
         return conn.execute(sql, params).fetchone()[0]
 
-    installed = one("select count(*) from shops where install_state = 'installed'")
-    active_mrr = one(f"select coalesce(sum(sub.monthly_amount), 0) {_ACTIVE_PAYING}")
-    paying = one(f"select count(distinct sub.shop_gid) {_ACTIVE_PAYING}")
+    shop_predicate, shop_params = scope.predicate("shops")
+    event_predicate, event_params = scope.predicate("app_events")
+    active_sql, active_params = _active_paying(scope)
+    installed = one(
+        f"select count(*) from shops where install_state = 'installed' and {shop_predicate}",
+        shop_params,
+    )
+    active_mrr = one(
+        f"select coalesce(sum(sub.monthly_amount), 0) {active_sql}", active_params
+    )
+    paying = one(
+        f"select count(distinct (sub.app_id, sub.shop_gid)) {active_sql}", active_params
+    )
     uninstalls_30d = one(
-        """select count(*) from app_events
-           where type = 'uninstalled' and occurred_at >= now() - interval '30 days'"""
+        f"""select count(*) from app_events
+           where type = 'uninstalled' and occurred_at >= now() - interval '30 days'
+             and {event_predicate}""",
+        event_params,
     )
     # Logo churn over the window: uninstalls as a share of the shops that were
     # installed when the window opened (today's installed base plus everyone who
@@ -44,9 +64,11 @@ def overview_stats(conn: psycopg.Connection) -> dict:
         "paying": paying,
         "arpu": (active_mrr / paying) if paying else Decimal("0"),
         "installs_30d": one(
-            """select count(*) from app_events
+            f"""select count(*) from app_events
                where type in ('installed', 'reinstalled')
-               and occurred_at >= now() - interval '30 days'"""
+               and occurred_at >= now() - interval '30 days'
+               and {event_predicate}""",
+            event_params,
         ),
         "uninstalls_30d": uninstalls_30d,
         "churn_30d": round(100 * uninstalls_30d / exposed, 1) if exposed else 0.0,
@@ -57,7 +79,9 @@ COMPARED = ("installed", "active_mrr", "paying", "installs_30d",
             "uninstalls_30d", "net_30d")
 
 
-def installed_at_time(conn: psycopg.Connection, t) -> int:
+def installed_at_time(
+    conn: psycopg.Connection, t, scope: Scope = Scope.all()
+) -> int:
     """How many shops had the app installed at an instant.
 
     Replayed from app_events rather than read off shops.install_state, which
@@ -65,22 +89,24 @@ def installed_at_time(conn: psycopg.Connection, t) -> int:
     current state: whatever its last lifecycle event says. A shop that
     uninstalled and reinstalled before `t` counts as installed.
     """
+    predicate, params = scope.predicate("app_events")
     return conn.execute(
-        """
+        f"""
         select count(*) from (
-            select distinct on (shop_gid) shop_gid, type
+            select distinct on (app_id, shop_gid) app_id, shop_gid, type
             from app_events
             where type in ('installed', 'reinstalled', 'uninstalled')
               and occurred_at <= %s
-            order by shop_gid, occurred_at desc, id desc
+              and {predicate}
+            order by app_id, shop_gid, occurred_at desc, id desc
         ) last where type in ('installed', 'reinstalled')
         """,
-        (t,),
+        (t, *params),
     ).fetchone()[0]
 
 
 def overview_comparison(conn: psycopg.Connection, current: dict,
-                        days: int = 30) -> dict:
+                        days: int = 30, scope: Scope = Scope.all()) -> dict:
     """Each headline figure against what it was, so a number reads as a signal.
 
     A separate function rather than a window parameter on `overview_stats`:
@@ -100,22 +126,25 @@ def overview_comparison(conn: psycopg.Connection, current: dict,
     prior_start = cutoff - timedelta(days=days)
 
     def events_between(types, start, end) -> int:
+        predicate, scope_params = scope.predicate("app_events")
         return conn.execute(
-            """select count(*) from app_events
-               where type = any(%s) and occurred_at >= %s and occurred_at < %s""",
-            (list(types), start, end),
+            f"""select count(*) from app_events
+               where type = any(%s) and occurred_at >= %s and occurred_at < %s
+                 and {predicate}""",
+            (list(types), start, end, *scope_params),
         ).fetchone()[0]
 
+    transaction_predicate, transaction_params = scope.predicate("transactions")
     (prior_net,) = conn.execute(
-        """select coalesce(sum(net_amount), 0) from transactions
-           where created_at >= %s and created_at < %s""",
-        (prior_start, cutoff),
+        f"""select coalesce(sum(net_amount), 0) from transactions
+           where created_at >= %s and created_at < %s and {transaction_predicate}""",
+        (prior_start, cutoff, *transaction_params),
     ).fetchone()
 
     prior = {
-        "installed": installed_at_time(conn, cutoff),
-        "active_mrr": mrr_at(conn, cutoff),
-        "paying": paying_at(conn, cutoff),
+        "installed": installed_at_time(conn, cutoff, scope),
+        "active_mrr": mrr_at(conn, cutoff, scope),
+        "paying": paying_at(conn, cutoff, scope),
         "installs_30d": events_between(("installed", "reinstalled"),
                                        prior_start, cutoff),
         "uninstalls_30d": events_between(("uninstalled",), prior_start, cutoff),
@@ -137,7 +166,9 @@ def overview_comparison(conn: psycopg.Connection, current: dict,
     return out
 
 
-def unit_economics(conn: psycopg.Connection, days: int = 90) -> dict:
+def unit_economics(
+    conn: psycopg.Connection, days: int = 90, scope: Scope = Scope.all()
+) -> dict:
     """ARPU and LTV.
 
     LTV = ARPU / subscription churn rate, the standard definition (and the one
@@ -153,15 +184,21 @@ def unit_economics(conn: psycopg.Connection, days: int = 90) -> dict:
     this quarter" is not evidence that nobody ever will.
     """
     start = datetime.now(timezone.utc) - timedelta(days=days)
-    at_start = paying_at(conn, start)
+    at_start = paying_at(conn, start, scope)
+    sub_predicate, sub_params = scope.predicate("subscriptions")
     (churned,) = conn.execute(
-        """select count(*) from subscriptions
-           where churned_at >= %s and converted_at < %s""",
-        (start, start),
+        f"""select count(*) from subscriptions
+           where churned_at >= %s and converted_at < %s and {sub_predicate}""",
+        (start, start, *sub_params),
     ).fetchone()
 
-    active_mrr = conn.execute(f"select coalesce(sum(sub.monthly_amount), 0) {_ACTIVE_PAYING}").fetchone()[0]
-    paying = conn.execute(f"select count(distinct sub.shop_gid) {_ACTIVE_PAYING}").fetchone()[0]
+    active_sql, active_params = _active_paying(scope)
+    active_mrr = conn.execute(
+        f"select coalesce(sum(sub.monthly_amount), 0) {active_sql}", active_params
+    ).fetchone()[0]
+    paying = conn.execute(
+        f"select count(distinct (sub.app_id, sub.shop_gid)) {active_sql}", active_params
+    ).fetchone()[0]
     arpu = (active_mrr / paying) if paying else Decimal("0")
 
     monthly_churn = (churned / at_start) * (30 / days) if at_start else 0.0
@@ -176,13 +213,16 @@ def unit_economics(conn: psycopg.Connection, days: int = 90) -> dict:
     }
 
 
-def mrr_trend(conn: psycopg.Connection, months: int = 12) -> list[dict]:
+def mrr_trend(
+    conn: psycopg.Connection, months: int = 12, scope: Scope = Scope.all()
+) -> list[dict]:
     """MRR at each month end: every subscription converted by then and not yet
     churned. Computed from subscriptions rather than app_events.net_change,
     because net_change on historical rows was recorded before the annual-plan
     interval fix and still carries the old inflated figures."""
+    predicate, params = scope.predicate("sub")
     rows = conn.execute(
-        """
+        f"""
         with bounds as (
             select generate_series(
                 date_trunc('month', now()) - make_interval(months => %s - 1),
@@ -197,11 +237,11 @@ def mrr_trend(conn: psycopg.Connection, months: int = 12) -> list[dict]:
                      and (sub.churned_at is null
                           or sub.churned_at >= b.month_start + interval '1 month')
                ), 0) as mrr
-        from bounds b left join subscriptions sub on true
+        from bounds b left join subscriptions sub on {predicate}
         group by 1, 2
         order by 2
         """,
-        (months,),
+        (months, *params),
     ).fetchall()
     return [{"label": label, "mrr": mrr} for label, _, mrr in rows]
 
@@ -228,28 +268,37 @@ def _attribute(bucket: dict, prev: Decimal, curr: Decimal, returning: bool) -> N
         bucket["contraction"] += curr - prev
 
 
-def mrr_movement_between(conn: psycopg.Connection, start, end) -> dict:
+def mrr_movement_between(
+    conn: psycopg.Connection, start, end, scope: Scope = Scope.all()
+) -> dict:
     """The same five buckets as `mrr_movements`, over an arbitrary span.
 
     Used for the weekly digest. `start` and `end` are instants, not month ends,
     so a subscription counts if it had converted by then and had not churned.
     """
+    predicate, params = scope.predicate("subscriptions")
     rows = conn.execute(
-        """select shop_gid, coalesce(monthly_amount, 0), converted_at, churned_at
-           from subscriptions where converted_at is not null"""
+        f"""select app_id, shop_gid, coalesce(monthly_amount, 0), converted_at, churned_at
+           from subscriptions where converted_at is not null and {predicate}""",
+        params,
     ).fetchall()
 
     def at(t):
-        totals: dict[str, Decimal] = {}
-        for shop_gid, amount, converted_at, churned_at in rows:
+        totals: dict[tuple[int, str], Decimal] = {}
+        for app_id, shop_gid, amount, converted_at, churned_at in rows:
             if converted_at <= t and (churned_at is None or churned_at > t):
-                totals[shop_gid] = totals.get(shop_gid, Decimal("0")) + amount
+                key = (app_id, shop_gid)
+                totals[key] = totals.get(key, Decimal("0")) + amount
         return totals
 
     before, after = at(start), at(end)
     # Anyone who had already converted before the window opened and is coming
     # back inside it is a reactivation, not a new customer.
-    ever_before = {gid for gid, _, converted_at, _ in rows if converted_at <= start}
+    ever_before = {
+        (app_id, gid)
+        for app_id, gid, _, converted_at, _ in rows
+        if converted_at <= start
+    }
 
     bucket = {k: Decimal("0") for k in MOVEMENT_KINDS}
     for shop_gid in set(before) | set(after):
@@ -259,20 +308,26 @@ def mrr_movement_between(conn: psycopg.Connection, start, end) -> dict:
     return bucket
 
 
-def mrr_at(conn: psycopg.Connection, t) -> Decimal:
+def mrr_at(
+    conn: psycopg.Connection, t, scope: Scope = Scope.all()
+) -> Decimal:
     """Total MRR at an instant. Same basis as `mrr_trend`."""
+    predicate, params = scope.predicate("subscriptions")
     return conn.execute(
-        """select coalesce(sum(monthly_amount), 0) from subscriptions
-           where converted_at <= %s and (churned_at is null or churned_at > %s)""",
-        (t, t),
+        f"""select coalesce(sum(monthly_amount), 0) from subscriptions
+           where converted_at <= %s and (churned_at is null or churned_at > %s)
+             and {predicate}""",
+        (t, t, *params),
     ).fetchone()[0]
 
 
-def paying_at(conn: psycopg.Connection, t) -> int:
+def paying_at(conn: psycopg.Connection, t, scope: Scope = Scope.all()) -> int:
+    predicate, params = scope.predicate("subscriptions")
     return conn.execute(
-        """select count(distinct shop_gid) from subscriptions
-           where converted_at <= %s and (churned_at is null or churned_at > %s)""",
-        (t, t),
+        f"""select count(distinct (app_id, shop_gid)) from subscriptions
+           where converted_at <= %s and (churned_at is null or churned_at > %s)
+             and {predicate}""",
+        (t, t, *params),
     ).fetchone()[0]
 
 
@@ -281,7 +336,9 @@ def _month_index(dt) -> int:
     return dt.year * 12 + dt.month - 1
 
 
-def mrr_movements(conn: psycopg.Connection, months: int = 12) -> list[dict]:
+def mrr_movements(
+    conn: psycopg.Connection, months: int = 12, scope: Scope = Scope.all()
+) -> list[dict]:
     """Why MRR moved each month: new, reactivation, expansion, contraction, churn.
 
     Computed as the month-over-month delta of each *shop's* MRR, not from
@@ -293,9 +350,11 @@ def mrr_movements(conn: psycopg.Connection, months: int = 12) -> list[dict]:
     A shop going 0 -> positive is new, unless it was paying in some earlier
     month, in which case it is a reactivation.
     """
+    predicate, params = scope.predicate("subscriptions")
     rows = conn.execute(
-        """select shop_gid, coalesce(monthly_amount, 0), converted_at, churned_at
-           from subscriptions where converted_at is not null"""
+        f"""select app_id, shop_gid, coalesce(monthly_amount, 0), converted_at, churned_at
+           from subscriptions where converted_at is not null and {predicate}""",
+        params,
     ).fetchall()
 
     now = datetime.now(timezone.utc)
@@ -305,13 +364,13 @@ def mrr_movements(conn: psycopg.Connection, months: int = 12) -> list[dict]:
     # Per shop, its MRR at the end of every month back to the first conversion
     # in the data. The history before the window is what separates a real
     # reactivation from a first-time subscriber; only the window is rendered.
-    earliest = min((_month_index(r[2]) for r in rows), default=first)
+    earliest = min((_month_index(r[3]) for r in rows), default=first)
     span = range(min(earliest, first) - 1, last + 1)
-    by_shop: dict[str, list[Decimal]] = {}
-    for shop_gid, amount, converted_at, churned_at in rows:
+    by_shop: dict[tuple[int, str], list[Decimal]] = {}
+    for app_id, shop_gid, amount, converted_at, churned_at in rows:
         conv = _month_index(converted_at)
         churn = _month_index(churned_at) if churned_at is not None else None
-        series = by_shop.setdefault(shop_gid, [Decimal("0")] * len(span))
+        series = by_shop.setdefault((app_id, shop_gid), [Decimal("0")] * len(span))
         for i, m in enumerate(span):
             if conv <= m and (churn is None or churn > m):
                 series[i] += amount
@@ -344,7 +403,9 @@ MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
 REFUND_TYPES = ("AppSaleAdjustment", "AppSaleCredit")
 
 
-def collected_revenue(conn: psycopg.Connection) -> dict:
+def collected_revenue(
+    conn: psycopg.Connection, scope: Scope = Scope.all()
+) -> dict:
     """Cash, not projection: what was actually billed and what actually landed.
 
     MRR answers "what are we owed each month at today's subscription state".
@@ -358,22 +419,24 @@ def collected_revenue(conn: psycopg.Connection) -> dict:
     either -- identically priced charges can settle at 2.895%, 4.895% and 5.895%
     depending on the merchant -- so it is measured, never modelled.
     """
+    predicate, params = scope.predicate("transactions")
     row = conn.execute(
-        """
+        f"""
         select coalesce(sum(gross_amount), 0),
                coalesce(sum(net_amount), 0),
                coalesce(sum(gross_amount) filter (where type = any(%s)), 0),
                count(*) filter (where type = any(%s)),
                min(created_at), max(created_at), count(*)
-        from transactions
+        from transactions where {predicate}
         """,
-        (list(REFUND_TYPES), list(REFUND_TYPES)),
+        (list(REFUND_TYPES), list(REFUND_TYPES), *params),
     ).fetchone()
     gross, net, refunded, refund_count, first, last, count = row
 
     (net_30d,) = conn.execute(
-        """select coalesce(sum(net_amount), 0) from transactions
-           where created_at >= now() - interval '30 days'"""
+        f"""select coalesce(sum(net_amount), 0) from transactions
+           where created_at >= now() - interval '30 days' and {predicate}""",
+        params,
     ).fetchone()
 
     return {
@@ -387,11 +450,14 @@ def collected_revenue(conn: psycopg.Connection) -> dict:
     }
 
 
-def revenue_by_month(conn: psycopg.Connection, months: int = 12) -> list[dict]:
+def revenue_by_month(
+    conn: psycopg.Connection, months: int = 12, scope: Scope = Scope.all()
+) -> list[dict]:
     """Collected revenue per calendar month, on the same 12-month window as
     mrr_trend so the two series can be read side by side."""
+    predicate, params = scope.predicate("t")
     rows = conn.execute(
-        """
+        f"""
         with bounds as (
             select generate_series(
                 date_trunc('month', now()) - make_interval(months => %s - 1),
@@ -406,12 +472,13 @@ def revenue_by_month(conn: psycopg.Connection, months: int = 12) -> list[dict]:
                count(t.id) as charges
         from bounds b
         left join transactions t
-               on t.created_at >= b.month_start
+               on {predicate}
+              and t.created_at >= b.month_start
               and t.created_at < b.month_start + interval '1 month'
         group by 1, 2
         order by 2
         """,
-        (months,),
+        (months, *params),
     ).fetchall()
     return [
         {"label": label, "gross": gross, "net": net, "charges": charges}
@@ -419,22 +486,26 @@ def revenue_by_month(conn: psycopg.Connection, months: int = 12) -> list[dict]:
     ]
 
 
-def country_breakdown(conn: psycopg.Connection, top: int = 10) -> list[dict]:
+def country_breakdown(
+    conn: psycopg.Connection, top: int = 10, scope: Scope = Scope.all()
+) -> list[dict]:
     """Shops by country: currently installed, with the all-time count beside it.
 
     country is backfilled by the CSV importer and is missing for any shop that
     installed after that import ran; the Partner API
     itself exposes no merchant location.
     """
+    predicate, params = scope.predicate("shops")
     rows = conn.execute(
-        """
+        f"""
         select country,
                count(*) filter (where install_state = 'installed') as installed,
                count(*) as ever
-        from shops where country is not null
+        from shops where country is not null and {predicate}
         group by country
         order by installed desc, ever desc, country
-        """
+        """,
+        params,
     ).fetchall()
     out = [{"country": c, "installed": i, "ever": e} for c, i, e in rows[:top]]
     rest = rows[top:]
@@ -455,20 +526,23 @@ def country_breakdown(conn: psycopg.Connection, top: int = 10) -> list[dict]:
 PLAN_LABELS = {"EVERY_30_DAYS": "Monthly", "ANNUAL": "Annual"}
 
 
-def plan_mix(conn: psycopg.Connection) -> list[dict]:
+def plan_mix(conn: psycopg.Connection, scope: Scope = Scope.all()) -> list[dict]:
     """Active paying subscriptions split by billing interval."""
+    predicate, params = scope.predicate("sub")
     rows = conn.execute(
-        """
+        f"""
         select c.plan_interval, count(*), coalesce(sum(sub.monthly_amount), 0)
         from subscriptions sub
-        join charges c on c.gid = sub.id
-        join shops s on s.shop_gid = sub.shop_gid
+        join charges c on c.app_id = sub.app_id and c.gid = sub.id
+        join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
         where sub.churned_at is null
           and s.install_state = 'installed'
           and sub.monthly_amount > 0
+          and {predicate}
         group by c.plan_interval
         order by 3 desc
-        """
+        """,
+        params,
     ).fetchall()
     return [
         {"label": PLAN_LABELS.get(interval, interval or "Unknown"),
@@ -490,7 +564,9 @@ def _coverage(raw: list) -> dict:
     }
 
 
-def uninstall_reasons(conn: psycopg.Connection) -> dict:
+def uninstall_reasons(
+    conn: psycopg.Connection, scope: Scope = Scope.all()
+) -> dict:
     """Canonical uninstall-reason buckets, drawn from the mandatory era only.
 
     Shopify made the exit question required on REASON_MANDATORY_FROM, and
@@ -507,13 +583,17 @@ def uninstall_reasons(conn: psycopg.Connection) -> dict:
     # RELATIONSHIP_DEACTIVATED (store closed or frozen by Shopify) into the same
     # 'uninstalled' type, and those merchants are never shown the survey, so
     # counting them would understate how often the question gets answered.
+    predicate, params = scope.predicate("e")
     rows = conn.execute(
-        """
+        f"""
         select e.uninstall_reason, e.occurred_at
         from app_events e
-        join raw_app_events r on r.id = e.platform_event_id
+        join raw_app_events r
+          on r.app_id = e.app_id and r.id = e.platform_event_id
         where e.type = 'uninstalled' and r.type = 'RELATIONSHIP_UNINSTALLED'
-        """
+          and {predicate}
+        """,
+        params,
     ).fetchall()
     mandatory_from = get_settings().reason_mandatory_from
     raw = [r[0] for r in rows]
@@ -552,16 +632,21 @@ TIME_BUCKETS = (
 )
 
 
-def time_to_uninstall(conn: psycopg.Connection) -> dict:
+def time_to_uninstall(
+    conn: psycopg.Connection, scope: Scope = Scope.all()
+) -> dict:
     """How long uninstalled shops kept the app before leaving."""
+    predicate, params = scope.predicate("shops")
     rows = conn.execute(
-        """
+        f"""
         select extract(epoch from (uninstalled_at - installed_at)) / 86400.0
         from shops
         where install_state = 'uninstalled'
           and installed_at is not null and uninstalled_at is not null
           and uninstalled_at >= installed_at
-        """
+          and {predicate}
+        """,
+        params,
     ).fetchall()
     days = sorted(float(r[0]) for r in rows)
     if not days:
@@ -580,21 +665,26 @@ def time_to_uninstall(conn: psycopg.Connection) -> dict:
     return {"median": round(median, 1), "count": len(days), "buckets": counts}
 
 
-def churn_composition(conn: psycopg.Connection) -> list[dict]:
+def churn_composition(
+    conn: psycopg.Connection, scope: Scope = Scope.all()
+) -> list[dict]:
     """Uninstalled shops split by whether they ever paid, so trial tourists
     don't get counted as lost customers."""
+    predicate, params = scope.predicate("s")
     rows = conn.execute(
-        """
+        f"""
         select case when sub.shop_gid is null then 'Never subscribed'
                     else 'Had a subscription' end as kind,
                count(*)
         from shops s
         left join lateral (
-            select shop_gid from subscriptions where shop_gid = s.shop_gid limit 1
+            select shop_gid from subscriptions
+            where app_id = s.app_id and shop_gid = s.shop_gid limit 1
         ) sub on true
-        where s.install_state = 'uninstalled'
+        where s.install_state = 'uninstalled' and {predicate}
         group by 1 order by 2 desc
-        """
+        """,
+        params,
     ).fetchall()
     total = sum(r[1] for r in rows) or 1
     return [
@@ -605,7 +695,8 @@ def churn_composition(conn: psycopg.Connection) -> list[dict]:
 
 def churn_rows(conn: psycopg.Connection, *, paid: str | None = None,
                gave_reason: str | None = None, bucket: str | None = None,
-               since_days: int | None = None, limit: int = 500) -> list[dict]:
+               since_days: int | None = None, limit: int = 500,
+               scope: Scope = Scope.all()) -> list[dict]:
     """One row per merchant-chosen uninstall, newest first.
 
     Only RELATIONSHIP_UNINSTALLED. app_events folds RELATIONSHIP_DEACTIVATED
@@ -638,38 +729,45 @@ def churn_rows(conn: psycopg.Connection, *, paid: str | None = None,
         params.append(since_days)
     where = f"where {' and '.join(filters)}" if filters else ""
 
+    predicate, scope_params = scope.predicate("e")
     rows = conn.execute(
         f"""
         with uninstalls as (
-            select e.occurred_at,
+            select e.app_id, a.slug, a.name, e.occurred_at,
                    e.uninstall_reason as reason,
                    e.uninstall_description as note,
                    coalesce(s.shop_name, s.shop_domain, e.shop_gid) as shop,
                    s.shop_domain, s.country,
                    (select max(i.occurred_at) from app_events i
-                     where i.shop_gid = e.shop_gid
+                     where i.app_id = e.app_id and i.shop_gid = e.shop_gid
                        and i.type in ('installed', 'reinstalled')
                        and i.occurred_at <= e.occurred_at) as installed_at,
                    (select max(sub.monthly_amount) from subscriptions sub
-                     where sub.shop_gid = e.shop_gid
+                     where sub.app_id = e.app_id and sub.shop_gid = e.shop_gid
                        and sub.converted_at <= e.occurred_at) as paid_amount
             from app_events e
-            join raw_app_events r on r.id = e.platform_event_id
-            left join shops s on s.shop_gid = e.shop_gid
+            join apps a on a.id = e.app_id
+            join raw_app_events r
+              on r.app_id = e.app_id and r.id = e.platform_event_id
+            left join shops s
+              on s.app_id = e.app_id and s.shop_gid = e.shop_gid
             where e.type = 'uninstalled' and r.type = 'RELATIONSHIP_UNINSTALLED'
+              and {predicate}
         )
         select * from uninstalls {where} order by occurred_at desc limit %s
         """,
-        (*params, limit),
+        (*scope_params, *params, limit),
     ).fetchall()
 
     out = []
-    for at, reason, note, shop, domain, country, installed_at, paid_amount in rows:
+    for (app_id, app_slug, app_name, at, reason, note, shop, domain, country,
+         installed_at, paid_amount) in rows:
         days = (at - installed_at).days if installed_at else None
         buckets = [classify(r)[0] for r in split_reasons(reason)]
         if bucket and bucket not in buckets:
             continue
         out.append({
+            "app_id": app_id, "app_slug": app_slug, "app_name": app_name,
             "at": at, "shop": shop, "domain": domain, "country": country,
             "installed_at": installed_at, "days": days,
             "paid": paid_amount is not None, "monthly_amount": paid_amount,
@@ -679,7 +777,9 @@ def churn_rows(conn: psycopg.Connection, *, paid: str | None = None,
     return out
 
 
-def uninstall_verbatims(conn: psycopg.Connection, limit: int = 60) -> list[dict]:
+def uninstall_verbatims(
+    conn: psycopg.Connection, limit: int = 60, scope: Scope = Scope.all()
+) -> list[dict]:
     """The free-text notes on their own, grouped by canonical reason bucket.
 
     Every one of these already appears in the "Every uninstall" table below, one
@@ -691,30 +791,37 @@ def uninstall_verbatims(conn: psycopg.Connection, limit: int = 60) -> list[dict]
     Merchant-chosen uninstalls only, same as `churn_rows` and for the same
     reason: a store Shopify closed was never shown the question.
     """
+    predicate, params = scope.predicate("e")
     rows = conn.execute(
-        """
+        f"""
         select e.occurred_at, e.uninstall_reason, e.uninstall_description,
-               coalesce(s.shop_name, s.shop_domain, e.shop_gid), s.shop_domain
+               coalesce(s.shop_name, s.shop_domain, e.shop_gid), s.shop_domain,
+               a.slug, a.name
         from app_events e
-        join raw_app_events r on r.id = e.platform_event_id
-        left join shops s on s.shop_gid = e.shop_gid
+        join apps a on a.id = e.app_id
+        join raw_app_events r
+          on r.app_id = e.app_id and r.id = e.platform_event_id
+        left join shops s
+          on s.app_id = e.app_id and s.shop_gid = e.shop_gid
         where e.type = 'uninstalled' and r.type = 'RELATIONSHIP_UNINSTALLED'
           and e.uninstall_description is not null
           and btrim(e.uninstall_description) <> ''
+          and {predicate}
         order by e.occurred_at desc
         limit %s
         """,
-        (limit,),
+        (*params, limit),
     ).fetchall()
 
     grouped: dict[str, list[dict]] = {}
-    for at, reason, note, shop, domain in rows:
+    for at, reason, note, shop, domain, app_slug, app_name in rows:
         # A merchant can pick several reasons; the note belongs to the whole
         # exit, so file it under the first one rather than duplicating it.
         buckets = [classify(r)[0] for r in split_reasons(reason)]
         label = buckets[0] if buckets else "No reason selected"
         grouped.setdefault(label, []).append(
-            {"at": at, "note": note, "shop": shop, "domain": domain}
+            {"at": at, "note": note, "shop": shop, "domain": domain,
+             "app_slug": app_slug, "app_name": app_name}
         )
     return [
         {"label": label, "notes": notes}
@@ -722,7 +829,9 @@ def uninstall_verbatims(conn: psycopg.Connection, limit: int = 60) -> list[dict]
     ]
 
 
-def review_candidates(conn: psycopg.Connection, min_days: int = 30) -> list[dict]:
+def review_candidates(
+    conn: psycopg.Connection, min_days: int = 30, scope: Scope = Scope.all()
+) -> list[dict]:
     """Installed, paying, past the honeymoon, and not already a reviewer: the
     merchants worth asking for an App Store review. Longest-tenured first,
     because they have the most to say and the least reason to say something bad.
@@ -736,59 +845,74 @@ def review_candidates(conn: psycopg.Connection, min_days: int = 30) -> list[dict
     them was a vendor export's "Contact N" columns, which list every staff account on
     the shop, agencies and our own team included; see migration 008.
     """
+    predicate, params = scope.predicate("sub")
     rows = conn.execute(
-        """
+        f"""
         select coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
                s.shop_domain, s.country,
                min(sub.converted_at) as paying_since,
                max(s.installed_at) as installed_at,
-               sum(sub.monthly_amount) as mrr
-        from subscriptions sub join shops s on s.shop_gid = sub.shop_gid
+               sum(sub.monthly_amount) as mrr, a.slug, a.name
+        from subscriptions sub
+        join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
+        join apps a on a.id = sub.app_id
         where sub.churned_at is null and s.install_state = 'installed'
           and s.reviewed_at is null
-        group by s.shop_gid, s.shop_name, s.shop_domain, s.country
+          and {predicate}
+        group by sub.app_id, s.shop_gid, s.shop_name, s.shop_domain, s.country,
+                 a.slug, a.name
         having min(sub.converted_at) <= now() - make_interval(days => %s)
         order by paying_since
         """,
-        (min_days,),
+        (*params, min_days),
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
         {"shop": shop, "domain": domain, "country": country,
          "installed_at": installed_at, "since": since,
-         "days": (now - since).days, "mrr": mrr}
-        for shop, domain, country, since, installed_at, mrr in rows
+         "days": (now - since).days, "mrr": mrr,
+         "app_slug": app_slug, "app_name": app_name}
+        for shop, domain, country, since, installed_at, mrr, app_slug, app_name in rows
     ]
 
 
-def annual_upgrade_candidates(conn: psycopg.Connection, min_months: int = 3) -> list[dict]:
+def annual_upgrade_candidates(
+    conn: psycopg.Connection, min_months: int = 3, scope: Scope = Scope.all()
+) -> list[dict]:
     """Monthly subscribers who have stuck around long enough to be worth pitching
     the annual plan, which converts a recurring monthly risk into a year of
     prepaid cash."""
+    predicate, params = scope.predicate("sub")
     rows = conn.execute(
-        """
+        f"""
         select coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
-               s.shop_domain, s.country, sub.converted_at, sub.monthly_amount
+               s.shop_domain, s.country, sub.converted_at, sub.monthly_amount,
+               a.slug, a.name
         from subscriptions sub
-        join charges c on c.gid = sub.id
-        join shops s on s.shop_gid = sub.shop_gid
+        join charges c on c.app_id = sub.app_id and c.gid = sub.id
+        join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
+        join apps a on a.id = sub.app_id
         where sub.churned_at is null
           and s.install_state = 'installed'
           and c.plan_interval = 'EVERY_30_DAYS'
           and sub.converted_at <= now() - make_interval(months => %s)
+          and {predicate}
         order by sub.converted_at
         """,
-        (min_months,),
+        (min_months, *params),
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
         {"shop": shop, "domain": domain, "country": country, "since": since,
-         "days": (now - since).days, "mrr": mrr}
-        for shop, domain, country, since, mrr in rows
+         "days": (now - since).days, "mrr": mrr,
+         "app_slug": app_slug, "app_name": app_name}
+        for shop, domain, country, since, mrr, app_slug, app_name in rows
     ]
 
 
-def trial_watch(conn: psycopg.Connection, days: int = 14) -> list[dict]:
+def trial_watch(
+    conn: psycopg.Connection, days: int = 14, scope: Scope = Scope.all()
+) -> list[dict]:
     """Recently installed, still not paying. Oldest first, because the ones
     closest to the end of the window are the ones about to be lost.
 
@@ -796,49 +920,68 @@ def trial_watch(conn: psycopg.Connection, days: int = 14) -> list[dict]:
     has no product-usage data at all, so "installed and silent" is the only
     signal available today.
     """
+    predicate, params = scope.predicate("s")
     rows = conn.execute(
-        """
+        f"""
         select coalesce(s.shop_name, s.shop_domain, s.shop_gid) as shop,
-               s.shop_domain, s.country, s.installed_at
+               s.shop_domain, s.country, s.installed_at, a.slug, a.name
         from shops s
+        join apps a on a.id = s.app_id
         where s.install_state = 'installed'
           and s.installed_at >= now() - make_interval(days => %s)
-          and not exists (select 1 from subscriptions sub where sub.shop_gid = s.shop_gid)
+          and not exists (select 1 from subscriptions sub
+                          where sub.app_id = s.app_id and sub.shop_gid = s.shop_gid)
+          and {predicate}
         order by s.installed_at
         """,
-        (days,),
+        (days, *params),
     ).fetchall()
     now = datetime.now(timezone.utc)
     return [
         {"shop": shop, "domain": domain, "country": country, "installed_at": at,
-         "days": (now - at).days}
-        for shop, domain, country, at in rows
+         "days": (now - at).days, "app_slug": app_slug, "app_name": app_name}
+        for shop, domain, country, at, app_slug, app_name in rows
     ]
 
 
-def store_deaths(conn: psycopg.Connection, limit: int = 25) -> dict:
+def store_deaths(
+    conn: psycopg.Connection, limit: int = 25, scope: Scope = Scope.all()
+) -> dict:
     """Stores Shopify closed or froze. Never surveyed, never a product decision,
     so they are counted apart from churn rather than folded into it."""
+    predicate, params = scope.predicate("e")
     rows = conn.execute(
-        """
-        select e.occurred_at, coalesce(s.shop_name, s.shop_domain, e.shop_gid)
+        f"""
+        select e.occurred_at, coalesce(s.shop_name, s.shop_domain, e.shop_gid),
+               a.slug, a.name
         from app_events e
-        join raw_app_events r on r.id = e.platform_event_id
-        left join shops s on s.shop_gid = e.shop_gid
+        join apps a on a.id = e.app_id
+        join raw_app_events r
+          on r.app_id = e.app_id and r.id = e.platform_event_id
+        left join shops s
+          on s.app_id = e.app_id and s.shop_gid = e.shop_gid
         where e.type = 'uninstalled' and r.type = 'RELATIONSHIP_DEACTIVATED'
+          and {predicate}
         order by e.occurred_at desc
-        """
+        """,
+        params,
     ).fetchall()
     return {
         "count": len(rows),
-        "rows": [{"at": at, "shop": shop} for at, shop in rows[:limit]],
+        "rows": [
+            {"at": at, "shop": shop, "app_slug": app_slug, "app_name": app_name}
+            for at, shop, app_slug, app_name in rows[:limit]
+        ],
     }
 
 
-def monthly_activity(conn: psycopg.Connection, months: int = 6) -> list[dict]:
+def monthly_activity(
+    conn: psycopg.Connection, months: int = 6, scope: Scope = Scope.all()
+) -> list[dict]:
     """Installs vs uninstalls per calendar month, oldest first."""
+    predicate, params = scope.predicate("app_events")
     rows = conn.execute(
-        """
+        f"""
         select to_char(date_trunc('month', occurred_at), 'Mon YYYY') as label,
                date_trunc('month', occurred_at) as month,
                count(*) filter (where type in ('installed', 'reinstalled')) as installs,
@@ -846,10 +989,11 @@ def monthly_activity(conn: psycopg.Connection, months: int = 6) -> list[dict]:
         from app_events
         where occurred_at >= date_trunc('month', now()) - make_interval(months => %s - 1)
           and type in ('installed', 'reinstalled', 'uninstalled')
+          and {predicate}
         group by 2, 1
         order by 2
         """,
-        (months,),
+        (months, *params),
     ).fetchall()
     return [
         {"label": label, "installs": installs, "uninstalls": uninstalls}
@@ -857,33 +1001,54 @@ def monthly_activity(conn: psycopg.Connection, months: int = 6) -> list[dict]:
     ]
 
 
-def recent_events(conn: psycopg.Connection, limit: int = 12) -> list[dict]:
+def recent_events(
+    conn: psycopg.Connection, limit: int = 12, scope: Scope = Scope.all()
+) -> list[dict]:
+    predicate, params = scope.predicate("e")
     rows = conn.execute(
-        """
-        select e.type, coalesce(s.shop_name, s.shop_domain, e.shop_gid), e.occurred_at
-        from app_events e left join shops s on s.shop_gid = e.shop_gid
+        f"""
+        select e.type, coalesce(s.shop_name, s.shop_domain, e.shop_gid), e.occurred_at,
+               a.slug, a.name
+        from app_events e
+        join apps a on a.id = e.app_id
+        left join shops s on s.app_id = e.app_id and s.shop_gid = e.shop_gid
+        where {predicate}
         order by e.occurred_at desc
         limit %s
         """,
-        (limit,),
+        (*params, limit),
     ).fetchall()
-    return [{"type": t, "shop": shop, "at": at} for t, shop, at in rows]
+    return [
+        {"type": t, "shop": shop, "at": at, "app_slug": slug, "app_name": name}
+        for t, shop, at, slug, name in rows
+    ]
 
 
-def funnel_stats(conn: psycopg.Connection) -> list[dict]:
+def funnel_stats(
+    conn: psycopg.Connection, scope: Scope = Scope.all()
+) -> list[dict]:
     """All-time lifecycle funnel: ever installed -> ever subscribed ->
     currently installed -> currently paying."""
-    def one(sql):
-        return conn.execute(sql).fetchone()[0]
+    def one(sql, params=()):
+        return conn.execute(sql, params).fetchone()[0]
+
+    shop_predicate, shop_params = scope.predicate("shops")
+    sub_predicate, sub_params = scope.predicate("subscriptions")
+    active_sql, active_params = _active_paying(scope)
 
     stages = [
-        ("Ever installed", one("select count(*) from shops")),
-        ("Ever subscribed", one("select count(distinct shop_gid) from subscriptions")),
-        ("Currently installed", one("select count(*) from shops where install_state = 'installed'")),
+        ("Ever installed", one(f"select count(*) from shops where {shop_predicate}", shop_params)),
+        ("Ever subscribed", one(
+            f"select count(distinct (app_id, shop_gid)) from subscriptions where {sub_predicate}",
+            sub_params,
+        )),
+        ("Currently installed", one(
+            f"select count(*) from shops where install_state = 'installed' and {shop_predicate}",
+            shop_params,
+        )),
         ("Currently paying", one(
-            """select count(distinct sub.shop_gid)
-               from subscriptions sub join shops s on s.shop_gid = sub.shop_gid
-               where sub.churned_at is null and s.install_state = 'installed'"""
+            f"select count(distinct (sub.app_id, sub.shop_gid)) {active_sql}",
+            active_params,
         )),
     ]
     top = stages[0][1] or 1
@@ -893,14 +1058,17 @@ def funnel_stats(conn: psycopg.Connection) -> list[dict]:
     ]
 
 
-def monthly_conversion(conn: psycopg.Connection, months: int = 6) -> list[dict]:
+def monthly_conversion(
+    conn: psycopg.Connection, months: int = 6, scope: Scope = Scope.all()
+) -> list[dict]:
     """Per install-month: installs and how many of those shops ever subscribed."""
+    predicate, params = scope.predicate("app_events")
     rows = conn.execute(
-        """
+        f"""
         with installs as (
-            select shop_gid, min(occurred_at) as first_install
-            from app_events where type = 'installed'
-            group by shop_gid
+            select app_id, shop_gid, min(occurred_at) as first_install
+            from app_events where type = 'installed' and {predicate}
+            group by app_id, shop_gid
         )
         select to_char(date_trunc('month', i.first_install), 'Mon YYYY'),
                date_trunc('month', i.first_install) as month,
@@ -908,13 +1076,14 @@ def monthly_conversion(conn: psycopg.Connection, months: int = 6) -> list[dict]:
                count(sub.shop_gid) as converted
         from installs i
         left join lateral (
-            select shop_gid from subscriptions where shop_gid = i.shop_gid limit 1
+            select shop_gid from subscriptions
+            where app_id = i.app_id and shop_gid = i.shop_gid limit 1
         ) sub on true
         where i.first_install >= date_trunc('month', now()) - make_interval(months => %s - 1)
         group by 2, 1
         order by 2
         """,
-        (months,),
+        (*params, months),
     ).fetchall()
     return [
         {
@@ -927,11 +1096,16 @@ def monthly_conversion(conn: psycopg.Connection, months: int = 6) -> list[dict]:
     ]
 
 
-def retention_cohorts(conn: psycopg.Connection, max_offset: int = 8) -> dict:
+def retention_cohorts(
+    conn: psycopg.Connection, max_offset: int = 8, scope: Scope = Scope.all()
+) -> dict:
     """Monthly subscription cohorts: % of each converted_at-month cohort still
     active N months after converting. Computed in Python; the table is small."""
+    predicate, params = scope.predicate("subscriptions")
     rows = conn.execute(
-        "select converted_at, churned_at from subscriptions where converted_at is not null"
+        f"""select converted_at, churned_at from subscriptions
+            where converted_at is not null and {predicate}""",
+        params,
     ).fetchall()
     now = datetime.now(timezone.utc)
     this_month = now.year * 12 + (now.month - 1)
@@ -960,7 +1134,9 @@ def retention_cohorts(conn: psycopg.Connection, max_offset: int = 8) -> dict:
     return {"cohorts": out, "max_offset": max_offset}
 
 
-def install_retention_cohorts(conn: psycopg.Connection, max_offset: int = 8) -> dict:
+def install_retention_cohorts(
+    conn: psycopg.Connection, max_offset: int = 8, scope: Scope = Scope.all()
+) -> dict:
     """Monthly install cohorts: % of each cohort still installed N months on.
 
     The leaky-bucket check. `retention_cohorts` only sees merchants who paid,
@@ -971,19 +1147,22 @@ def install_retention_cohorts(conn: psycopg.Connection, max_offset: int = 8) -> 
     is 'installed' again, and shops.uninstalled_at is only honoured when the
     shop is currently gone.
     """
+    predicate, params = scope.predicate("app_events")
     rows = conn.execute(
-        """
+        f"""
         select i.first_install, s.install_state, s.uninstalled_at
         from (
             -- First install of any kind. A shop whose earliest event is a
             -- reactivation still belongs to that month's cohort; keying only on
             -- 'installed' would silently drop it from every total.
-            select shop_gid, min(occurred_at) as first_install
-            from app_events where type in ('installed', 'reinstalled')
-            group by shop_gid
+            select app_id, shop_gid, min(occurred_at) as first_install
+            from app_events
+            where type in ('installed', 'reinstalled') and {predicate}
+            group by app_id, shop_gid
         ) i
-        join shops s on s.shop_gid = i.shop_gid
-        """
+        join shops s on s.app_id = i.app_id and s.shop_gid = i.shop_gid
+        """,
+        params,
     ).fetchall()
 
     now = datetime.now(timezone.utc)
@@ -1013,21 +1192,28 @@ def install_retention_cohorts(conn: psycopg.Connection, max_offset: int = 8) -> 
     return {"cohorts": out, "max_offset": max_offset}
 
 
-def traffic_summary(conn, days: int = 90) -> dict:
+def _traffic_app_id(app_id: int | None) -> int:
+    if app_id is None:
+        raise ValueError("Traffic requires one selected app")
+    return app_id
+
+
+def traffic_summary(conn, app_id: int, days: int = 90) -> dict:
     """Listing funnel over the window: sessions -> Add App clicks -> installs.
 
     Conversion is computed on the same window for every stage, so it is a rate
     over comparable traffic rather than two independent counts divided.
     """
+    app_id = _traffic_app_id(app_id)
     row = conn.execute(
         """
         select coalesce(sum(sessions), 0), coalesce(sum(users), 0),
                coalesce(sum(add_app_clicks), 0), coalesce(sum(installs), 0),
                coalesce(sum(ad_clicks), 0), min(date), max(date)
         from ga4_daily
-        where dimension = 'total' and date >= current_date - %s
+        where app_id = %s and dimension = 'total' and date >= current_date - %s
         """,
-        (days,),
+        (app_id, days),
     ).fetchone()
     sessions, users, clicks, installs, ad_clicks, first, last = row
     return {
@@ -1040,7 +1226,7 @@ def traffic_summary(conn, days: int = 90) -> dict:
     }
 
 
-def install_reconciliation(conn, days: int = 90) -> dict:
+def install_reconciliation(conn, app_id: int, days: int = 90) -> dict:
     """GA4's install count against the Partner API's, over the same window.
 
     Both numbers already live in this database and had never been compared. GA4
@@ -1053,16 +1239,17 @@ def install_reconciliation(conn, days: int = 90) -> dict:
     Without it the listing conversion rate on this page reads as a product
     problem when it is a measurement one.
     """
+    app_id = _traffic_app_id(app_id)
     (ga4_installs,) = conn.execute(
         """select coalesce(sum(installs), 0) from ga4_daily
-           where dimension = 'total' and date >= current_date - %s""",
-        (days,),
+           where app_id = %s and dimension = 'total' and date >= current_date - %s""",
+        (app_id, days),
     ).fetchone()
     (partner_installs,) = conn.execute(
         """select count(*) from app_events
-           where type in ('installed', 'reinstalled')
+           where app_id = %s and type in ('installed', 'reinstalled')
              and occurred_at >= current_date - make_interval(days => %s)""",
-        (days,),
+        (app_id, days),
     ).fetchone()
 
     gap = partner_installs - ga4_installs
@@ -1078,18 +1265,19 @@ def install_reconciliation(conn, days: int = 90) -> dict:
     }
 
 
-def traffic_monthly(conn, months: int = 12) -> list[dict]:
+def traffic_monthly(conn, app_id: int, months: int = 12) -> list[dict]:
+    app_id = _traffic_app_id(app_id)
     rows = conn.execute(
         """
         select to_char(date_trunc('month', date), 'Mon YYYY') as label,
                date_trunc('month', date) as month,
                sum(sessions) as sessions, sum(installs) as installs
         from ga4_daily
-        where dimension = 'total'
+        where app_id = %s and dimension = 'total'
           and date >= date_trunc('month', current_date) - make_interval(months => %s - 1)
         group by 1, 2 order by 2
         """,
-        (months,),
+        (app_id, months),
     ).fetchall()
     return [
         {"label": label, "sessions": sessions, "installs": installs,
@@ -1098,18 +1286,21 @@ def traffic_monthly(conn, months: int = 12) -> list[dict]:
     ]
 
 
-def traffic_breakdown(conn, dimension: str, days: int = 90, top: int = 10) -> list[dict]:
+def traffic_breakdown(
+    conn, app_id: int, dimension: str, days: int = 90, top: int = 10
+) -> list[dict]:
     """Top values for one GA4 dimension. `dimension` is whitelisted by the caller
     against app_dashboard.ga4.DIMENSIONS, never interpolated from user input."""
+    app_id = _traffic_app_id(app_id)
     rows = conn.execute(
         """
         select value, sum(sessions) as sessions, sum(installs) as installs
         from ga4_daily
-        where dimension = %s and date >= current_date - %s
+        where app_id = %s and dimension = %s and date >= current_date - %s
         group by value having sum(sessions) > 0
         order by sessions desc limit %s
         """,
-        (dimension, days, top),
+        (app_id, dimension, days, top),
     ).fetchall()
     return [
         {"value": value, "sessions": sessions, "installs": installs,

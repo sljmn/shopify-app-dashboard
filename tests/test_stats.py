@@ -4,10 +4,14 @@ rather than being exercised only through page renders against an empty DB."""
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
+
+from app_dashboard.scope import Scope
 from app_dashboard.stats import (
     COMPARED,
     collected_revenue,
     country_breakdown,
+    funnel_stats,
     churn_composition,
     annual_upgrade_candidates,
     churn_rows,
@@ -28,6 +32,24 @@ from app_dashboard.stats import (
     uninstall_verbatims,
     unit_economics,
 )
+
+APP = None
+OWNED_TABLES = (
+    "raw_app_events", "app_events", "charges", "subscriptions", "shops",
+    "transactions", "sync_state", "usage_events", "ga4_daily", "annotations",
+    "tracking_events",
+)
+
+
+@pytest.fixture(autouse=True)
+def _owned_rows(db, test_app):
+    global APP
+    APP = test_app
+    for table in OWNED_TABLES:
+        db.execute(f"alter table {table} alter column app_id set default {test_app.id}")
+    yield
+    for table in OWNED_TABLES:
+        db.execute(f"alter table {table} alter column app_id drop default")
 
 
 def _shop(db, gid, **kw):
@@ -539,7 +561,7 @@ def test_install_reconciliation_names_the_measurement_gap(db):
                    (f"e{i}", now - timedelta(days=2), f"s{i}"))
     db.commit()
 
-    out = install_reconciliation(db)
+    out = install_reconciliation(db, APP.id)
     assert out["ga4_installs"] == 6
     assert out["partner_installs"] == 10
     # The Partner API is the truth, so the gap is what GA4 never saw.
@@ -548,7 +570,7 @@ def test_install_reconciliation_names_the_measurement_gap(db):
 
 
 def test_install_reconciliation_survives_an_empty_partner_side(db):
-    out = install_reconciliation(db)
+    out = install_reconciliation(db, APP.id)
     assert out["partner_installs"] == 0
     assert out["missed_pct"] == 0.0
 
@@ -584,6 +606,70 @@ def test_verbatims_skip_empty_notes_and_deactivations(db):
                      raw_type="RELATIONSHIP_DEACTIVATED")
     db.commit()
     assert uninstall_verbatims(db) == []
+
+
+def test_all_app_financial_and_lifecycle_metrics_equal_per_app_sums(
+    db, app_factory
+):
+    beta = app_factory(slug="beta")
+    now = datetime.now(timezone.utc)
+    for app_id, monthly, net in (
+        (APP.id, Decimal("10.00"), Decimal("9.70")),
+        (beta.id, Decimal("20.00"), Decimal("19.40")),
+    ):
+        db.execute(
+            """insert into shops (app_id, shop_gid, install_state, installed_at)
+               values (%s, 'shared-shop', 'installed', %s)""",
+            (app_id, now - timedelta(days=100)),
+        )
+        db.execute(
+            """insert into subscriptions
+                   (app_id, id, shop_gid, monthly_amount, converted_at)
+               values (%s, 'shared-sub', 'shared-shop', %s, %s)""",
+            (app_id, monthly, now - timedelta(days=90)),
+        )
+        db.execute(
+            """insert into app_events
+                   (app_id, platform_event_id, type, occurred_at, shop_gid)
+               values (%s, 'shared-event', 'installed', %s, 'shared-shop')""",
+            (app_id, now - timedelta(days=100)),
+        )
+        db.execute(
+            """insert into transactions
+                   (app_id, id, type, created_at, net_amount, gross_amount, currency_code)
+               values (%s, 'shared-txn', 'AppSubscriptionSale', %s, %s, %s, 'USD')""",
+            (app_id, now - timedelta(days=2), net, monthly),
+        )
+    db.commit()
+
+    all_scope = Scope.all()
+    alpha_scope = Scope.for_app(APP.id)
+    beta_scope = Scope.for_app(beta.id)
+    combined = overview_stats(db, all_scope)
+    alpha = overview_stats(db, alpha_scope)
+    beta_stats = overview_stats(db, beta_scope)
+    for key in ("installed", "active_mrr", "paying", "installs_30d", "uninstalls_30d"):
+        assert combined[key] == alpha[key] + beta_stats[key]
+
+    revenue = collected_revenue(db, all_scope)
+    alpha_revenue = collected_revenue(db, alpha_scope)
+    beta_revenue = collected_revenue(db, beta_scope)
+    for key in ("gross", "net", "net_30d", "count"):
+        assert revenue[key] == alpha_revenue[key] + beta_revenue[key]
+
+    all_trend = mrr_trend(db, scope=all_scope)
+    alpha_trend = mrr_trend(db, scope=alpha_scope)
+    beta_trend = mrr_trend(db, scope=beta_scope)
+    assert [row["mrr"] for row in all_trend] == [
+        a["mrr"] + b["mrr"] for a, b in zip(alpha_trend, beta_trend)
+    ]
+
+    all_funnel = funnel_stats(db, all_scope)
+    alpha_funnel = funnel_stats(db, alpha_scope)
+    beta_funnel = funnel_stats(db, beta_scope)
+    assert [row["count"] for row in all_funnel] == [
+        a["count"] + b["count"] for a, b in zip(alpha_funnel, beta_funnel)
+    ]
 
 
 # --- Comparison to the previous period ---------------------------------------
