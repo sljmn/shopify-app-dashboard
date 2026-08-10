@@ -81,6 +81,7 @@ def test_selector_lists_every_app_and_unknown_slugs_404(
     assert combined.status_code == 200
     assert "All apps" in combined.text
     assert "Test App" in combined.text and other.name in combined.text
+    assert "new FormData(form)" in combined.text
     assert c.get(
         "/?app=other-app", auth=("tester", "suite-only-credential")
     ).status_code == 200

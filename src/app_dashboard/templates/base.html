@@ -938,7 +938,12 @@
         });
 
         document.getElementById("app-selector")?.addEventListener("change", (event) => {
-            event.currentTarget.form.submit();
+            const form = event.currentTarget.form;
+            const target = new URL(form.action);
+            new FormData(form).forEach((value, key) => {
+                if (value) target.searchParams.append(key, value);
+            });
+            location.assign(target);
         });
 
         // Copies this page's markdown mirror (frontmatter + prose + JSON) for
