@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 
+from app_dashboard.catalog import AppConfig
 from app_dashboard.derive import derive_installations
 from app_dashboard.ingest_raw import upsert_charges, upsert_raw_events, upsert_transactions
 from app_dashboard.partner_api import fetch_app_events, fetch_transactions
@@ -17,7 +18,9 @@ TRANSACTIONS_SOURCE = "partner_transactions"
 THROTTLE_SECONDS = 0.3
 
 
-def run_sync(conn: psycopg.Connection, client, settings, http_post) -> dict:
+def run_sync(
+    conn: psycopg.Connection, client, app: AppConfig, settings, http_post
+) -> dict:
     """Poll the Partner API, derive clean events, and Slack-notify fresh installs.
 
     poll_overlap_minutes is not applied here: fetch_app_events' cursor (Task 7)
@@ -29,23 +32,26 @@ def run_sync(conn: psycopg.Connection, client, settings, http_post) -> dict:
     start_ts = datetime.now(timezone.utc)
 
     row = conn.execute(
-        "select cursor from sync_state where source = %s", (SOURCE,)
+        "select cursor from sync_state where app_id = %s and source = %s",
+        (app.id, SOURCE),
     ).fetchone()
     cursor = row[0] if row else None
 
     # Snapshot before deriving: ON CONFLICT (platform_event_id) DO NOTHING
     # means already-seen events never get a new id, so any app_events row with
     # id > snapshot after this run is a genuinely new lifecycle event.
-    (snapshot,) = conn.execute("select coalesce(max(id), 0) from app_events").fetchone()
+    (snapshot,) = conn.execute(
+        "select coalesce(max(id), 0) from app_events where app_id = %s", (app.id,)
+    ).fetchone()
 
     raw_inserted = 0
     touched_ids: set[str] = set()
     while True:
         events, next_cursor = fetch_app_events(
-            client, app_id=settings.partner_app_id, after_cursor=cursor
+            client, app_id=app.partner_app_id, after_cursor=cursor
         )
-        raw_inserted += upsert_raw_events(conn, events)
-        upsert_charges(conn, events)
+        raw_inserted += upsert_raw_events(conn, app, events)
+        upsert_charges(conn, app, events)
         touched_ids.update(e["shop_gid"] for e in events)
         if next_cursor is None:
             break
@@ -55,40 +61,43 @@ def run_sync(conn: psycopg.Connection, client, settings, http_post) -> dict:
     # since=start_ts: that compares an app-clock timestamp against DB-clock
     # ingested_at, so with the app and database on separate machines clock skew can
     # permanently skip a freshly-ingested install.
-    event_counts = derive_installations(conn, touched_ids)
+    event_counts = derive_installations(conn, app.id, touched_ids)
 
     alertable = conn.execute(
         """
         select shop_gid, type from app_events
-        where id > %s and type in ('installed', 'reinstalled', 'uninstalled')
+        where app_id = %s and id > %s
+          and type in ('installed', 'reinstalled', 'uninstalled')
         order by id
         """,
-        (snapshot,),
+        (app.id, snapshot),
     ).fetchall()
-    alerts_sent = notify_events(conn, alertable, settings.slack_webhook_url,
+    alerts_sent = notify_events(conn, app, alertable, settings.slack_webhook_url,
                                 http_post=http_post,
                                 base_url=settings.public_base_url)
 
     conn.execute(
         """
-        insert into sync_state (source, cursor, last_synced_at)
-        values (%s, %s, %s)
-        on conflict (source) do update set
+        insert into sync_state (app_id, source, cursor, last_synced_at)
+        values (%s, %s, %s, %s)
+        on conflict (app_id, source) do update set
             cursor = excluded.cursor,
             last_synced_at = excluded.last_synced_at
         """,
-        (SOURCE, cursor, start_ts),
+        (app.id, SOURCE, cursor, start_ts),
     )
     conn.commit()
 
     return {
+        "app": app.slug,
+        "ok": True,
         "raw_inserted": raw_inserted,
         "events_emitted": sum(event_counts.values()),
         "alerts_sent": alerts_sent,
     }
 
 
-def sync_transactions(conn: psycopg.Connection, client, settings,
+def sync_transactions(conn: psycopg.Connection, client, app: AppConfig, settings,
                       sleep=time.sleep) -> dict:
     """Poll the money feed into `transactions`.
 
@@ -105,7 +114,9 @@ def sync_transactions(conn: psycopg.Connection, client, settings,
     """
     start_ts = datetime.now(timezone.utc)
 
-    (latest,) = conn.execute("select max(created_at) from transactions").fetchone()
+    (latest,) = conn.execute(
+        "select max(created_at) from transactions where app_id = %s", (app.id,)
+    ).fetchone()
     created_at_min = None
     if latest is not None:
         # Normalized to UTC before formatting: psycopg hands back timestamptz in
@@ -120,10 +131,10 @@ def sync_transactions(conn: psycopg.Connection, client, settings,
     inserted = seen = pages = 0
     while True:
         rows, next_cursor = fetch_transactions(
-            client, app_id=settings.partner_app_id, after_cursor=cursor,
+            client, app_id=app.partner_app_id, after_cursor=cursor,
             created_at_min=created_at_min,
         )
-        inserted += upsert_transactions(conn, rows)
+        inserted += upsert_transactions(conn, app, rows)
         seen += len(rows)
         pages += 1
         if next_cursor is None:
@@ -133,13 +144,14 @@ def sync_transactions(conn: psycopg.Connection, client, settings,
 
     conn.execute(
         """
-        insert into sync_state (source, cursor, last_synced_at)
-        values (%s, null, %s)
-        on conflict (source) do update set last_synced_at = excluded.last_synced_at
+        insert into sync_state (app_id, source, cursor, last_synced_at)
+        values (%s, %s, null, %s)
+        on conflict (app_id, source) do update set last_synced_at = excluded.last_synced_at
         """,
-        (TRANSACTIONS_SOURCE, start_ts),
+        (app.id, TRANSACTIONS_SOURCE, start_ts),
     )
     conn.commit()
 
-    return {"transactions_seen": seen, "transactions_inserted": inserted,
+    return {"app": app.slug, "ok": True,
+            "transactions_seen": seen, "transactions_inserted": inserted,
             "pages": pages, "since": created_at_min}

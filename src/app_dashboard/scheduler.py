@@ -4,6 +4,7 @@ from datetime import datetime
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from app_dashboard.catalog import AppConfig
 from app_dashboard.digest import send_weekly_digest
 from app_dashboard.ops import check_stale_sync
 from app_dashboard.partner_api import PartnerClient
@@ -14,32 +15,61 @@ logger = logging.getLogger(__name__)
 WEEKLY_DIGEST_JOB_ID = "weekly_digest"
 
 
-def run_sync_job(conn_factory, client, settings) -> None:
-    """One scheduler tick: open a connection, run the sync, always close it.
+def configured_clients(apps: list[AppConfig]) -> dict[str, PartnerClient]:
+    """Build one API client per Partner organization, shared by its apps."""
+    clients: dict[str, PartnerClient] = {}
+    for app in apps:
+        if app.partner_org_id not in clients:
+            clients[app.partner_org_id] = PartnerClient(
+                app.partner_token, app.partner_org_id
+            )
+    return clients
 
-    conn_factory in production is app_dashboard.db.connect (a fresh connection per
-    call); leaving it open would leak a Postgres connection every poll.
-    """
+
+def run_all_apps(conn_factory, apps, settings, sync_one) -> list[dict]:
+    """Run every app independently so one Partner failure cannot stop the rest."""
+    results = []
+    clients = configured_clients(apps)
+    for app in apps:
+        try:
+            results.append(
+                sync_one(conn_factory, clients[app.partner_org_id], app, settings)
+            )
+        except Exception as exc:
+            logger.exception("%s sync failed", app.slug)
+            results.append({"app": app.slug, "ok": False, "error": str(exc)})
+    return results
+
+
+def _sync_one_lifecycle(conn_factory, client, app, settings) -> dict:
     conn = conn_factory()
     try:
-        summary = run_sync(conn, client, settings, http_post=httpx.post)
-        logger.info("run_sync completed: %s", summary)
+        return run_sync(conn, client, app, settings, http_post=httpx.post)
     finally:
         conn.close()
 
 
-def run_transactions_job(conn_factory, client, settings) -> None:
+def run_sync_job(conn_factory, apps: list[AppConfig], settings) -> list[dict]:
+    results = run_all_apps(conn_factory, apps, settings, _sync_one_lifecycle)
+    logger.info("all lifecycle syncs completed: %s", results)
+    return results
+
+
+def _sync_one_transactions(conn_factory, client, app, settings) -> dict:
+    conn = conn_factory()
+    try:
+        return sync_transactions(conn, client, app, settings)
+    finally:
+        conn.close()
+
+
+def run_transactions_job(conn_factory, apps: list[AppConfig], settings) -> list[dict]:
     """Poll the money feed. Its own job, and its own try/except: a failure here
     must not take the lifecycle sync down, because the events feed is what the
     install/uninstall alerts run on."""
-    conn = conn_factory()
-    try:
-        summary = sync_transactions(conn, client, settings)
-        logger.info("sync_transactions completed: %s", summary)
-    except Exception:
-        logger.exception("transactions sync failed")
-    finally:
-        conn.close()
+    results = run_all_apps(conn_factory, apps, settings, _sync_one_transactions)
+    logger.info("all transaction syncs completed: %s", results)
+    return results
 
 
 def run_stale_check_job(conn_factory, settings) -> None:
@@ -86,13 +116,13 @@ def run_ga4_job(conn_factory, settings) -> None:
         conn.close()
 
 
-def start_scheduler(conn_factory, settings) -> BackgroundScheduler:
+def start_scheduler(
+    conn_factory, settings, apps: list[AppConfig]
+) -> BackgroundScheduler:
     """Poll the Partner API on an interval via run_sync. Caller owns shutdown()."""
-    client = PartnerClient(settings.partner_api_token, settings.partner_org_id)
-
     scheduler = BackgroundScheduler()
     scheduler.add_job(
-        lambda: run_sync_job(conn_factory, client, settings),
+        lambda: run_sync_job(conn_factory, apps, settings),
         "interval",
         minutes=settings.poll_interval_minutes,
         # First run at boot, not boot+interval: a fresh deploy should sync
@@ -103,7 +133,7 @@ def start_scheduler(conn_factory, settings) -> BackgroundScheduler:
     # collected some hours later. Hourly is well inside that, and it keeps the
     # tight pagination loop away from the 15-minute lifecycle poll.
     scheduler.add_job(
-        lambda: run_transactions_job(conn_factory, client, settings),
+        lambda: run_transactions_job(conn_factory, apps, settings),
         "interval",
         hours=1,
         next_run_time=datetime.now(),

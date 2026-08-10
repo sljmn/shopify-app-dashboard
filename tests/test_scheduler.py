@@ -1,4 +1,6 @@
-from app_dashboard.scheduler import run_sync_job
+from dataclasses import replace
+
+from app_dashboard.scheduler import run_all_apps, run_sync_job
 
 
 class FakeConn:
@@ -9,28 +11,63 @@ class FakeConn:
         self.closed_count += 1
 
 
-def test_run_sync_job_closes_connection_on_success(monkeypatch):
+def test_run_sync_job_closes_connection_on_success(monkeypatch, test_app):
     conn = FakeConn()
     monkeypatch.setattr("app_dashboard.scheduler.run_sync", lambda *a, **k: {"raw_inserted": 0})
-    run_sync_job(lambda: conn, client=object(), settings=object())
+    run_sync_job(lambda: conn, apps=[test_app], settings=object())
     assert conn.closed_count == 1
 
 
-def test_run_sync_job_closes_connection_even_if_sync_raises(monkeypatch):
+def test_run_sync_job_closes_connection_even_if_sync_raises(monkeypatch, test_app):
     conn = FakeConn()
 
     def boom(*a, **k):
         raise RuntimeError("sync failed")
 
     monkeypatch.setattr("app_dashboard.scheduler.run_sync", boom)
-    try:
-        run_sync_job(lambda: conn, client=object(), settings=object())
-    except RuntimeError:
-        pass
+    result = run_sync_job(lambda: conn, apps=[test_app], settings=object())
     assert conn.closed_count == 1
+    assert result == [{"app": test_app.slug, "ok": False, "error": "sync failed"}]
 
 
-def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch):
+def test_all_apps_continue_after_failure_and_share_org_clients(
+    monkeypatch, app_factory
+):
+    alpha = app_factory(slug="alpha")
+    beta_stored = app_factory(slug="beta")
+    gamma = app_factory(slug="gamma")
+    beta = replace(
+        beta_stored,
+        partner_org_id=alpha.partner_org_id,
+        partner_token=alpha.partner_token,
+    )
+    created = []
+
+    def client(token, org_id):
+        value = object()
+        created.append((token, org_id, value))
+        return value
+
+    monkeypatch.setattr("app_dashboard.scheduler.PartnerClient", client)
+    seen = []
+
+    def sync_one(conn_factory, client, app, settings):
+        seen.append(app.slug)
+        if app.slug == "beta":
+            raise RuntimeError("beta failed")
+        return {"app": app.slug, "ok": True}
+
+    results = run_all_apps(lambda: None, [alpha, beta, gamma], object(), sync_one)
+    assert seen == ["alpha", "beta", "gamma"]
+    assert results == [
+        {"app": "alpha", "ok": True},
+        {"app": "beta", "ok": False, "error": "beta failed"},
+        {"app": "gamma", "ok": True},
+    ]
+    assert len(created) == 2
+
+
+def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, test_app):
     """Only the wiring: send_weekly_digest itself is tested in test_digest."""
     from types import SimpleNamespace
 
@@ -54,7 +91,8 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch):
     monkeypatch.setattr(sched, "BackgroundScheduler", lambda: fake)
     sched.start_scheduler(lambda: None, SimpleNamespace(
         partner_api_token="t", partner_org_id="1", poll_interval_minutes=15,
-        digest_day_of_week="tue", digest_hour=7, digest_timezone="Europe/Berlin"))
+        digest_day_of_week="tue", digest_hour=7, digest_timezone="Europe/Berlin"),
+        [test_app])
 
     digest = [kw for trigger, kw in fake.jobs if trigger == "cron"]
     assert len(digest) == 1

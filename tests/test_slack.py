@@ -1,4 +1,14 @@
+import pytest
+
 from app_dashboard.slack import build_event_message, notify_events
+
+APP = None
+
+
+@pytest.fixture(autouse=True)
+def _owned_app(test_app):
+    global APP
+    APP = test_app
 
 
 def _capture():
@@ -21,39 +31,39 @@ def test_message_identifies_the_shop_and_carries_no_contact_details():
 def test_notify_fires_without_email(db):
     # Fresh live installs have shop name/domain from the events feed but no
     # contact info until enrichment: alert anyway, render Unknown.
-    db.execute("insert into shops(shop_gid, shop_domain, shop_name, install_state) "
-               "values ('ai1','x.myshopify.com','X','installed')"); db.commit()
+    db.execute("insert into shops(app_id, shop_gid, shop_domain, shop_name, install_state) "
+               "values (%s,'ai1','x.myshopify.com','X','installed')", (APP.id,)); db.commit()
     sent, post = _capture()
-    assert notify_events(db, [("ai1", "installed")], "http://hook", http_post=post) == 1
+    assert notify_events(db, APP, [("ai1", "installed")], "http://hook", http_post=post) == 1
     text = str(sent[0])
     assert "x.myshopify.com" in text
     assert "Unknown" in text             # country/plan render as Unknown
 
 
 def test_notify_uninstall_uses_uninstall_header(db):
-    db.execute("insert into shops(shop_gid, shop_domain, shop_name, install_state) "
-               "values ('ai1','x.myshopify.com','X','uninstalled')"); db.commit()
+    db.execute("insert into shops(app_id, shop_gid, shop_domain, shop_name, install_state) "
+               "values (%s,'ai1','x.myshopify.com','X','uninstalled')", (APP.id,)); db.commit()
     sent, post = _capture()
-    notify_events(db, [("ai1", "uninstalled")], "http://hook", http_post=post)
+    notify_events(db, APP, [("ai1", "uninstalled")], "http://hook", http_post=post)
     assert "Uninstalled" in str(sent[0])
     assert "x.myshopify.com" in str(sent[0])
 
 
 def test_notify_without_webhook_url_is_a_noop(db):
-    db.execute("insert into shops(shop_gid, shop_name, install_state) "
-               "values ('ai1','X','installed')"); db.commit()
+    db.execute("insert into shops(app_id, shop_gid, shop_name, install_state) "
+               "values (%s,'ai1','X','installed')", (APP.id,)); db.commit()
     sent, post = _capture()
-    assert notify_events(db, [("ai1", "installed")], None, http_post=post) == 0
+    assert notify_events(db, APP, [("ai1", "installed")], None, http_post=post) == 0
     assert sent == []
 
 
 def test_notify_caps_bulk_replay(db):
     for i in range(30):
-        db.execute("insert into shops(shop_gid, shop_name, install_state) "
-                   "values (%s,'X','installed')", (f"ai{i}",))
+        db.execute("insert into shops(app_id, shop_gid, shop_name, install_state) "
+                   "values (%s,%s,'X','installed')", (APP.id, f"ai{i}"))
     db.commit()
     sent, post = _capture()
-    n = notify_events(db, [(f"ai{i}", "installed") for i in range(30)],
+    n = notify_events(db, APP, [(f"ai{i}", "installed") for i in range(30)],
                       "http://hook", http_post=post)
     assert n == 20                       # MAX_ALERTS_PER_SYNC
     assert len(sent) == 20
@@ -64,15 +74,15 @@ def test_notify_reports_active_plan_not_churned(db):
     # active one. Without a deterministic ORDER BY, a plain LEFT JOIN +
     # fetchone() can surface either row, so this pins the fix (active rows
     # first, then most-recently-converted, limit 1).
-    db.execute("insert into shops(shop_gid, shop_name, email, install_state) "
-               "values ('ai1','X','j@x.com','installed')")
-    db.execute("insert into subscriptions(id, shop_gid, monthly_amount, "
+    db.execute("insert into shops(app_id, shop_gid, shop_name, email, install_state) "
+               "values (%s,'ai1','X','j@x.com','installed')", (APP.id,))
+    db.execute("insert into subscriptions(app_id, id, shop_gid, monthly_amount, "
                "converted_at, churned_at) values "
-               "('old','ai1',29.00,'2026-01-01','2026-02-01'), "
-               "('new','ai1',49.00,'2026-05-01',NULL)")
+               "(%s,'old','ai1',29.00,'2026-01-01','2026-02-01'), "
+               "(%s,'new','ai1',49.00,'2026-05-01',NULL)", (APP.id, APP.id))
     db.commit()
     sent, post = _capture()
-    notify_events(db, [("ai1", "installed")], "http://hook", http_post=post)
+    notify_events(db, APP, [("ai1", "installed")], "http://hook", http_post=post)
     text = str(sent[0])
     assert "$49.00/mo" in text
     assert "$29.00/mo" not in text
