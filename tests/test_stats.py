@@ -9,6 +9,7 @@ import pytest
 from app_dashboard.scope import Scope
 from app_dashboard.stats import (
     COMPARED,
+    MOVEMENT_KINDS,
     collected_revenue,
     country_breakdown,
     funnel_stats,
@@ -25,6 +26,8 @@ from app_dashboard.stats import (
     store_deaths,
     trial_watch,
     mrr_movements,
+    mrr_movement_between,
+    mrr_movements_by_app_between,
     mrr_trend,
     overview_stats,
     plan_mix,
@@ -202,6 +205,45 @@ def test_mrr_movements_reconcile_with_the_trend_line(db):
     moves = {m["label"]: m for m in mrr_movements(db, months=12)}
     for prev, curr in zip(trend, trend[1:]):
         assert moves[curr["label"]]["net"] == curr["mrr"] - prev["mrr"], curr["label"]
+
+
+def test_mrr_movements_between_group_by_app_and_keep_transient_changes(
+    db, app_factory
+):
+    beta = app_factory(slug="beta", name="Beta")
+    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 11, tzinfo=timezone.utc)
+    _shop(db, "alpha-new", app_id=APP.id)
+    _shop(db, "alpha-transient", app_id=APP.id)
+    _shop(db, "beta-gone", app_id=beta.id)
+    db.execute(
+        """insert into subscriptions
+               (app_id, id, shop_gid, monthly_amount, converted_at, churned_at)
+           values (%s, 'alpha-sub', 'alpha-new', 24, %s, null),
+                  (%s, 'alpha-temp', 'alpha-transient', 5, %s, %s),
+                  (%s, 'beta-sub', 'beta-gone', 12, %s, %s)""",
+        (
+            APP.id,
+            start + timedelta(days=1),
+            APP.id,
+            start + timedelta(days=3),
+            start + timedelta(days=4),
+            beta.id,
+            start - timedelta(days=20),
+            start + timedelta(days=2),
+        ),
+    )
+    db.commit()
+
+    grouped = mrr_movements_by_app_between(db, start, end)
+
+    assert grouped[APP.id]["new"] == Decimal("29.00")
+    assert grouped[APP.id]["churned"] == Decimal("-5.00")
+    assert grouped[APP.id]["net"] == Decimal("24.00")
+    assert grouped[beta.id]["churned"] == Decimal("-12.00")
+    aggregate = mrr_movement_between(db, start, end)
+    for key in (*MOVEMENT_KINDS, "net"):
+        assert aggregate[key] == sum(row[key] for row in grouped.values())
 
 
 def test_country_breakdown_splits_live_from_all_time(db):

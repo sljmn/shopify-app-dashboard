@@ -340,46 +340,83 @@ def _attribute(bucket: dict, prev: Decimal, curr: Decimal, returning: bool) -> N
         bucket["contraction"] += curr - prev
 
 
-def mrr_movement_between(
+def mrr_movements_by_app_between(
     conn: psycopg.Connection, start, end, scope: Scope = Scope.all()
-) -> dict:
-    """The same five buckets as `mrr_movements`, over an arbitrary span.
+) -> dict[int, dict[str, Decimal]]:
+    """Attribute every corrected MRR transition in a span, grouped by app.
 
-    Used for the weekly digest. `start` and `end` are instants, not month ends,
-    so a subscription counts if it had converted by then and had not churned.
+    Starts and ends at the same timestamp are applied atomically, so a plan swap
+    is one expansion or contraction. A subscription that starts and stops on
+    different dates inside the span appears on both gross sides while adding
+    zero to net MRR.
     """
     predicate, params = scope.predicate("subscriptions")
     billable, billable_params = _billable("subscriptions")
     rows = conn.execute(
         f"""select app_id, shop_gid, coalesce(monthly_amount, 0), converted_at, churned_at
            from subscriptions where converted_at is not null and {predicate}
-             and {billable}""",
-        (*params, *billable_params),
+             and {billable} and converted_at < %s""",
+        (*params, *billable_params, end),
     ).fetchall()
 
-    def at(t):
-        totals: dict[tuple[int, str], Decimal] = {}
-        for app_id, shop_gid, amount, converted_at, churned_at in rows:
-            if converted_at <= t and (churned_at is None or churned_at > t):
-                key = (app_id, shop_gid)
-                totals[key] = totals.get(key, Decimal("0")) + amount
-        return totals
+    by_shop: dict[tuple[int, str], list[tuple]] = {}
+    for app_id, shop_gid, amount, converted_at, churned_at in rows:
+        by_shop.setdefault((app_id, shop_gid), []).append(
+            (amount, converted_at, churned_at)
+        )
 
-    before, after = at(start), at(end)
-    # Anyone who had already converted before the window opened and is coming
-    # back inside it is a reactivation, not a new customer.
-    ever_before = {
-        (app_id, gid)
-        for app_id, gid, _, converted_at, _ in rows
-        if converted_at <= start
-    }
+    grouped: dict[int, dict[str, Decimal]] = {}
+    for (app_id, _), subscriptions in by_shop.items():
+        bucket = grouped.setdefault(
+            app_id, {kind: Decimal("0") for kind in MOVEMENT_KINDS}
+        )
+        current = sum(
+            (
+                amount
+                for amount, converted_at, churned_at in subscriptions
+                if converted_at < start
+                and (churned_at is None or churned_at >= start)
+            ),
+            Decimal("0"),
+        )
+        ever_paid = any(
+            converted_at < start for _, converted_at, _ in subscriptions
+        )
+        changes: dict[datetime, list[Decimal]] = {}
+        for amount, converted_at, churned_at in subscriptions:
+            if start <= converted_at < end:
+                changes.setdefault(
+                    converted_at, [Decimal("0"), Decimal("0")]
+                )[0] += amount
+            if churned_at is not None and start <= churned_at < end:
+                changes.setdefault(
+                    churned_at, [Decimal("0"), Decimal("0")]
+                )[1] += amount
 
-    bucket = {k: Decimal("0") for k in MOVEMENT_KINDS}
-    for shop_gid in set(before) | set(after):
-        _attribute(bucket, before.get(shop_gid, Decimal("0")),
-                   after.get(shop_gid, Decimal("0")), shop_gid in ever_before)
-    bucket["net"] = sum(bucket.values())
-    return bucket
+        for instant in sorted(changes):
+            gained, lost = changes[instant]
+            previous = current
+            current += gained - lost
+            _attribute(bucket, previous, current, returning=ever_paid)
+            if current > 0:
+                ever_paid = True
+
+    for bucket in grouped.values():
+        bucket["net"] = sum(bucket.values())
+    return grouped
+
+
+def mrr_movement_between(
+    conn: psycopg.Connection, start, end, scope: Scope = Scope.all()
+) -> dict:
+    """The five MRR buckets over an arbitrary span, across the selected scope."""
+    grouped = mrr_movements_by_app_between(conn, start, end, scope)
+    total = {kind: Decimal("0") for kind in MOVEMENT_KINDS}
+    for bucket in grouped.values():
+        for kind in MOVEMENT_KINDS:
+            total[kind] += bucket[kind]
+    total["net"] = sum(total.values())
+    return total
 
 
 def mrr_at(
