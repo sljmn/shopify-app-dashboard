@@ -12,28 +12,24 @@ from urllib.parse import parse_qs, urlencode, urlparse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-import httpx
 from datetime import date
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import PlainTextResponse, RedirectResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app_dashboard.auth import (
+    LOGIN_CSRF_COOKIE,
+    LOGIN_CSRF_MAX_AGE,
     SESSION_COOKIE,
     SESSION_MAX_AGE,
-    STATE_COOKIE,
-    allowed_principals,
-    authorize_url,
-    email_is_allowed,
     display_name,
-    exchange_code,
+    issue_login_csrf,
     issue_session,
-    new_state,
     read_session,
+    valid_login_csrf,
 )
 from app_dashboard import annotations as anno
 from app_dashboard.catalog import AppConfig, list_apps
@@ -114,13 +110,8 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 CUSTOMERS_PAGE_SIZE = 50
 
-# Header the app sends its shared secret in. A dedicated header rather than
-# Authorization, so it can never collide with the Basic auth path.
+# Header the app sends its shared secret in.
 USAGE_TOKEN_HEADER = "X-Usage-Token"
-
-# auto_error=False so a browser with no Authorization header falls through to
-# the Google redirect instead of getting a Basic auth popup.
-security = HTTPBasic(auto_error=False)
 
 
 def _same_secret(supplied: str | None, expected: str | None) -> bool:
@@ -214,8 +205,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     templates.env.globals["APP_LISTING_URL"] = ""
     templates.env.globals["GA4_PROPERTY_ID"] = None
 
-    allowed = allowed_principals(settings.google_allowed_domains)
-    sso_enabled = bool(settings.google_client_id and settings.google_client_secret)
+    secure_cookies = urlparse(settings.public_base_url).scheme == "https"
     login_limiter = RateLimiter(LOGIN_LIMIT, LOGIN_WINDOW)
     ingest_limiter = RateLimiter(INGEST_LIMIT, INGEST_WINDOW)
 
@@ -263,58 +253,19 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             "GA4_PROPERTY_ID": selected.ga4_property_id if selected else None,
         }
 
-    def _basic_user(credentials: HTTPBasicCredentials | None) -> str | None:
-        if credentials is None:
-            return None
-        # Compare against a dummy when the user is unknown so timing doesn't
-        # reveal which usernames exist.
-        stored = settings.dashboard_users_map.get(credentials.username)
-        pass_ok = _same_secret(credentials.password, stored or "\0invalid")
-        return credentials.username if stored is not None and pass_ok else None
-
-    def verify_creds(
-        request: Request,
-        credentials: HTTPBasicCredentials | None = Depends(security),
-    ) -> str:
-        """Google session first, Basic auth second.
-
-        Basic auth is kept for curl, scripts, and as the way in if Google is
-        down. A signed-in session is re-checked against the domain allowlist on
-        every request, so removing a domain takes effect immediately.
-        """
+    def verify_creds(request: Request) -> str:
+        """Require the signed session created by the password login form."""
         email = read_session(settings.session_secret,
-                             request.cookies.get(SESSION_COOKIE), allowed)
+                             request.cookies.get(SESSION_COOKIE),
+                             settings.dashboard_username)
         if email:
             return email
 
-        # Only credential *attempts* are throttled, and only failed ones are
-        # recorded, so a signed-in session never touches this path and a browser
-        # loading twenty pages is never slowed down.
-        key = client_key(request)
-        if credentials is not None and not login_limiter.check(key):
-            raise HTTPException(status_code=429, detail="Too many attempts")
-
-        user = _basic_user(credentials)
-        if user:
-            login_limiter.reset(key)
-            return user
-        if credentials is not None:
-            login_limiter.record(key)
-
-        if sso_enabled and credentials is None:
-            # Signal to the caller that a browser should be bounced to Google.
-            # 303 rather than 307 on a write: 307 preserves the method, so a
-            # person whose session expired mid-note has their browser re-POST
-            # the note to the GET-only login page, losing the text and landing
-            # on a 405. GET keeps 307 so nothing that follows redirects changes.
+        if "text/html" in request.headers.get("accept", ""):
             code = 303 if request.method not in ("GET", "HEAD") else 307
-            raise HTTPException(status_code=code, detail="sso",
+            raise HTTPException(status_code=code, detail="login",
                                 headers={"Location": "/auth/login"})
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     def _display(request: Request, user: str) -> str:
         """The name the header shows. Never used to decide anything: verify_creds
@@ -330,7 +281,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         will not send cross-site".
         """
         return read_session(settings.session_secret,
-                            request.cookies.get(SESSION_COOKIE), allowed)
+                            request.cookies.get(SESSION_COOKIE),
+                            settings.dashboard_username)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -373,14 +325,11 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         """Copy for one error, as (title, body, link href, link text)."""
         if exc.status_code == 401:
             return ("Those credentials were not accepted",
-                    "Check the username and password, or sign in with Google "
-                    "instead.",
+                    "Check the email address and password, then try again.",
                     "/auth/login", "Go to sign-in")
         if exc.status_code == 403:
-            # The detail is already written for a person and already names the
-            # allowed domains without listing individual addresses.
-            return ("Not on the list", str(exc.detail),
-                    "/auth/login", "Try another account")
+            return ("Not allowed", str(exc.detail),
+                    "/auth/login", "Go to sign-in")
         if str(exc.detail) == "No such shop":
             return ("That shop isn't on record",
                     "Check the domain, or it never installed. Customers is "
@@ -404,12 +353,11 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             # Everything else, including the 307 to /auth/login, keeps its
             # existing behaviour.
             return await http_exception_handler(request, exc)
-        # Only the cookie, not Basic auth: this decides whether to draw the
-        # sidebar, and a browser signed in over Basic (the SSO-disabled
-        # fallback) simply gets the plainer page.
+        # The session decides whether the error page may draw authenticated
+        # navigation around its message.
         signed_in = bool(read_session(settings.session_secret,
                                       request.cookies.get(SESSION_COOKIE),
-                                      allowed))
+                                      settings.dashboard_username))
         title, body, href, text = _error_page(request, exc, signed_in)
         response = templates.TemplateResponse(
             request, "error.html",
@@ -423,9 +371,6 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
              "link_href": href, "link_text": text},
             status_code=exc.status_code,
         )
-        # WWW-Authenticate has to survive: without it curl -u stops being able
-        # to authenticate at all. A browser will show its native prompt first
-        # and this page behind it, which is the right order.
         for key, value in (exc.headers or {}).items():
             response.headers[key] = value
         return response
@@ -547,80 +492,71 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             conn.close()
         return result
 
-    redirect_uri = settings.public_base_url.rstrip("/") + "/auth/callback"
-
     @app.get("/auth/login")
     def auth_login(request: Request):
-        """A page rather than an instant bounce to Google.
-
-        This used to redirect straight through, which meant an unauthenticated
-        visitor never saw a word about what they were signing in to, and if
-        their account was not allowed the first thing they ever read was a 403.
-        The redirect now lives behind the button, at /auth/google.
-
-        The page says almost nothing on purpose; see the note in login.html.
-        Nothing about the auth model is passed into it.
-        """
-        return templates.TemplateResponse(
+        if read_session(settings.session_secret,
+                        request.cookies.get(SESSION_COOKIE),
+                        settings.dashboard_username):
+            return RedirectResponse("/", status_code=303)
+        csrf_token = issue_login_csrf(settings.session_secret)
+        response = templates.TemplateResponse(
             request, "login.html",
             {"user": None, "active": None, "signed_in": False,
-             "art": "/static/login.webp", "sso_enabled": sso_enabled},
+             "art": "/static/login.webp", "csrf_token": csrf_token,
+             "error": None},
         )
-
-    @app.get("/auth/google")
-    def auth_google():
-        if not sso_enabled:
-            raise HTTPException(status_code=404, detail="SSO not configured")
-        state = new_state()
-        response = RedirectResponse(
-            authorize_url(settings.google_client_id, redirect_uri, state)
+        response.set_cookie(
+            LOGIN_CSRF_COOKIE, csrf_token, max_age=LOGIN_CSRF_MAX_AGE,
+            httponly=True, secure=secure_cookies, samesite="lax",
         )
-        # State is round-tripped through a cookie rather than server memory so
-        # it survives a machine restart mid-login.
-        response.set_cookie(STATE_COOKIE, state, max_age=600, httponly=True,
-                            secure=True, samesite="lax")
         return response
 
-    @app.get("/auth/callback")
-    def auth_callback(request: Request, code: str | None = None,
-                      state: str | None = None):
-        if not sso_enabled:
-            raise HTTPException(status_code=404, detail="SSO not configured")
-        # Constant-time compare on the CSRF state; a mismatch means the callback
-        # did not originate from a login this browser started. The state arrives
-        # in the query string, where any codepoint is legal, so this goes
-        # through the byte comparison too.
-        if not code or not _same_secret(state, request.cookies.get(STATE_COOKIE)):
-            raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    @app.post("/auth/login")
+    async def auth_login_submit(request: Request):
+        content_type = request.headers.get("content-type", "")
+        if not content_type.startswith("application/x-www-form-urlencoded"):
+            raise HTTPException(status_code=415, detail="Send a form body")
+        form = parse_qs((await _read_capped(request)).decode("utf-8", "replace"),
+                        keep_blank_values=True)
+        csrf_token = (form.get("csrf_token") or [None])[0]
+        if not valid_login_csrf(
+            settings.session_secret, csrf_token,
+            request.cookies.get(LOGIN_CSRF_COOKIE),
+        ):
+            raise HTTPException(status_code=400, detail="Invalid login form")
 
-        email, name = exchange_code(settings.google_client_id,
-                                    settings.google_client_secret,
-                                    redirect_uri, code, post=httpx.post, get=httpx.get)
-        if not email_is_allowed(email, allowed):
-            logger.warning("rejected Google sign-in for %r", email)
-            raise HTTPException(
-                status_code=403,
-                # Names nothing. This page is unauthenticated and is reached by
-                # someone who just failed to get in, so listing the allowed
-                # domains would hand them the targets. It used to. A teammate
-                # who signed in with the wrong Google account loses a few
-                # seconds working out which one; that is the cheaper mistake.
-                detail=f"{email or 'That account'} is not allowed. Sign in with "
-                       f"an authorized email address.",
+        key = client_key(request)
+        if not login_limiter.check(key):
+            raise HTTPException(status_code=429, detail="Too many attempts")
+        username = (form.get("username") or [""])[0]
+        password = (form.get("password") or [""])[0]
+        username_ok = _same_secret(username, settings.dashboard_username)
+        password_ok = _same_secret(password, settings.dashboard_password)
+        if not (username_ok and password_ok):
+            login_limiter.record(key)
+            return templates.TemplateResponse(
+                request, "login.html",
+                {"user": None, "active": None, "signed_in": False,
+                 "art": "/static/login.webp", "csrf_token": csrf_token,
+                 "error": "Incorrect email or password"},
+                status_code=401,
             )
 
+        login_limiter.reset(key)
         response = RedirectResponse("/", status_code=303)
-        response.set_cookie(SESSION_COOKIE,
-                            issue_session(settings.session_secret, email, name),
-                            max_age=SESSION_MAX_AGE, httponly=True,
-                            secure=True, samesite="lax")
-        response.delete_cookie(STATE_COOKIE)
-        logger.info("signed in %s", email)
+        response.set_cookie(
+            SESSION_COOKIE,
+            issue_session(settings.session_secret, settings.dashboard_username),
+            max_age=SESSION_MAX_AGE, httponly=True,
+            secure=secure_cookies, samesite="lax",
+        )
+        response.delete_cookie(LOGIN_CSRF_COOKIE)
+        logger.info("signed in %s", settings.dashboard_username)
         return response
 
     @app.get("/auth/logout")
     def auth_logout():
-        response = RedirectResponse("/auth/login" if sso_enabled else "/", status_code=303)
+        response = RedirectResponse("/auth/login", status_code=303)
         response.delete_cookie(SESSION_COOKIE)
         return response
 
@@ -713,12 +649,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     async def _annotation_form(request: Request) -> tuple[str, dict]:
         """The gate and the body parse both annotation writes share.
 
-        Gated on the *session cookie* rather than on whatever authenticated the
-        request. These are the only routes in the app that change something a
-        person typed. Basic auth is not usable here: a browser with cached
-        credentials sends them cross-site, which would make these CSRF holes the
-        moment they accepted it. Curl loses the ability to annotate, which is
-        fine -- it is a thing a person does while looking at a chart.
+        These are the only routes in the app that change something a person
+        typed, so they require the interactive session and an origin check.
 
         SameSite=lax on the cookie blocks a cross-*site* form post, but "site"
         is the registrable domain, not the origin. A page on any sibling host

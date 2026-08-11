@@ -1,67 +1,17 @@
-"""Google sign-in, restricted to allowed email domains.
-
-Basic auth stays alongside this on purpose: it is what curl, health checks, and
-any future scripted access use, and it is the fallback if Google is unreachable.
-A browser gets redirected to Google; a request that already carries an
-Authorization header is checked against DASHBOARD_USERS and let through.
-
-Access is enforced here, not by Google. The OAuth client is an "External" one
-because collaborators sit outside your Google Workspace organisation, so Google
-will happily authenticate any Google account: the allowlist below is the only
-thing standing between a stranger and the dashboard. Do not remove it in favour
-of trusting the consent screen, and do not ship a deployment with
-GOOGLE_ALLOWED_DOMAINS unset.
-
-The allowlist holds whole domains and individual addresses side by side, so
-granting one collaborator access never grants it to their whole company.
-"""
+"""Signed dashboard sessions and login-form CSRF tokens."""
 
 import logging
 import secrets
 import time
-from urllib.parse import urlencode
 
-import httpx
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
-
 SESSION_COOKIE = "dashboard_session"
-STATE_COOKIE = "dashboard_oauth_state"
-SESSION_MAX_AGE = 60 * 60 * 24 * 14  # 14 days
-
-
-def allowed_principals(raw: str) -> set[str]:
-    """Parse the allowlist into domains and exact addresses.
-
-    An entry with an "@" inside it is one person; an entry without one is a
-    whole domain. Both forms are needed: everybody at example.com should get
-    in, but a collaborator at their own company is one address, not a standing
-    invitation to everyone who ever gets a mailbox there.
-
-    A leading "@" is stripped, so "@example.com" and "example.com" both
-    mean the domain and neither is mistaken for an address.
-    """
-    out = set()
-    for part in raw.split(","):
-        entry = part.strip().lower().lstrip("@")
-        if entry:
-            out.add(entry)
-    return out
-
-
-def email_is_allowed(email: str | None, allowed: set[str]) -> bool:
-    if not email or "@" not in email:
-        return False
-    email = email.lower()
-    # Exact address first, then the domain it belongs to. An address entry can
-    # never be matched by the domain branch, so listing one person does not
-    # widen access to their colleagues.
-    return email in allowed or email.rsplit("@", 1)[1] in allowed
+SESSION_MAX_AGE = 60 * 60 * 24 * 30
+LOGIN_CSRF_COOKIE = "dashboard_login_csrf"
+LOGIN_CSRF_MAX_AGE = 60 * 10
 
 
 def serializer(secret: str) -> URLSafeTimedSerializer:
@@ -87,76 +37,43 @@ def _load(secret: str, token: str | None) -> dict | None:
         return None
 
 
-def read_session(secret: str, token: str | None, allowed: set[str]) -> str | None:
-    """Return the signed-in email, or None. Re-checks the allowlist on every
-    request, so removing a domain or an address locks out the cookie it already
-    issued rather than waiting 14 days for it to expire."""
+def read_session(secret: str, token: str | None,
+                 configured_username: str) -> str | None:
+    """Return the signed-in username if it still matches server config."""
     data = _load(secret, token)
     if data is None:
         return None
     email = data.get("email")
-    return email if email_is_allowed(email, allowed) else None
+    if not isinstance(email, str):
+        return None
+    return email if secrets.compare_digest(
+        email.encode("utf-8"), configured_username.encode("utf-8")
+    ) else None
 
 
 def display_name(secret: str, token: str | None, fallback: str) -> str:
-    """What the header calls you. Display only, and deliberately separate from
-    read_session: who gets in is decided by the email, and a name that could
-    influence that would be an authorization input under a friendly label.
-
-    Falls back to the local-part, which covers both Basic auth (no cookie at
-    all) and any session issued before names were captured. Those cookies stay
-    valid for their full 14 days; a missing name must not log anyone out.
-    """
     data = _load(secret, token) or {}
     return data.get("name") or fallback.split("@", 1)[0]
 
 
-def authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
-    return GOOGLE_AUTH_URL + "?" + urlencode({
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid email profile",
-        "state": state,
-        "access_type": "online",
-        "prompt": "select_account",
-    })
+def _csrf_serializer(secret: str) -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(secret, salt="dashboard-login-csrf")
 
 
-def new_state() -> str:
-    return secrets.token_urlsafe(24)
+def issue_login_csrf(secret: str) -> str:
+    return _csrf_serializer(secret).dumps({"nonce": secrets.token_urlsafe(24)})
 
 
-def exchange_code(client_id, client_secret, redirect_uri, code, *, post=httpx.post,
-                  get=httpx.get) -> tuple[str | None, str | None]:
-    """Swap the auth code for an access token and return (verified email, name).
-
-    The `profile` scope has always been requested, so the name was already in
-    the userinfo response and was simply thrown away. It is returned separately
-    from the email to keep it obvious which of the two decides anything.
-    """
-    token_response = post(GOOGLE_TOKEN_URL, data={
-        "code": code,
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uri": redirect_uri,
-        "grant_type": "authorization_code",
-    }, timeout=15)
-    if token_response.status_code != 200:
-        logger.warning("google token exchange failed: %s", token_response.status_code)
-        return None, None
-    access_token = token_response.json().get("access_token")
-    if not access_token:
-        return None, None
-
-    info = get(GOOGLE_USERINFO_URL,
-               headers={"Authorization": f"Bearer {access_token}"}, timeout=15)
-    if info.status_code != 200:
-        logger.warning("google userinfo failed: %s", info.status_code)
-        return None, None
-    payload = info.json()
-    # An unverified email can be attacker-chosen on some Google account types.
-    if not payload.get("email_verified", False):
-        logger.warning("rejecting sign-in with unverified email")
-        return None, None
-    return payload.get("email"), payload.get("name")
+def valid_login_csrf(secret: str, form_token: str | None,
+                     cookie_token: str | None) -> bool:
+    if not form_token or not cookie_token:
+        return False
+    if not secrets.compare_digest(
+        form_token.encode("utf-8"), cookie_token.encode("utf-8")
+    ):
+        return False
+    try:
+        _csrf_serializer(secret).loads(form_token, max_age=LOGIN_CSRF_MAX_AGE)
+        return True
+    except BadSignature:
+        return False

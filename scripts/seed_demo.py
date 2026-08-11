@@ -14,8 +14,9 @@ produce a dashboard the real code path cannot, which would make it a liar.
 
     createdb app_dashboard_demo
     DATABASE_URL=postgresql://localhost:5432/app_dashboard_demo \
-    DASHBOARD_USERS=demo:demo-only-not-a-password \
-    PUBLIC_BASE_URL=http://localhost:8000 GOOGLE_ALLOWED_DOMAINS=example.com \
+    DASHBOARD_USERNAME=demo@example.com \
+    DASHBOARD_PASSWORD=demo-only-not-a-password \
+    PUBLIC_BASE_URL=http://localhost:8000 \
     NO_SCHEDULER=1 \
       uv run python scripts/seed_demo.py --yes
 

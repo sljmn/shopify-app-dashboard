@@ -146,6 +146,16 @@
             padding: 11px 18px; border-radius: 9px;
         }
         .gate .btn:hover { background: var(--brand-hover); }
+        .login-form { display: grid; gap: 8px; text-align: left; margin-top: 22px; }
+        .login-form label { font-size: 13px; font-weight: 600; }
+        .login-form input[type="email"], .login-form input[type="password"] {
+            width: 100%; box-sizing: border-box; font: 15px var(--body);
+            color: var(--ink); background: var(--card);
+            border: 1px solid var(--border); border-radius: 8px;
+            padding: 11px 12px; margin-bottom: 6px;
+        }
+        .login-form button { justify-content: center; margin-top: 4px; padding: 11px 16px; }
+        .login-form .form-error { color: #FFAAA5; margin: 0 0 2px; }
         .gate .fineprint { font-size: 12.5px; color: var(--muted); margin-top: 22px; }
         /* Two lines in the column: "<App Name> Analytics" set on one line
            does not fit 212px at 17px and was clipping mid-word. */
@@ -939,7 +949,7 @@
     <script nonce="{{ request.state.nonce }}">
         // Hamburger. Only reachable in the collapsed layout, where the CSS has
         // hidden the nav; aria-expanded is the state, the class is the paint.
-        document.getElementById("nav-toggle").addEventListener("click", (event) => {
+        document.getElementById("nav-toggle")?.addEventListener("click", (event) => {
             const nav = document.getElementById("sidenav");
             const open = nav.classList.toggle("open");
             event.currentTarget.setAttribute("aria-expanded", String(open));

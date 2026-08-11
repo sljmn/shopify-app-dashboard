@@ -21,11 +21,9 @@ def ppa_env(monkeypatch, db, test_app):
     monkeypatch.setenv("PARTNER_API_TOKEN", "x")
     monkeypatch.setenv("PARTNER_ORG_ID", "1")
     monkeypatch.setenv("PARTNER_APP_ID", "2")
-    monkeypatch.setenv("DASHBOARD_USERS", "tester:suite-only-credential")
+    monkeypatch.setenv("DASHBOARD_USERNAME", "tester@example.com")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "suite-only-credential")
     monkeypatch.setenv("NO_SCHEDULER", "1")
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-client-secret")
-    monkeypatch.setenv("GOOGLE_ALLOWED_DOMAINS", "example.com")
     monkeypatch.setenv("SESSION_SECRET", SESSION_SECRET)
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://dash.test")
     monkeypatch.setenv("TOKEN_1", "test-partner-token")
@@ -60,13 +58,30 @@ def keep_open(conn):
 
 
 def client_for(db):
-    return TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    return TestClient(
+        create_app(conn_factory=lambda: keep_open(db)),
+        base_url="https://dash.test",
+    )
+
+
+def submit_login(client, password="suite-only-credential"):
+    page = client.get("/auth/login")
+    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+    return client.post(
+        "/auth/login",
+        data={
+            "username": "tester@example.com",
+            "password": password,
+            "csrf_token": token,
+        },
+        follow_redirects=False,
+    )
 
 
 def signed_in(db):
     client = client_for(db)
     client.cookies.set(SESSION_COOKIE,
-                       issue_session(SESSION_SECRET, "ada@example.com", "Ada"))
+                       issue_session(SESSION_SECRET, "tester@example.com", "Test User"))
     return client
 
 
@@ -119,7 +134,11 @@ def test_the_nonce_changes_between_requests(db):
 
 
 def test_hsts_only_when_the_request_arrived_over_https(db):
-    client = signed_in(db)
+    client = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    client.cookies.set(
+        SESSION_COOKIE,
+        issue_session(SESSION_SECRET, "tester@example.com", "Test User"),
+    )
     assert "strict-transport-security" not in client.get("/").headers
     forwarded = client.get("/", headers={"x-forwarded-proto": "https"})
     assert "max-age=31536000" in forwarded.headers["strict-transport-security"]
@@ -143,25 +162,22 @@ def test_a_non_ascii_usage_token_is_rejected_not_a_500(db):
     assert response.status_code == 401
 
 
-def test_a_non_ascii_basic_password_is_rejected_not_a_500(db):
+def test_a_non_ascii_password_is_rejected_not_a_500(db):
     client = client_for(db)
-    assert client.get("/", auth=("tester", "pässwörd")).status_code == 401
+    assert submit_login(client, "pässwörd").status_code == 401
 
 
-def test_a_non_ascii_oauth_state_is_rejected_not_a_500(db):
+def test_removed_oauth_callback_is_not_available(db):
     client = client_for(db)
-    client.cookies.set("dashboard_state", "expected-state")
     response = client.get("/auth/callback?code=x&state=%C3%BF%C3%BE",
                           follow_redirects=False)
-    assert response.status_code == 400
+    assert response.status_code == 404
 
 
 def test_the_right_credentials_still_work(db):
-    """The whole point of the byte comparison is that it changes nothing about
-    what counts as a match."""
     client = client_for(db)
-    assert client.get("/healthz", auth=("tester", "suite-only-credential")).status_code == 200
-    assert client.get("/", auth=("tester", "suite-only-credential")).status_code == 200
+    assert submit_login(client).status_code == 303
+    assert client.get("/").status_code == 200
 
 
 # --- Rate limiting --------------------------------------------------------
@@ -169,15 +185,18 @@ def test_the_right_credentials_still_work(db):
 
 def test_repeated_bad_passwords_are_throttled(db):
     client = client_for(db)
-    codes = [client.get("/", auth=("tester", "wrong")).status_code for _ in range(12)]
+    codes = [submit_login(client, "wrong").status_code for _ in range(12)]
     assert codes[0] == 401
     assert 429 in codes, "a brute-force run should start getting throttled"
 
 
 def test_a_good_password_is_never_throttled(db):
-    client = client_for(db)
-    codes = [client.get("/", auth=("tester", "suite-only-credential")).status_code for _ in range(15)]
-    assert set(codes) == {200}
+    app = create_app(conn_factory=lambda: keep_open(db))
+    codes = []
+    for _ in range(15):
+        client = TestClient(app, base_url="https://dash.test")
+        codes.append(submit_login(client).status_code)
+    assert set(codes) == {303}
 
 
 def test_a_signed_in_session_is_never_throttled(db):

@@ -6,8 +6,9 @@ never belong in the catalog: it stores the environment-variable name that contai
 
 ## Required global settings
 
-`DATABASE_URL`, `DASHBOARD_USERS`, `PUBLIC_BASE_URL`, `GOOGLE_ALLOWED_DOMAINS`, and every Partner
-token environment variable referenced by the catalog.
+`DATABASE_URL`, `DASHBOARD_USERNAME`, `DASHBOARD_PASSWORD`, `PUBLIC_BASE_URL`, and every Partner
+token environment variable referenced by the catalog. The username and password form one shared
+dashboard account; there is no signup. Changing the username invalidates existing sessions.
 
 Create one Partner API token per organization at
 `partners.shopify.com/<org-id>/settings/partner_api_clients`. Apps in the same organization share
@@ -64,5 +65,5 @@ and annotation writes require one selected app.
 
 `POLL_INTERVAL_MINUTES` controls the sync cadence and the stale thresholds. Exactly one application
 instance must run APScheduler. `SESSION_SECRET` must contain at least 32 characters off localhost.
-`TRUSTED_CLIENT_IP_HEADER` must name a header your proxy overwrites. `SLACK_WEBHOOK_URL`, Google
-OAuth, and per-app usage/GA4 integrations are optional.
+`TRUSTED_CLIENT_IP_HEADER` must name a header your proxy overwrites. `SLACK_WEBHOOK_URL` and per-app
+usage/GA4 integrations are optional.

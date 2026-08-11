@@ -19,16 +19,15 @@ subtly wrong dashboard. Set them all before the first deploy:
 ```bash
 fly secrets set \
   SHOPIFY_PARTNER_TOKEN_<org-id>=... \
-  DASHBOARD_USERS="admin:$(python -c 'import secrets;print(secrets.token_urlsafe(24))')" \
+  DASHBOARD_USERNAME=you@example.com \
+  DASHBOARD_PASSWORD="$(python -c 'import secrets;print(secrets.token_urlsafe(24))')" \
   PUBLIC_BASE_URL=https://your-dashboard.example.com \
-  GOOGLE_ALLOWED_DOMAINS=yourcompany.com \
   SESSION_SECRET=$(python -c 'import secrets;print(secrets.token_urlsafe(32))') \
   TRUSTED_CLIENT_IP_HEADER=Fly-Client-IP
 ```
 
-`DATABASE_URL` is set for you by `fly postgres attach`. `.env.example` is the complete list,
-including the optional Google SSO and Slack settings. Repeat the Partner token
-argument for every `token_env` referenced by `config/apps.yml`.
+`DATABASE_URL` is set for you by `fly postgres attach`. `.env.example` is the complete list.
+Repeat the Partner token argument for every `token_env` referenced by `config/apps.yml`.
 
 Three of these decide whether the numbers are right rather than whether the app starts:
 
@@ -39,8 +38,9 @@ Three of these decide whether the numbers are right rather than whether the app 
   charge on re-ingest, so follow the change with a full replay (see below).
 - **`TRUSTED_CLIENT_IP_HEADER`** must name the header your proxy sets. Wrong or unset behind a
   proxy, and rate limiting collapses every caller into one bucket.
-- **`GOOGLE_ALLOWED_DOMAINS`** is the entire SSO access gate. The OAuth client is External, so
-  Google authenticates any account and this decides who gets in.
+- **`DASHBOARD_PASSWORD`** grants full dashboard access. Keep it in deployment secrets and rotate
+  it when somebody should no longer be able to start a new session. Rotate `SESSION_SECRET` too
+  when every existing session must be logged out immediately.
 
 ## One-time setup
 

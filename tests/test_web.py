@@ -5,7 +5,12 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg.types.json import Jsonb
 
-from app_dashboard.auth import SESSION_COOKIE, issue_session
+from app_dashboard.auth import (
+    LOGIN_CSRF_COOKIE,
+    SESSION_COOKIE,
+    SESSION_MAX_AGE,
+    issue_session,
+)
 from app_dashboard.web import create_app
 
 # 32+ chars: create_app refuses a short secret on a non-local host.
@@ -17,15 +22,9 @@ def ppa_env(monkeypatch, db, test_app):
     monkeypatch.setenv("PARTNER_API_TOKEN", "x")
     monkeypatch.setenv("PARTNER_ORG_ID", "1")
     monkeypatch.setenv("PARTNER_APP_ID", "2")
-    monkeypatch.setenv("DASHBOARD_USERS", "tester:suite-only-credential")
+    monkeypatch.setenv("DASHBOARD_USERNAME", "tester@example.com")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "suite-only-credential")
     monkeypatch.setenv("NO_SCHEDULER", "1")
-    # Pin the SSO config rather than inheriting whatever the developer's .env
-    # holds: with real client credentials present these tests take the Google
-    # redirect path, without them the Basic-auth path, and the assertions
-    # differ. Explicit env vars win over the .env file.
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-client-secret")
-    monkeypatch.setenv("GOOGLE_ALLOWED_DOMAINS", "example.com")
     monkeypatch.setenv("SESSION_SECRET", SESSION_SECRET)
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://dash.test")
     # Distinctive on purpose: the leak assertions below check that a guarded
@@ -63,6 +62,27 @@ def keep_open(conn):
     return NoClose()
 
 
+def dashboard_client(app, *, authenticated=True):
+    client = TestClient(app, base_url="https://dash.test")
+    if authenticated:
+        client.cookies.set(
+            SESSION_COOKIE,
+            issue_session(SESSION_SECRET, "tester@example.com", "Test User"),
+        )
+    return client
+
+
+def submit_login(client, username="tester@example.com",
+                 password="suite-only-credential"):
+    page = client.get("/auth/login")
+    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+    return client.post(
+        "/auth/login",
+        data={"username": username, "password": password, "csrf_token": token},
+        follow_redirects=False,
+    )
+
+
 class FakeManualSync:
     def __init__(self, state="idle", error=None):
         self.calls = []
@@ -92,7 +112,7 @@ class FakeManualSync:
 
 def test_healthz_open(db):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app)
     assert c.get("/healthz").status_code == 200
 
 
@@ -100,14 +120,14 @@ def test_manual_sync_follows_selected_app_or_all_apps(db, app_factory, monkeypat
     other = app_factory(slug="other-app", name="Other App")
     monkeypatch.setenv("TOKEN_2", "second-partner-token")
     sync = FakeManualSync()
-    c = TestClient(create_app(
+    c = dashboard_client(create_app(
         conn_factory=lambda: keep_open(db), manual_sync_coordinator=sync
     ))
     auth = ("tester", "suite-only-credential")
 
     selected = c.post(
         "/sync", data={"mode": "fresh", "app": other.slug},
-        headers={"origin": "https://dash.test"}, auth=auth,
+        headers={"origin": "https://dash.test"},
         follow_redirects=False,
     )
     assert selected.status_code == 303
@@ -117,7 +137,7 @@ def test_manual_sync_follows_selected_app_or_all_apps(db, app_factory, monkeypat
     sync.state = "idle"
     all_apps = c.post(
         "/sync", data={"mode": "all"},
-        headers={"origin": "https://dash.test"}, auth=auth,
+        headers={"origin": "https://dash.test"},
         follow_redirects=False,
     )
     assert all_apps.status_code == 303
@@ -130,41 +150,41 @@ def test_manual_sync_routes_validate_boundary(db):
 
     auth = ("tester", "suite-only-credential")
     sync = FakeManualSync()
-    c = TestClient(create_app(
+    c = dashboard_client(create_app(
         conn_factory=lambda: keep_open(db), manual_sync_coordinator=sync
     ))
 
     assert c.post(
         "/sync", data={"mode": "fresh"},
-        headers={"origin": "https://evil.test"}, auth=auth,
+        headers={"origin": "https://evil.test"},
     ).status_code == 403
     assert c.post(
         "/sync", data={"mode": "wrong"},
-        headers={"origin": "https://dash.test"}, auth=auth,
+        headers={"origin": "https://dash.test"},
     ).status_code == 400
     assert c.post(
         "/sync", data={"mode": "fresh", "app": "missing"},
-        headers={"origin": "https://dash.test"}, auth=auth,
+        headers={"origin": "https://dash.test"},
     ).status_code == 404
 
     sync.error = SyncAlreadyRunning()
     assert c.post(
         "/sync", data={"mode": "fresh"},
-        headers={"origin": "https://dash.test"}, auth=auth,
+        headers={"origin": "https://dash.test"},
     ).status_code == 409
-    status = c.get("/sync/status", auth=auth)
+    status = c.get("/sync/status")
     assert status.status_code == 200
     assert status.json()["state"] == "idle"
 
 
 def test_overview_renders_scoped_manual_sync_controls(db):
     sync = FakeManualSync(state="running")
-    c = TestClient(create_app(
+    c = dashboard_client(create_app(
         conn_factory=lambda: keep_open(db), manual_sync_coordinator=sync
     ))
     auth = ("tester", "suite-only-credential")
 
-    overview = c.get("/?app=test-app", auth=auth)
+    overview = c.get("/?app=test-app")
     assert overview.status_code == 200
     assert "Fetch data" in overview.text
     assert "Fetch fresh data" in overview.text
@@ -173,7 +193,7 @@ def test_overview_renders_scoped_manual_sync_controls(db):
     assert 'id="sync-progress"' in overview.text
     assert "data-confirm-full" in overview.text
     assert "trackManualSync" in overview.text
-    assert c.get("/customers?app=test-app", auth=auth).text.count("Fetch data") == 0
+    assert c.get("/customers?app=test-app").text.count("Fetch data") == 0
 
 
 def test_selector_lists_every_app_and_unknown_slugs_404(
@@ -181,29 +201,27 @@ def test_selector_lists_every_app_and_unknown_slugs_404(
 ):
     other = app_factory(slug="other-app", name="Other App")
     monkeypatch.setenv("TOKEN_2", "second-partner-token")
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
 
-    combined = c.get("/", auth=("tester", "suite-only-credential"))
+    combined = c.get("/")
     assert combined.status_code == 200
     assert "All apps" in combined.text
     assert "Test App" in combined.text and other.name in combined.text
     assert "new FormData(form)" in combined.text
     assert c.get(
-        "/?app=other-app", auth=("tester", "suite-only-credential")
+        "/?app=other-app"
     ).status_code == 200
     assert c.get(
-        "/?app=does-not-exist", auth=("tester", "suite-only-credential")
+        "/?app=does-not-exist"
     ).status_code == 404
 
 
 @pytest.mark.parametrize("path", ["/", "/customers", "/trials", "/reports/funnel",
                                   "/reports/retention", "/reports/traffic"])
-def test_pages_bounce_anonymous_browsers_to_google(db, path):
-    """No page content without auth. A browser (no Authorization header) is
-    redirected into the Google flow rather than being shown a Basic prompt."""
+def test_pages_bounce_anonymous_browsers_to_login(db, path):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    r = c.get(path, follow_redirects=False)
+    c = dashboard_client(app, authenticated=False)
+    r = c.get(path, headers={"Accept": "text/html"}, follow_redirects=False)
     assert r.status_code == 307
     assert r.headers["location"] == "/auth/login"
     # The body of a redirect must not leak the page it was guarding. The
@@ -212,67 +230,94 @@ def test_pages_bounce_anonymous_browsers_to_google(db, path):
     assert "Zarquon Widgets" not in r.text
 
 
-def test_pages_render_for_basic_auth(db):
+def test_pages_render_for_signed_session(db):
     # Real factory: each route opens and closes its own connection, so a shared
     # one would be closed out from under the second request.
     from app_dashboard.db import connect
     app = create_app(conn_factory=connect)
-    c = TestClient(app)
-    assert c.get("/", auth=("tester", "suite-only-credential")).status_code == 200
-    assert c.get("/customers", auth=("tester", "suite-only-credential")).status_code == 200
+    c = dashboard_client(app)
+    assert c.get("/").status_code == 200
+    assert c.get("/customers").status_code == 200
 
 
-def test_wrong_basic_password_is_401_not_a_google_redirect(db):
-    """A supplied-but-wrong credential is a failure, not a reason to start an
-    interactive login: scripts must see 401, never a 307 loop."""
+@pytest.mark.parametrize(("username", "password"), [
+    ("wrong@example.com", "suite-only-credential"),
+    ("tester@example.com", "wrong"),
+])
+def test_wrong_credentials_return_the_same_generic_error(db, username, password):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    r = c.get("/", auth=("tester", "wrong"), follow_redirects=False)
+    c = dashboard_client(app, authenticated=False)
+    r = submit_login(c, username=username, password=password)
     assert r.status_code == 401
-    assert "Currently installed" not in r.text
+    assert "Incorrect email or password" in r.text
+    assert "suite-only-credential" not in r.text
 
 
-def test_basic_auth_only_when_sso_is_not_configured(db, monkeypatch):
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "")
+def test_unauthenticated_api_request_has_no_basic_challenge(db):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app, authenticated=False)
     r = c.get("/", follow_redirects=False)
     assert r.status_code == 401
-    assert r.headers["www-authenticate"] == "Basic"
+    assert "www-authenticate" not in r.headers
+
+
+def test_login_creates_a_thirty_day_session(db):
+    c = dashboard_client(create_app(conn_factory=lambda: db), authenticated=False)
+    r = submit_login(c)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+    cookie = r.headers["set-cookie"]
+    assert f"Max-Age={SESSION_MAX_AGE}" in cookie
+    assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Secure" in cookie
+    assert c.get("/").status_code == 200
+
+
+def test_login_rejects_missing_or_mismatched_csrf(db):
+    c = dashboard_client(create_app(conn_factory=lambda: db), authenticated=False)
+    missing = c.post("/auth/login", data={
+        "username": "tester@example.com", "password": "suite-only-credential",
+    })
+    assert missing.status_code == 400
+
+    page = c.get("/auth/login")
+    assert LOGIN_CSRF_COOKIE in page.headers["set-cookie"]
+    forged = c.post("/auth/login", data={
+        "username": "tester@example.com", "password": "suite-only-credential",
+        "csrf_token": "forged",
+    })
+    assert forged.status_code == 400
 
 
 def test_signed_session_cookie_authenticates(db):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app)
     c.cookies.set(SESSION_COOKIE,
-                  issue_session(SESSION_SECRET, "ada@example.com", "Ada Lovelace"))
+                  issue_session(SESSION_SECRET, "tester@example.com", "Test User"))
     r = c.get("/")
     assert r.status_code == 200
     # The header greets you by name; the address it was derived from stays off
     # the page, where it was eating a third of the nav bar.
-    assert "Ada Lovelace" in r.text
-    assert "ada@example.com" not in r.text
+    assert "Test User" in r.text
+    assert "tester@example.com" not in r.text
 
 
 @pytest.mark.parametrize("cookie", [
     "not-a-real-token",
-    issue_session("some-other-secret", "ada@example.com"),   # wrong signing key
-    issue_session(SESSION_SECRET, "stranger@gmail.com"),         # domain not allowed
+    issue_session("some-other-secret", "tester@example.com"),
+    issue_session(SESSION_SECRET, "someone-else@example.com"),
 ])
 def test_forged_or_out_of_domain_cookies_do_not_authenticate(db, cookie):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app)
     c.cookies.set(SESSION_COOKIE, cookie)
-    r = c.get("/", follow_redirects=False)
+    r = c.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
     assert r.status_code == 307
     assert r.headers["location"] == "/auth/login"
 
 
 def test_logout_clears_the_session_cookie(db):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    c.cookies.set(SESSION_COOKIE, issue_session(SESSION_SECRET, "ada@example.com"))
+    c = dashboard_client(app)
     r = c.get("/auth/logout", follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"] == "/auth/login"
@@ -283,22 +328,21 @@ def test_logout_clears_the_session_cookie(db):
     assert "Max-Age=0" in cleared
 
 
-def test_oauth_callback_rejects_a_mismatched_state(db):
+def test_google_auth_routes_are_removed(db):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    r = c.get("/auth/callback", params={"code": "x", "state": "forged"},
-              follow_redirects=False)
-    assert r.status_code == 400
+    c = dashboard_client(app, authenticated=False)
+    assert c.get("/auth/google").status_code == 404
+    assert c.get("/auth/callback").status_code == 404
 
 
 def test_report_pages_render(db):
     # real factory: report routes open AND close their own connection each hit
     from app_dashboard.db import connect
     app = create_app(conn_factory=connect)
-    c = TestClient(app)
+    c = dashboard_client(app)
     for name, marker in (("funnel", "Lifecycle funnel"), ("traffic", "Select one app"),
                          ("retention", "Retention")):
-        r = c.get(f"/reports/{name}", auth=("tester", "suite-only-credential"))
+        r = c.get(f"/reports/{name}")
         assert r.status_code == 200
         assert marker in r.text
 
@@ -321,8 +365,8 @@ def test_customers_route_closes_the_connection_it_opened(db):
 
     tracked = TrackClose(db)
     app = create_app(conn_factory=lambda: tracked)
-    c = TestClient(app)
-    r = c.get("/customers", auth=("tester", "suite-only-credential"))
+    c = dashboard_client(app)
+    r = c.get("/customers")
     assert r.status_code == 200
     assert tracked.closed is True
 
@@ -336,14 +380,14 @@ def test_customers_pages_at_50_and_keeps_filters_on_the_next_link(db):
     )
     db.commit()
     app = create_app(conn_factory=lambda: keep_open(db))
-    c = TestClient(app)
+    c = dashboard_client(app)
 
-    first = c.get("/customers", params={"country": "US"}, auth=("tester", "suite-only-credential"))
+    first = c.get("/customers", params={"country": "US"})
     assert first.status_code == 200
     assert "1&ndash;50 of 120" in first.text
     assert "country=US&amp;page=2" in first.text
 
-    last = c.get("/customers", params={"country": "US", "page": 3}, auth=("tester", "suite-only-credential"))
+    last = c.get("/customers", params={"country": "US", "page": 3})
     assert "101&ndash;120 of 120" in last.text
     # No next link on the final page.
     assert "page=4" not in last.text
@@ -354,9 +398,9 @@ def test_customers_page_number_is_clamped_to_the_real_range(db):
                "values ('g1','Only Shop','installed')")
     db.commit()
     app = create_app(conn_factory=lambda: keep_open(db))
-    c = TestClient(app)
+    c = dashboard_client(app)
     for page in ("999", "0", "-4"):
-        r = c.get("/customers", params={"page": page}, auth=("tester", "suite-only-credential"))
+        r = c.get("/customers", params={"page": page})
         assert r.status_code == 200
         assert "Only Shop" in r.text
 
@@ -368,8 +412,8 @@ def test_customers_filters_render_results(db):
     )
     db.commit()
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    r = c.get("/customers", params={"industry": "Apparel"}, auth=("tester", "suite-only-credential"))
+    c = dashboard_client(app)
+    r = c.get("/customers", params={"industry": "Apparel"})
     assert r.status_code == 200
     assert "Test Shop" in r.text
 
@@ -398,9 +442,9 @@ def test_trials_page_and_customer_detail_show_current_trial(db, test_app):
     )
     db.commit()
 
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     page = c.get(
-        "/trials?app=test-app", auth=("tester", "suite-only-credential")
+        "/trials?app=test-app"
     )
     assert page.status_code == 200
     assert "Trial Merchant" in page.text
@@ -412,7 +456,6 @@ def test_trials_page_and_customer_detail_show_current_trial(db, test_app):
 
     detail = c.get(
         "/customers/trial-shop?app=test-app",
-        auth=("tester", "suite-only-credential"),
     )
     assert detail.status_code == 200
     assert "Trial" in detail.text
@@ -421,14 +464,15 @@ def test_trials_page_and_customer_detail_show_current_trial(db, test_app):
 
 
 def test_login_is_a_page_that_explains_the_dashboard(db):
-    """It used to bounce straight to Google, so nobody ever read what they
-    were signing in to, and a disallowed account's first words were a 403."""
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app, authenticated=False)
     r = c.get("/auth/login", follow_redirects=False)
     assert r.status_code == 200
     assert "For internal use only" in r.text
-    assert "/auth/google" in r.text          # the redirect moved behind a button
+    assert 'name="username"' in r.text
+    assert 'name="password"' in r.text
+    assert 'name="csrf_token"' in r.text
+    assert "/auth/google" not in r.text
     # The art is the page background, not an <img> in the panel.
     assert 'class="cover"' in r.text
     assert "url('/static/login.webp')" in r.text
@@ -439,7 +483,7 @@ def test_login_is_a_page_that_explains_the_dashboard(db):
     # The page is public, so it must not describe the auth model. An earlier
     # version named the allowed domains, the sync interval, and how the address
     # check works.
-    for leak in ("example.com", "example.org", "Basic", "allowlist",
+    for leak in ("tester@example.com", "Basic", "allowlist",
                  "refreshed every"):
         assert leak not in r.text, leak
 
@@ -451,7 +495,7 @@ def test_unauthenticated_pages_disclaim_affiliation_with_shopify(db):
     tidy-up would otherwise drop it silently, and the reason it exists is not
     visible from the markup."""
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app, authenticated=False)
     for path in ("/auth/login", "/no-such-page"):
         # Collapsed, so reflowing the template's source lines cannot break the
         # assertion on a phrase that is still on the page.
@@ -460,22 +504,13 @@ def test_unauthenticated_pages_disclaim_affiliation_with_shopify(db):
         assert "is a trademark of Shopify Inc." in text, path
 
     # Signed in, it is gone: the operator installed this and knows whose it is.
-    assert "Not affiliated with" not in c.get(
-        "/", auth=("tester", "suite-only-credential")).text
-
-
-def test_google_redirect_moved_to_its_own_route(db):
-    app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    r = c.get("/auth/google", follow_redirects=False)
-    assert r.status_code == 307
-    assert r.headers["location"].startswith("https://accounts.google.com/")
-    assert "dashboard_oauth_state" in r.headers["set-cookie"]
+    signed_in = dashboard_client(app)
+    assert "Not affiliated with" not in signed_in.get("/").text
 
 
 def test_nothing_here_is_indexable(db):
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app, authenticated=False)
     robots = c.get("/robots.txt")
     assert robots.status_code == 200
     assert "Disallow: /" in robots.text
@@ -487,54 +522,22 @@ def test_nothing_here_is_indexable(db):
         c.get("/auth/login").text
 
 
-def test_error_pages_carry_their_illustration(db):
-    """401 and 403 were JSON too. 403 especially is a human moment: someone
-    signed in with the wrong Google account."""
+def test_failed_login_keeps_the_login_illustration(db):
     app = create_app(conn_factory=lambda: keep_open(db))
-    c = TestClient(app)
-    accept_html = {"Accept": "text/html"}
-
-    unauthorized = c.get("/", auth=("tester", "wrong"), headers=accept_html,
-                         follow_redirects=False)
+    c = dashboard_client(app, authenticated=False)
+    unauthorized = submit_login(c, password="wrong")
     assert unauthorized.status_code == 401
-    assert "url('/static/error-401.webp')" in unauthorized.text
-    # Dropping this would stop curl -u being able to authenticate at all.
-    assert unauthorized.headers["www-authenticate"] == "Basic"
-
-    # The image itself is served, and is the page background rather than an
-    # <img>, so there is no alt text to get wrong.
-    assert c.get("/static/error-401.webp").status_code == 200
+    assert "url('/static/login.webp')" in unauthorized.text
     assert 'class="cover"' in unauthorized.text
-
-
-def test_wrong_google_account_gets_a_page_not_a_json_object(db, monkeypatch):
-    """The 403 is the most human of these: someone signed in successfully and
-    is being turned away. It used to answer with a JSON object."""
-    monkeypatch.setattr("app_dashboard.web.exchange_code",
-                        lambda *a, **k: ("someone@gmail.com", "Someone"))
-    app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    c.cookies.set("dashboard_oauth_state", "s7")
-    r = c.get("/auth/callback", params={"code": "x", "state": "s7"},
-              headers={"Accept": "text/html"}, follow_redirects=False)
-    assert r.status_code == 403
-    assert "Not on the list" in r.text
-    assert "url('/static/error-403.webp')" in r.text
-    assert "Try another account" in r.text
-    # It names the address that was refused, so a teammate knows which account
-    # they used, and nothing else. It used to list the allowed domains, which
-    # handed the targets to whoever just failed to get in.
-    assert "someone@gmail.com" in r.text
-    assert "example.com" not in r.text
-    assert "example.org" not in r.text
+    assert "www-authenticate" not in unauthorized.headers
 
 
 def test_a_signed_in_reader_keeps_the_sidebar_on_an_error(db):
     """A 404 is a place to navigate away from, and for them the links work."""
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app)
     c.cookies.set(SESSION_COOKIE,
-                  issue_session(SESSION_SECRET, "ada@example.com", "Ada Lovelace"))
+                  issue_session(SESSION_SECRET, "tester@example.com", "Test User"))
     signed_in = c.get("/nope", headers={"Accept": "text/html"})
     assert signed_in.status_code == 404
     assert 'class="sidebar"' in signed_in.text
@@ -550,13 +553,13 @@ def test_footer_reports_the_render_time(db):
     """It reads request.state.started, which the security middleware stamps.
     If that ever stops being set the footer empties silently, so pin it."""
     app = create_app(conn_factory=lambda: keep_open(db))
-    c = TestClient(app)
+    c = dashboard_client(app)
     for path in ("/", "/reports/churn"):
-        body = c.get(path, auth=("tester", "suite-only-credential")).text
+        body = c.get(path).text
         assert re.search(r"Rendered in \d+(\.\d)? ms", body), path
     # Including the 404, which renders the same shell.
     assert re.search(r"Rendered in \d+(\.\d)? ms",
-                     c.get("/nope", auth=("tester", "suite-only-credential"),
+                     c.get("/nope",
                            headers={"Accept": "text/html"}).text)
 
 
@@ -566,21 +569,21 @@ def test_browser_404_renders_the_page_and_others_keep_json(db):
     # keep_open: this test makes more than one request, and the customer route
     # closes the connection it was handed.
     app = create_app(conn_factory=lambda: keep_open(db))
-    c = TestClient(app)
+    c = dashboard_client(app)
     accept_html = {"Accept": "text/html,application/xhtml+xml"}
 
-    missing_shop = c.get("/customers/nope.myshopify.com", auth=("tester", "suite-only-credential"),
+    missing_shop = c.get("/customers/nope.myshopify.com",
                          headers=accept_html)
     assert missing_shop.status_code == 404
     # Unescaped because Jinja autoescaping renders the apostrophe as &#39;.
     assert "That shop isn't on record" in unescape(missing_shop.text)
     assert "Back to Customers" in missing_shop.text
-    generic = c.get("/no-such-route", auth=("tester", "suite-only-credential"), headers=accept_html)
+    generic = c.get("/no-such-route", headers=accept_html)
     assert generic.status_code == 404
     assert "Page not found" in generic.text
 
     # Default TestClient Accept is */*, which is what curl sends.
-    as_json = c.get("/customers/nope.myshopify.com", auth=("tester", "suite-only-credential"))
+    as_json = c.get("/customers/nope.myshopify.com")
     assert as_json.status_code == 404
     assert as_json.json() == {"detail": "No such shop"}
 
@@ -589,8 +592,8 @@ def test_404_page_carries_the_csp_nonce(db):
     """It extends base.html, so its inline scripts need the nonce like every
     other page. A mismatch here is silent in the status code."""
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    r = c.get("/no-such-route", auth=("tester", "suite-only-credential"),
+    c = dashboard_client(app)
+    r = c.get("/no-such-route",
               headers={"Accept": "text/html"})
     nonce = r.headers["content-security-policy"].split("'nonce-")[1].split("'")[0]
     assert f'nonce="{nonce}"' in r.text
@@ -600,7 +603,7 @@ def test_non_404_errors_keep_their_shape(db):
     """The handler is registered for every HTTPException, so the redirect to
     /auth/login has to survive a browser Accept header."""
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
+    c = dashboard_client(app, authenticated=False)
     r = c.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
     assert r.status_code == 307
     assert r.headers["location"] == "/auth/login"
@@ -614,8 +617,8 @@ def test_customers_page_carries_shops_but_no_contact_details(db):
         "'jane@visible.example','US','installed')")
     db.commit()
     app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    text = c.get("/customers", auth=("tester", "suite-only-credential")).text
+    c = dashboard_client(app)
+    text = c.get("/customers").text
     assert "Visible Shop" in text and "visible.myshopify.com" in text
     assert "jane@visible.example" not in text
     assert "Jane Merchant" not in text
@@ -634,9 +637,9 @@ def test_actions_carries_no_contact_details(db):
         "insert into subscriptions (id, shop_gid, monthly_amount, converted_at) "
         "values ('c1','g1',19.00, now() - interval '90 days')")
     db.commit()
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
 
-    body = c.get("/actions", auth=("tester", "suite-only-credential")).text
+    body = c.get("/actions").text
     assert "askable.myshopify.com" in body
     assert "Jane Merchant" not in body
     assert "jane@askable.example" not in body
@@ -670,7 +673,7 @@ def ingest_client(db, test_app, monkeypatch):
         ),
     )
     db.commit()
-    return TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    return dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
 
 
 def test_ingest_stores_a_batch_with_the_token(ingest_client, db):
@@ -698,7 +701,7 @@ def test_ingest_refuses_everything_when_no_token_is_configured(db, monkeypatch):
     """An unconfigured server must look exactly like a wrong token, so probing
     cannot tell the two apart."""
     monkeypatch.delenv("USAGE_INGEST_TOKEN", raising=False)
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     r = c.post(
         "/ingest/usage/test-app",
         json=_usage_body(),
@@ -714,7 +717,6 @@ def test_ingest_does_not_accept_a_dashboard_session_or_basic_auth(ingest_client)
     r = ingest_client.post(
         "/ingest/usage/test-app",
         json=_usage_body(),
-        auth=("tester", "suite-only-credential"),
     )
     assert r.status_code == 401
 
@@ -768,7 +770,7 @@ def test_usage_tokens_and_event_ids_are_isolated_per_app(
         (event_types, [test_app.id, other.id]),
     )
     db.commit()
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
 
     first = c.post(
         "/ingest/usage/test-app",
@@ -800,14 +802,14 @@ def test_event_properties_render_escaped_if_they_ever_reach_a_page(ingest_client
         "/ingest/usage/test-app",
         json=_usage_body(properties={"offer_name": "<script>alert(1)</script>"}),
         headers={"X-Usage-Token": USAGE_TOKEN})
-    r = ingest_client.get("/reports/funnel", auth=("tester", "suite-only-credential"))
+    r = ingest_client.get("/reports/funnel")
     assert r.status_code == 200
     assert "<script>alert(1)</script>" not in r.text
 
 
 def test_funnel_shows_an_honest_empty_state_before_any_usage_data(db):
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
-    r = c.get("/reports/funnel", auth=("tester", "suite-only-credential"))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+    r = c.get("/reports/funnel")
     assert "Nothing has arrived yet" in r.text
     # Zero activation would be a claim; "unknown" is the truth, so the stat
     # tiles must not render at all.
@@ -826,12 +828,12 @@ def test_customer_detail_page_uses_the_stable_shop_gid(db):
                "values ('e1', 'installed', '2026-01-10Z', 'g1')")
     db.commit()
 
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
-    page = c.get("/customers/g1", auth=("tester", "suite-only-credential"))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+    page = c.get("/customers/g1")
     assert page.status_code == 200
     assert "Ex" in page.text
 
-    assert c.get("/customers/nope", auth=("tester", "suite-only-credential")).status_code == 404
+    assert c.get("/customers/nope").status_code == 404
 
 
 def test_customer_detail_distinguishes_free_and_paid_plans(db):
@@ -852,14 +854,12 @@ def test_customer_detail_distinguishes_free_and_paid_plans(db):
     )
     db.commit()
 
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     free = c.get(
         "/customers/free-shop?app=test-app",
-        auth=("tester", "suite-only-credential"),
     ).text
     paid = c.get(
         "/customers/paid-shop?app=test-app",
-        auth=("tester", "suite-only-credential"),
     ).text
 
     assert "Free plan" in free
@@ -884,9 +884,9 @@ def test_latest_activity_links_to_merchant_detail_and_storefront(db):
     )
     db.commit()
 
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     page = c.get(
-        "/?app=test-app", auth=("tester", "suite-only-credential")
+        "/?app=test-app"
     ).text
 
     assert (
@@ -897,8 +897,9 @@ def test_latest_activity_links_to_merchant_detail_and_storefront(db):
 
 
 def test_customer_detail_needs_auth(db):
-    c = TestClient(create_app(conn_factory=lambda: db))
-    r = c.get("/customers/x.myshopify.com", follow_redirects=False)
+    c = dashboard_client(create_app(conn_factory=lambda: db), authenticated=False)
+    r = c.get("/customers/x.myshopify.com", headers={"Accept": "text/html"},
+              follow_redirects=False)
     assert r.status_code == 307
 
 
@@ -917,10 +918,9 @@ def test_activity_page_filters_and_links_to_the_merchant_and_store(db):
     )
     db.commit()
 
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     page = c.get(
         "/activity?app=test-app&on=2026-08-10&event_type=subscribed",
-        auth=("tester", "suite-only-credential"),
     )
     assert page.status_code == 200
     assert "Activity Shop" in page.text
@@ -933,10 +933,9 @@ def test_activity_page_filters_and_links_to_the_merchant_and_store(db):
 
 
 def test_activity_page_rejects_invalid_filters_without_a_422(db):
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     page = c.get(
         "/activity?on=not-a-date&event_type=not-a-real-event&page=banana",
-        auth=("tester", "suite-only-credential"),
     )
     assert page.status_code == 200
 
@@ -987,13 +986,12 @@ def test_all_apps_overview_shows_portfolio_unit_economics_and_live_trials(
 # --- Definitions and deltas ---------------------------------------------------
 
 def _signed_in():
-    """A client with a real session cookie. The annotation write path needs one
-    specifically, so the whole block uses it rather than Basic auth."""
+    """A client with the session cookie annotation writes require."""
     from app_dashboard.db import connect
     app = create_app(conn_factory=connect)
-    c = TestClient(app)
+    c = dashboard_client(app)
     c.cookies.set(SESSION_COOKIE,
-                  issue_session(SESSION_SECRET, "ada@example.com", "Ada Lovelace"))
+                  issue_session(SESSION_SECRET, "tester@example.com", "Test User"))
     return c
 
 
@@ -1028,7 +1026,7 @@ def test_a_note_is_written_and_shown(db):
     assert posted.status_code == 303
     body = unescape(c.get("/").text)
     assert "Raised the price to $19" in body
-    assert "ada@example.com" in body
+    assert "tester@example.com" in body
 
 
 def test_a_note_marks_its_month_on_the_charts(db):
@@ -1046,7 +1044,7 @@ def test_the_author_comes_from_the_session_not_the_form(db):
     from app_dashboard.db import connect
     conn = connect()
     try:
-        assert anno.recent(conn)[0]["author"] == "ada@example.com"
+        assert anno.recent(conn)[0]["author"] == "tester@example.com"
     finally:
         conn.close()
 
@@ -1060,17 +1058,13 @@ def test_a_bad_note_comes_back_with_a_message_rather_than_a_500(db):
     assert "YYYY-MM-DD" in unescape(c.get(r.headers["location"]).text)
 
 
-def test_basic_auth_cannot_write_a_note(db):
-    """The session cookie is SameSite=lax, so a form on another origin cannot
-    make a browser submit here carrying it. Basic auth has no such property: a
-    browser with cached credentials would send them cross-site, which would turn
-    this route into a CSRF hole the moment it accepted them."""
+def test_anonymous_user_cannot_write_a_note(db):
     from app_dashboard.db import connect
-    c = TestClient(create_app(conn_factory=connect))
-    r = c.post("/annotations", auth=("tester", "suite-only-credential"),
+    c = dashboard_client(create_app(conn_factory=connect), authenticated=False)
+    r = c.post("/annotations",
                data={"on_date": "2026-03-01", "note": "x"},
                follow_redirects=False)
-    assert r.status_code == 403
+    assert r.status_code == 401
     from app_dashboard import annotations as anno
     conn = connect()
     try:
@@ -1081,7 +1075,7 @@ def test_basic_auth_cannot_write_a_note(db):
 
 def test_an_anonymous_post_never_reaches_the_database(db):
     from app_dashboard.db import connect
-    c = TestClient(create_app(conn_factory=connect))
+    c = dashboard_client(create_app(conn_factory=connect), authenticated=False)
     r = c.post("/annotations", data={"on_date": "2026-03-01", "note": "x"},
                follow_redirects=False)
     # 303, not 307: a method-preserving redirect would make the browser re-POST
@@ -1137,19 +1131,16 @@ def test_deleting_a_note_takes_its_chart_marker_with_it(db):
     assert 'class="anno-dot"' not in c.get("/?months=24").text
 
 
-def test_basic_auth_cannot_delete_a_note(db):
-    """Same reasoning as the write path, with more at stake: Basic credentials
-    travel cross-site, so accepting them here would let another origin's form
-    clear the table."""
+def test_anonymous_user_cannot_delete_a_note(db):
     from app_dashboard.db import connect
     c = _signed_in()
     c.post("/annotations", data={"on_date": "2026-03-01", "note": "keep me"})
     note_id = _only_note_id()
 
-    anon = TestClient(create_app(conn_factory=connect))
-    r = anon.post("/annotations/delete", auth=("tester", "suite-only-credential"), data={"id": note_id},
+    anon = dashboard_client(create_app(conn_factory=connect), authenticated=False)
+    r = anon.post("/annotations/delete", data={"id": note_id},
                   follow_redirects=False)
-    assert r.status_code == 403
+    assert r.status_code == 401
     assert _only_note_id() == note_id
 
 
@@ -1159,7 +1150,7 @@ def test_an_anonymous_delete_never_reaches_the_database(db):
     c.post("/annotations", data={"on_date": "2026-03-01", "note": "keep me"})
     note_id = _only_note_id()
 
-    anon = TestClient(create_app(conn_factory=connect))
+    anon = dashboard_client(create_app(conn_factory=connect), authenticated=False)
     r = anon.post("/annotations/delete", data={"id": note_id},
                   follow_redirects=False)
     assert r.status_code in (303, 401, 403)
@@ -1181,16 +1172,9 @@ def test_a_junk_id_comes_back_with_a_message(db):
     assert "note_error" in r.headers["location"]
 
 
-def test_the_delete_control_is_hidden_from_a_reader_who_cannot_use_it(db):
-    """Basic auth can read the page but not write, so showing it a Delete
-    button would be offering a control that 403s."""
-    from app_dashboard.db import connect
+def test_the_delete_control_is_available_to_a_signed_in_user(db):
     _signed_in().post("/annotations",
                       data={"on_date": "2026-03-01", "note": "visible to all"})
-    basic = TestClient(create_app(conn_factory=connect))
-    page = basic.get("/", auth=("tester", "suite-only-credential"))
-    assert "visible to all" in unescape(page.text)
-    assert 'class="anno-del"' not in page.text
     assert 'class="anno-del"' in _signed_in().get("/?app=test-app").text
 
 
@@ -1396,9 +1380,9 @@ def test_a_cross_origin_annotation_write_is_refused(db):
     """SameSite=lax blocks a cross-*site* post, but "site" is the registrable
     domain: any sibling host under the same domain still gets the cookie
     attached. The cookie alone is therefore not a CSRF defence."""
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     c.cookies.set(SESSION_COOKIE,
-                  issue_session(SESSION_SECRET, "ada@example.com", "Ada Lovelace"))
+                  issue_session(SESSION_SECRET, "tester@example.com", "Test User"))
     r = c.post("/annotations", data={"on_date": "2026-03-01", "note": "x"},
                headers={"Origin": "https://evil.example"}, follow_redirects=False)
     assert r.status_code == 403
@@ -1407,9 +1391,9 @@ def test_a_cross_origin_annotation_write_is_refused(db):
 
 
 def test_a_same_origin_annotation_write_still_works(db):
-    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     c.cookies.set(SESSION_COOKIE,
-                  issue_session(SESSION_SECRET, "ada@example.com", "Ada Lovelace"))
+                  issue_session(SESSION_SECRET, "tester@example.com", "Test User"))
     r = c.post("/annotations", data={"on_date": "2026-03-01", "note": "shipped v2"},
                headers={"Origin": "https://dash.test"}, follow_redirects=False)
     assert r.status_code == 303

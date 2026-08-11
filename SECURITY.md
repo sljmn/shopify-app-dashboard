@@ -13,19 +13,15 @@ Only the latest commit on `main` is supported. There are no released versions to
 Read this before deploying it. Several of its security properties depend on how you run it, not on
 the code.
 
-- **It is not multi-tenant.** Everyone who can sign in sees every merchant's data. There is no
-  per-user scoping and adding a user is granting full access.
-- **`GOOGLE_ALLOWED_DOMAINS` is the entire access gate for SSO.** The OAuth client is External, so
-  Google will happily authenticate any Google account; this app decides who gets in. It has no
-  default. The allowlist is re-checked on every request rather than only at sign-in, so removing an
-  entry invalidates cookies it already issued.
-- **Basic auth sits alongside SSO and bypasses the domain allowlist.** It exists so curl, health
-  checks and scripted access keep working, and as the fallback when Google is unreachable. Anyone
-  holding a `DASHBOARD_USERS` pair is in, regardless of `GOOGLE_ALLOWED_DOMAINS`. Treat those
-  credentials as equivalent to full access and generate them randomly.
+- **It is not multi-tenant.** Everyone uses the same configured account and sees every merchant's
+  data. There is no signup, role system, or per-user scoping.
+- **`DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` are the entire interactive access gate.** Anyone
+  holding both has full access. They have no defaults and published examples are refused at startup.
+  Changing the username invalidates existing sessions; changing only the password prevents new
+  logins but does not revoke sessions already issued.
 - **`SESSION_SECRET` must be at least 32 characters.** It signs every session cookie, and the cookie
   salt is in this repository, so a guessable secret is a full pre-authentication bypass: anyone can
-  mint a session for any allowed address. The app refuses to start on a non-localhost
+  mint a session for the configured username. The app refuses to start on a non-localhost
   `PUBLIC_BASE_URL` with a shorter one. The check is on length, not on equality with a placeholder,
   because the likeliest accident is an unset variable rather than the placeholder. `PUBLIC_BASE_URL`
   is parsed and its hostname compared, so `https://localhost.evil.com` is not treated as local.
@@ -46,12 +42,10 @@ the code.
   bounded in both directions, which stops a forged backfill from rewriting activation history with
   impossible dates, but a leaked token still means fabricated activation data. Rotate it if the app
   that holds it is ever compromised.
-- **`POST /annotations` is gated on the session cookie, not on `verify_creds`.** Basic auth is sent
-  cross-site by browsers, so accepting it there would make a cross-site form post work. `SameSite=lax`
-  is necessary but not sufficient on its own: "site" is the registrable domain, so any sibling host
-  under your domain still gets the cookie attached. Both annotation routes therefore also check
-  `Origin` against `PUBLIC_BASE_URL`. Any signed-in principal can delete any note; notes are not
-  owned.
+- **`POST /annotations` requires the interactive session.** `SameSite=lax` is necessary but not
+  sufficient on its own: "site" is the registrable domain, so any sibling host under your domain
+  still gets the cookie attached. Both annotation routes therefore also check `Origin` against
+  `PUBLIC_BASE_URL`. The shared account can delete any note; notes are not separately owned.
 - **`/static` is mounted unauthenticated.** It holds decorative illustrations only. Do not put
   anything else there.
 - **Merchant free text is untrusted input.** Shop names and uninstall verbatims are typed by

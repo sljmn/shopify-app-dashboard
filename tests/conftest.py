@@ -19,9 +19,9 @@ os.environ.update({
     "PARTNER_API_TOKEN": "test-token",
     "PARTNER_ORG_ID": "1",
     "PARTNER_APP_ID": "1",
-    "DASHBOARD_USERS": "tester:suite-only-credential",
+    "DASHBOARD_USERNAME": "tester@example.com",
+    "DASHBOARD_PASSWORD": "suite-only-credential",
     "PUBLIC_BASE_URL": "http://localhost:8000",
-    "GOOGLE_ALLOWED_DOMAINS": "example.com,example.org",
     "SESSION_SECRET": "test-session-secret-not-the-default",
     # The suite's fixture pricing: $19/month and $190/year. Tests that exercise
     # the inference itself override this, which is the point -- an annual price

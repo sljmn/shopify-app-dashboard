@@ -186,16 +186,11 @@ reaching the pages, not a flaky test.
 
 ## Auth and the request path
 
-Google SSO first (signed `dashboard_session` cookie, re-checked against the domain allowlist on every
-request), HTTP Basic second for curl and as the way in if Google is down. `HTTPBasic(auto_error=
-False)` so a browser with no header falls through to `/auth/login` instead of getting a Basic popup.
-The domain allowlist is enforced by us, never by Google: the OAuth client is External and will
-authenticate any Google account.
-
-`/auth/login` is a page that explains what the dashboard is; the redirect to Google lives behind
-its button at `/auth/google`. Those are separate on purpose: when they were one route an
-unauthenticated visitor was thrown at Google having read nothing, and a disallowed account's first
-words from us were a 403.
+`/auth/login` compares one configured email address and password using constant-time comparisons.
+The form is protected by a short-lived signed CSRF token. A successful login issues the signed
+`dashboard_session` cookie for 30 days; every protected request checks that its username still
+matches `DASHBOARD_USERNAME`. Changing that setting therefore invalidates existing sessions.
+There is no signup, HTTP Basic fallback, OAuth path, or database user table.
 
 401, 403 and 404 render `error.html` for browsers and keep their JSON body for everything else.
 Nothing here is indexable: `<meta name="robots">` in

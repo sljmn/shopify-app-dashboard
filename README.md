@@ -166,9 +166,8 @@ agree.
 
 ![The Customers list](docs/screenshots/customers.png)
 
-Sign-in is Google OAuth restricted to an allowlist you configure, with HTTP Basic as the fallback
-for whoever set it up. The allowlist is re-checked on every request, so removing an address locks
-out the cookie it already issued.
+Sign-in uses one email address and password configured by the operator. There is no public signup
+or user-management surface. A successful login creates a signed 30-day browser session.
 
 ![The sign-in page](docs/screenshots/signin.png)
 

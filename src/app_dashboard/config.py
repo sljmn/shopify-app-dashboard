@@ -4,10 +4,10 @@ from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Credentials that appear in this repository's own documentation. Refused
-# outright: Basic auth bypasses the SSO allowlist, so one of these is a full
-# account on a public-facing deployment.
-PUBLISHED_CREDENTIALS = {"admin:change-me", "user:pass", "u:p", "admin:admin"}
+# Credentials that appear in this public repository are never valid deployment
+# secrets. Refusing them turns a copied example into a startup error.
+PUBLISHED_USERNAMES = {"admin", "user", "u", "you@example.com"}
+PUBLISHED_PASSWORDS = {"change-me", "pass", "p", "admin"}
 
 
 class Settings(BaseSettings):
@@ -15,19 +15,12 @@ class Settings(BaseSettings):
 
     # --- required: nothing here has a safe default -------------------------
     database_url: str
-    # "user:pass,user2:pass2" -- one credential pair per dashboard user
-    dashboard_users: str
-    # Redirect URIs must match Google's registration byte for byte, so this is
-    # configured rather than derived from the request: behind a TLS-terminating
-    # proxy the request scheme can read as http and silently break the callback.
-    # Required, and deliberately without a default: a default here would point
-    # every deployment at whoever published it.
+    dashboard_username: str
+    dashboard_password: str
+    # Used for links, origin checks, and deciding whether cookies require HTTPS.
+    # Required without a default so a deployment cannot inherit the publisher's
+    # hostname.
     public_base_url: str
-    # Comma-separated domains and individual addresses. Enforced by us, not by
-    # Google: the OAuth client is External, so Google authenticates any account
-    # and this is the gate. Required for the same reason as public_base_url --
-    # inheriting somebody else's allowlist is a standing back door.
-    google_allowed_domains: str
 
     # Versioned catalog of Partner organizations and apps. App identity,
     # Partner credentials, pricing, usage, and GA4 all live there.
@@ -35,8 +28,6 @@ class Settings(BaseSettings):
 
     # --- optional integrations ---------------------------------------------
     slack_webhook_url: str | None = None
-    google_client_id: str | None = None
-    google_client_secret: str | None = None
     # Signs the session cookie. Rotating it logs everyone out. create_app
     # refuses to serve a non-local deployment while this is the published
     # default, so leaving it alone is a startup failure, not a silent weakness.
@@ -75,45 +66,20 @@ class Settings(BaseSettings):
     # that refuses to start rather than a dashboard that quietly reports the
     # wrong number hours later.
 
-    @field_validator("dashboard_users")
+    @field_validator("dashboard_username")
     @classmethod
-    def _every_pair_has_a_colon(cls, raw: str) -> str:
-        """Catch a password containing a comma.
+    def _username_is_private(cls, raw: str) -> str:
+        value = raw.strip()
+        if not value or value.lower() in PUBLISHED_USERNAMES:
+            raise ValueError("DASHBOARD_USERNAME must be set to a private value")
+        return value
 
-        The format is "user:pass,user2:pass2", so a comma inside a password
-        silently truncates it: "admin:pa,ssword" parses as {"admin": "pa"} and
-        logging in with "pa" succeeds. An operator who generated a random
-        password would get a two-character one and never know. A fragment with
-        no colon in it is that accident, every time.
-        """
-        for part in (p.strip() for p in raw.split(",")):
-            if part and ":" not in part:
-                raise ValueError(
-                    f"DASHBOARD_USERS has a fragment with no colon: {part!r}. "
-                    "Entries are user:pass separated by commas, so a password "
-                    "containing a comma is silently truncated. Generate one "
-                    "without: python -c \"import secrets; "
-                    "print(secrets.token_urlsafe(24))\""
-                )
-        # Basic auth bypasses the Google domain allowlist by design, so a
-        # published placeholder here is a full account. This repository is
-        # public, which makes any example credential the first thing anyone
-        # tries against a deployment.
-        if any(p.strip() in PUBLISHED_CREDENTIALS for p in raw.split(",")):
-            raise ValueError(
-                "DASHBOARD_USERS is still an example credential from this "
-                "repository. It grants full access and bypasses "
-                "GOOGLE_ALLOWED_DOMAINS. Generate one: python -c \"import "
-                "secrets; print(secrets.token_urlsafe(24))\""
-            )
+    @field_validator("dashboard_password")
+    @classmethod
+    def _password_is_private(cls, raw: str) -> str:
+        if not raw or raw in PUBLISHED_PASSWORDS:
+            raise ValueError("DASHBOARD_PASSWORD must be set to a private value")
         return raw
-
-    # --- derived ------------------------------------------------------------
-
-    @property
-    def dashboard_users_map(self) -> dict[str, str]:
-        pairs = (p.split(":", 1) for p in self.dashboard_users.split(",") if ":" in p)
-        return {u.strip(): pw for u, pw in pairs}
 
     @field_validator("digest_timezone")
     @classmethod

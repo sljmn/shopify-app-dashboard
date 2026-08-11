@@ -8,13 +8,15 @@ from app_dashboard.config import Settings, get_settings
 
 def test_settings_loads_from_env(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://x")
-    monkeypatch.setenv("DASHBOARD_USERS", "ada:pw,grace:pw2")
+    monkeypatch.setenv("DASHBOARD_USERNAME", "ada@example.com")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "private-password")
     s = Settings()
     assert s.database_url == "postgresql://x"
     assert s.poll_interval_minutes == 15
     assert s.poll_overlap_minutes == 60
     assert s.apps_config_path == "config/apps.yml"
-    assert s.dashboard_users_map == {"ada": "pw", "grace": "pw2"}
+    assert s.dashboard_username == "ada@example.com"
+    assert s.dashboard_password == "private-password"
 
 
 # --- settings that had no test, so a regression to a hardcoded constant would
@@ -27,11 +29,10 @@ def _settings(monkeypatch, **env):
     return get_settings()
 
 
-def test_a_password_containing_a_comma_is_refused(monkeypatch):
-    """"admin:pa,ssword" parsed as {"admin": "pa"} and logging in with "pa"
-    worked. An operator who generated a random password got a 2-character one."""
+@pytest.mark.parametrize("name", ["DASHBOARD_USERNAME", "DASHBOARD_PASSWORD"])
+def test_blank_dashboard_credentials_are_refused(monkeypatch, name):
     with pytest.raises(ValidationError):
-        _settings(monkeypatch, DASHBOARD_USERS="admin:pa,ssword")
+        _settings(monkeypatch, **{name: ""})
 
 
 def test_date_settings_are_read_not_hardcoded(monkeypatch):
@@ -49,10 +50,7 @@ def test_an_empty_digest_timezone_becomes_utc(monkeypatch):
 
 
 def test_a_published_example_credential_is_refused(monkeypatch):
-    """Basic auth bypasses GOOGLE_ALLOWED_DOMAINS, and this repository is
-    public, so any credential appearing in its documentation is the first thing
-    anyone tries against a deployment."""
-    for bad in ("admin:change-me", "user:pass", "admin:admin",
-                "real:secret,admin:change-me"):
+    for name, bad in (("DASHBOARD_USERNAME", "admin"),
+                      ("DASHBOARD_PASSWORD", "change-me")):
         with pytest.raises(ValidationError):
-            _settings(monkeypatch, DASHBOARD_USERS=bad)
+            _settings(monkeypatch, **{name: bad})
