@@ -549,6 +549,21 @@ def test_a_signed_in_reader_keeps_the_sidebar_on_an_error(db):
     assert "Go to sign-in" in signed_out.text
 
 
+def test_long_app_name_can_wrap_inside_sidebar(db, test_app):
+    db.execute(
+        "update apps set name='Happy Birthday Marketing App' where id=%s",
+        (test_app.id,),
+    )
+    app = create_app(conn_factory=lambda: keep_open(db))
+    c = dashboard_client(app)
+
+    page = c.get("/?app=test-app")
+
+    assert "Happy Birthday Marketing App" in page.text
+    assert "Happy&nbsp;Birthday&nbsp;Marketing&nbsp;App" not in page.text
+    assert ".wordmark > span:last-child" in page.text
+
+
 def test_footer_reports_the_render_time(db):
     """It reads request.state.started, which the security middleware stamps.
     If that ever stops being set the footer empties silently, so pin it."""
