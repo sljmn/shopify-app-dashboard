@@ -14,6 +14,11 @@ from app_dashboard.active_subscriptions import sync_active_subscriptions
 from app_dashboard.catalog import AppConfig
 from app_dashboard.ga4 import build_client as build_ga4_client
 from app_dashboard.ga4 import sync_ga4
+from app_dashboard.aso_ga4 import (
+    sync_aso_keywords,
+    sync_capabilities,
+    sync_install_sources,
+)
 from app_dashboard.partner_api import PartnerClient
 from app_dashboard.pipeline import run_sync, sync_transactions
 
@@ -71,7 +76,7 @@ class ManualSyncCoordinator:
     def _sources(app: AppConfig) -> list[str]:
         sources = ["lifecycle", "transactions", "subscriptions"]
         if app.ga4_property_id and app.ga4_credentials_json:
-            sources.append("ga4")
+            sources.extend(("ga4", "aso_keywords", "aso_attribution"))
         return sources
 
     def start(self, apps: list[AppConfig], *, mode: str) -> dict:
@@ -173,6 +178,21 @@ class ManualSyncCoordinator:
             elif source == "ga4":
                 client = build_ga4_client(app.ga4_credentials_json or "")
                 sync_ga4(conn, client, app, force_full=full_history)
+            elif source in {"aso_keywords", "aso_attribution"}:
+                client = build_ga4_client(app.ga4_credentials_json or "")
+                capability = sync_capabilities(conn, client, app)
+                if capability.statuses[source] not in {"ready", "partial"}:
+                    return
+                if source == "aso_keywords":
+                    sync_aso_keywords(
+                        conn, client, app, fields=capability.fields,
+                        force_full=full_history,
+                    )
+                else:
+                    sync_install_sources(
+                        conn, client, app, fields=capability.fields,
+                        force_full=full_history,
+                    )
             else:
                 raise ValueError(f"Unknown sync source {source}")
         finally:

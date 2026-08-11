@@ -138,6 +138,45 @@ def run_ga4_job(conn_factory, apps: list[AppConfig], settings) -> list[dict]:
     return results
 
 
+def run_aso_job(conn_factory, apps: list[AppConfig], settings) -> list[dict]:
+    """Refresh owned ASO sources per app without coupling their failures."""
+    del settings
+    from app_dashboard.aso_ga4 import (
+        sync_aso_keywords,
+        sync_capabilities,
+        sync_install_sources,
+    )
+    from app_dashboard.ga4 import build_client
+
+    results = []
+    for app in apps:
+        if not app.ga4_credentials_json or not app.ga4_property_id:
+            continue
+        conn = conn_factory()
+        try:
+            client = build_client(app.ga4_credentials_json)
+            capability = sync_capabilities(conn, client, app)
+            written = {"keywords": 0, "attribution": 0}
+            if capability.statuses["aso_keywords"] in {"ready", "partial"}:
+                written["keywords"] = sync_aso_keywords(
+                    conn, client, app, fields=capability.fields
+                )
+            if capability.statuses["aso_attribution"] in {"ready", "partial"}:
+                written["attribution"] = sync_install_sources(
+                    conn, client, app, fields=capability.fields
+                )
+            results.append({
+                "app": app.slug, "ok": True, "written": written,
+                "statuses": capability.statuses,
+            })
+        except Exception as exc:
+            logger.exception("%s ASO sync failed", app.slug)
+            results.append({"app": app.slug, "ok": False, "error": type(exc).__name__})
+        finally:
+            conn.close()
+    return results
+
+
 def start_scheduler(
     conn_factory, settings, apps: list[AppConfig]
 ) -> BackgroundScheduler:
@@ -177,6 +216,13 @@ def start_scheduler(
         "interval",
         hours=1,
         next_run_time=datetime.now(),
+    )
+    scheduler.add_job(
+        lambda: run_aso_job(conn_factory, apps, settings),
+        "interval",
+        hours=24,
+        next_run_time=datetime.now() + timedelta(minutes=10),
+        id="aso_intelligence",
     )
     # Every 15 minutes, but it only posts once per stale episode. Deliberately
     # a separate job from run_sync: a check that lives inside the thing it is

@@ -4,6 +4,7 @@ from app_dashboard.scheduler import (
     run_active_subscriptions_job,
     run_all_apps,
     run_sync_job,
+    run_aso_job,
 )
 
 
@@ -43,6 +44,29 @@ def test_active_subscription_job_closes_each_app_connection(monkeypatch, test_ap
 
     run_active_subscriptions_job(lambda: conn, [test_app], object())
 
+    assert conn.closed_count == 1
+
+
+def test_aso_job_skips_unconfigured_apps_and_closes_connections(
+    monkeypatch, test_app, app_factory
+):
+    configured = replace(
+        test_app, ga4_property_id="123", ga4_credentials_json="{}"
+    )
+    unconfigured = app_factory(slug="no-ga4")
+    conn = FakeConn()
+    capability = type("Capability", (), {
+        "statuses": {"aso_keywords": "ready", "aso_attribution": "unsupported"},
+        "fields": {"keyword": "searchTerm"},
+    })()
+    monkeypatch.setattr("app_dashboard.ga4.build_client", lambda value: object())
+    monkeypatch.setattr("app_dashboard.aso_ga4.sync_capabilities", lambda *a: capability)
+    monkeypatch.setattr("app_dashboard.aso_ga4.sync_aso_keywords", lambda *a, **k: 4)
+
+    result = run_aso_job(lambda: conn, [configured, unconfigured], object())
+
+    assert result[0]["app"] == configured.slug
+    assert result[0]["written"] == {"keywords": 4, "attribution": 0}
     assert conn.closed_count == 1
 
 

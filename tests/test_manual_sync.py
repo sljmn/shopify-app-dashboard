@@ -63,7 +63,10 @@ def test_coordinator_includes_ga4_only_when_configured(app_factory):
 
     coordinator.start([app], mode="fresh")
 
-    assert calls == ["lifecycle", "transactions", "subscriptions", "ga4"]
+    assert calls == [
+        "lifecycle", "transactions", "subscriptions", "ga4",
+        "aso_keywords", "aso_attribution",
+    ]
 
 
 def test_coordinator_records_failure_and_continues(app_factory):
