@@ -33,10 +33,9 @@ Shopify Partner API
                                           stats.py
                                   (all read-side aggregates)
                                               │
-                            ┌─────────────────┴─────────────────┐
-                            ▼                                   ▼
-                    Jinja2 templates                    markdown_export.py
-                    (8 HTML pages)                      (the .md twin of each)
+                                              ▼
+                                      Jinja2 templates
+                                       (HTML reports)
 ```
 
 `pipeline.py` runs the whole thing on a schedule (`scheduler.py`, every 30 minutes on one machine).
@@ -202,12 +201,9 @@ it will not run.
 | `src/app_dashboard/ingest_raw.py` | Partner API → `raw_app_events`, `charges`, `transactions` |
 | `src/app_dashboard/derive.py` | replay → `app_events`, `subscriptions`, `shops` |
 | `src/app_dashboard/stats.py` | every read-side aggregate; no writes |
-| `src/app_dashboard/metrics.py` | one definition per number: name, rule, source table. Read by the tiles and the twins |
-| `src/app_dashboard/faq.py` | the why-don't-these-match answers, rendered at `/faq` and `/faq.md` |
+| `src/app_dashboard/metrics.py` | one definition per number: name, rule, source table. Read by the tiles |
 | `src/app_dashboard/annotations.py` | dated notes on the charts; the only place a person writes to this database |
-| `src/app_dashboard/ranges.py` | the allowlist behind every time-range control, shared by the pages and the twins |
-| `src/app_dashboard/markdown_export.py` | the `.md` twin of each page, and the one list of contact fields never exported |
-| `src/app_dashboard/export.py` | `/export.json`: every dataset at its widest window, as one downloadable file |
+| `src/app_dashboard/ranges.py` | the allowlist behind every time-range control |
 | `src/app_dashboard/security.py` | response headers, CSP nonce, request clock, rate limiter |
 | `src/app_dashboard/static/` | the three error illustrations, and nothing else |
 | `src/app_dashboard/migrations/` | numbered, idempotent, run on deploy by `app_dashboard.migrate` |
@@ -216,5 +212,4 @@ it will not run.
 | `docs/configuration.md` | the settings that decide whether the numbers are right |
 | `docs/partner-api-notes.md` | what the Partner API actually does, as opposed to what it looks like it does |
 | `docs/deploy.md` | deploy, secrets, replay, backfills |
-| `docs/exports.md` | the `.md` twins and `/export.json` |
 | `docs/usage-events-integration.md` | the per-app usage ingest contract, to hand to your app developer |

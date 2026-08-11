@@ -16,7 +16,7 @@ import httpx
 from datetime import date
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -36,7 +36,6 @@ from app_dashboard.auth import (
     read_session,
 )
 from app_dashboard import annotations as anno
-from app_dashboard import export as json_export
 from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.config import get_settings
 from app_dashboard.customers import (
@@ -47,9 +46,6 @@ from app_dashboard.customers import (
     list_customers,
 )
 from app_dashboard.db import connect
-from app_dashboard.faq import FAQ
-from app_dashboard.markdown_export import PAGES as MD_PAGES
-from app_dashboard.markdown_export import customer_markdown, render_page
 from app_dashboard.metrics import COMPARE_LABEL, METRICS, signed
 from app_dashboard.ops import sync_health
 from app_dashboard.ranges import (
@@ -63,7 +59,9 @@ from app_dashboard.scheduler import start_scheduler
 from app_dashboard.scope import Scope
 from app_dashboard.security import RateLimiter, SecurityHeadersMiddleware, client_key
 from app_dashboard.stats import (
+    ACTIVITY_TYPES,
     PLAN_LABELS,
+    activity_feed,
     annual_upgrade_candidates,
     churn_composition,
     churn_rows,
@@ -91,6 +89,7 @@ from app_dashboard.stats import (
     trial_watch,
     uninstall_reasons,
     uninstall_verbatims,
+    unit_economics,
 )
 from app_dashboard.trials import current_trials
 from app_dashboard.usage import (
@@ -597,13 +596,26 @@ def create_app(conn_factory) -> FastAPI:
                 conn, {**stats, "net_30d": money["net_30d"]}, scope=scope)
             notes = anno.recent(conn, scope)
             notes_by_month = anno.by_month(conn, scope)
-            app_comparison = [] if selected_app else [
-                {
-                    "app": candidate,
-                    "stats": overview_stats(conn, Scope.for_app(candidate.id)),
-                }
-                for candidate in apps
-            ]
+            app_comparison = []
+            if selected_app is None:
+                for candidate in apps:
+                    candidate_scope = Scope.for_app(candidate.id)
+                    candidate_stats = overview_stats(conn, candidate_scope)
+                    economics = unit_economics(conn, scope=candidate_scope)
+                    trial_stats = current_trials(conn, candidate_scope)
+                    installed = candidate_stats["installed"]
+                    app_comparison.append({
+                        "app": candidate,
+                        "stats": candidate_stats,
+                        "paid_share": (
+                            round(100 * candidate_stats["paying"] / installed)
+                            if installed else None
+                        ),
+                        "monthly_churn_pct": economics["monthly_churn_pct"],
+                        "ltv": economics["ltv"],
+                        "current_trials": trial_stats["count"],
+                        "trial_mrr": trial_stats["converting_mrr"],
+                    })
         finally:
             conn.close()
         activity_max = max(
@@ -764,19 +776,6 @@ def create_app(conn_factory) -> FastAPI:
             return _back_to_notes(selected_app, "That note was already gone.")
         return _back_to_notes(selected_app)
 
-    @app.get("/faq")
-    def faq(request: Request, user: str = Depends(verify_creds)):
-        """Why two numbers disagree, answered once rather than each time."""
-        conn = conn_factory()
-        try:
-            _, selected_app, apps = resolve_scope(request, conn)
-        finally:
-            conn.close()
-        return templates.TemplateResponse(
-            request, "faq.html",
-            {**page_context(request, user, "faq", selected_app, apps), "faq": FAQ},
-        )
-
     @app.get("/customers")
     def customers(
         request: Request,
@@ -839,6 +838,54 @@ def create_app(conn_factory) -> FastAPI:
             },
         )
 
+    @app.get("/activity")
+    def activity(
+        request: Request,
+        on: str | None = None,
+        event_type: str | None = None,
+        page: str | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        try:
+            on_date = date.fromisoformat(on) if on else None
+        except ValueError:
+            on_date = None
+        event_type = event_type if event_type in ACTIVITY_TYPES else None
+        page_number = int(page) if page and page.isdigit() else 1
+
+        conn = conn_factory()
+        try:
+            scope, selected_app, apps = resolve_scope(request, conn)
+            feed = activity_feed(
+                conn, scope=scope, on=on_date, event_type=event_type,
+                page=page_number,
+            )
+        finally:
+            conn.close()
+
+        filters = {}
+        if selected_app:
+            filters["app"] = selected_app.slug
+        if on_date:
+            filters["on"] = on_date.isoformat()
+        if event_type:
+            filters["event_type"] = event_type
+        base_qs = urlencode(filters)
+        labels = {kind: kind.replace("_", " ").title() for kind in ACTIVITY_TYPES}
+        return templates.TemplateResponse(
+            request,
+            "activity.html",
+            {
+                **page_context(request, user, "activity", selected_app, apps),
+                "feed": feed,
+                "on": on_date.isoformat() if on_date else "",
+                "event_type": event_type or "",
+                "event_types": ACTIVITY_TYPES,
+                "event_labels": labels,
+                "base_qs": base_qs + "&" if base_qs else "",
+            },
+        )
+
     @app.get("/trials")
     def trials(request: Request, user: str = Depends(verify_creds)):
         conn = conn_factory()
@@ -863,22 +910,9 @@ def create_app(conn_factory) -> FastAPI:
             detail = customer_detail(conn, shop_gid, scope)
             if detail is None:
                 raise HTTPException(status_code=404, detail="No such shop")
-            # Built inside the same connection: the markdown mirror is a second
-            # view of exactly these rows, never a second set of queries.
-            detail["markdown"] = customer_markdown(conn, settings, shop_gid, detail)
         finally:
             conn.close()
         return detail, selected_app, apps
-
-    # Registered before the HTML route: `{shop_domain}` compiles to a greedy
-    # [^/]+, so /customers/x.myshopify.com would swallow a trailing .md if the
-    # HTML route were matched first.
-    @app.get("/customers/{shop_gid:path}.md")
-    def customer_markdown_page(request: Request, shop_gid: str,
-                               user: str = Depends(verify_creds)):
-        detail, _, _ = _detail_or_404(request, shop_gid)
-        return PlainTextResponse(detail["markdown"],
-                                 media_type="text/markdown; charset=utf-8")
 
     @app.get("/customers/{shop_gid:path}")
     def customer(request: Request, shop_gid: str,
@@ -887,65 +921,6 @@ def create_app(conn_factory) -> FastAPI:
         return templates.TemplateResponse(
             request, "customer.html",
             {**page_context(request, user, "customers", selected_app, apps), **detail},
-        )
-
-    # Markdown mirrors of every page, one URL per page, shaped like shopify.dev's
-    # .md docs: frontmatter, prose, then the data as JSON. The Copy MD button in
-    # the nav fetches these; an agent can fetch them directly with the same
-    # credentials. Two routes because the reports live one level down.
-    MD_SLUGS = {slug: page for page, (slug, _, _) in MD_PAGES.items()}
-
-    def _markdown(request: Request, slug: str) -> PlainTextResponse:
-        page = MD_SLUGS.get(slug)
-        if page is None:
-            raise HTTPException(status_code=404, detail="No such page")
-        conn = conn_factory()
-        try:
-            scope, selected_app, _ = resolve_scope(request, conn)
-            query = dict(request.query_params)
-            query["_scope"] = scope
-            query["_app"] = selected_app
-            text = render_page(conn, page, settings, query)
-        finally:
-            conn.close()
-        return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
-
-    @app.get("/{slug}.md")
-    def page_markdown(request: Request, slug: str, user: str = Depends(verify_creds)):
-        return _markdown(request, slug)
-
-    @app.get("/reports/{slug}.md")
-    def report_markdown(request: Request, slug: str, user: str = Depends(verify_creds)):
-        return _markdown(request, f"reports/{slug}")
-
-    @app.get("/export.json")
-    def export_json(request: Request, user: str = Depends(verify_creds)):
-        """Every dataset the dashboard computes, in one downloadable file.
-
-        Distinct from the markdown twins on purpose. A twin mirrors one page at
-        the window the reader picked, and exists to be pasted somewhere. This is
-        the archive: every section at the widest window it allows, so a file
-        kept in October still answers questions asked in March.
-
-        `Content-Disposition: attachment` rather than a JSON response the
-        browser renders, because the point is a file on disk. Combined with
-        nosniff, it also means the browser never parses merchant-typed strings
-        in this document as anything at all.
-        """
-        conn = conn_factory()
-        try:
-            scope, selected_app, _ = resolve_scope(request, conn)
-            body = json_export.render(
-                conn, settings, scope=scope, selected_app=selected_app
-            )
-        finally:
-            conn.close()
-        export_slug = selected_app.slug if selected_app else "shopify-apps"
-        return Response(
-            body,
-            media_type="application/json",
-            headers={"content-disposition":
-                     f'attachment; filename="{json_export.filename(slug=export_slug)}"'},
         )
 
     @app.get("/actions")

@@ -89,14 +89,12 @@ def test_every_response_carries_the_security_headers(db):
     assert response.headers["cross-origin-resource-policy"] == "same-origin"
 
 
-def test_headers_are_set_on_the_markdown_twins_too(db):
-    """The .md routes are a separate response path; a header set only on the
-    HTML pages would leave half the surface uncovered."""
-    response = signed_in(db).get("/index.md")
+def test_headers_are_set_on_json_responses_too(db):
+    """Security headers also cover response paths that do not render HTML."""
+    response = signed_in(db).get("/healthz")
     assert response.status_code == 200
     assert response.headers["x-content-type-options"] == "nosniff"
     assert "content-security-policy" in response.headers
-    # The twins are the surface an agent fetches; no-store matters most here.
     assert response.headers["cache-control"] == "no-store"
 
 

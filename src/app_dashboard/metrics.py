@@ -6,10 +6,9 @@ the SQL. Mixpanel solves this with Lexicon: descriptions live on the event, not
 in a wiki, and surface inside the report itself. This is the same idea at the
 size this app actually is -- a dict, not a governance product.
 
-The registry is the single source. The tiles read it for the hover panel, the
-markdown twins read it so a pasted page carries its own definitions into
-whatever agent reads it next, and `docs/architecture.md` points at this file
-rather than restating anything. A definition can therefore be wrong, but it
+The registry is the single source. The tiles read it for the hover panel and
+`docs/architecture.md` points at this file rather than restating anything. A
+definition can therefore be wrong, but it
 cannot be *inconsistent*, which is the failure that actually happens: the page
 says one thing, the doc says another, and nobody knows which shipped first.
 

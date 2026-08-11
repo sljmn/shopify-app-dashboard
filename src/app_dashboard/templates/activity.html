@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Activity</h1>
+<p class="sub">{{ feed.total }} lifecycle and subscription event{{ "" if feed.total == 1 else "s" }}{% if selected_app %} for {{ selected_app.name }}{% endif %}.</p>
+
+<form class="filters" method="get" action="/activity">
+    {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
+    <input type="date" name="on" value="{{ on }}" aria-label="Event date">
+    <select name="event_type" aria-label="Event type">
+        <option value="">All events</option>
+        {% for kind in event_types %}
+        <option value="{{ kind }}" {% if event_type == kind %}selected{% endif %}>{{ event_labels[kind] }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit">Filter</button>
+    {% if on or event_type %}<a href="/activity{{ scope_qs }}">Clear</a>{% endif %}
+</form>
+
+<div class="table-card">
+    <table>
+        <thead><tr><th>When (UTC)</th><th>Event</th><th>Shop</th><th>App</th><th class="num">MRR change</th></tr></thead>
+        <tbody>
+            {% for row in feed.rows %}
+            <tr>
+                <td class="sub">{{ row.at.strftime("%b %-d, %Y %H:%M") }}</td>
+                <td><span class="pill {{ row.type }}">{{ event_labels[row.type] }}</span></td>
+                <td>
+                    <a href="/customers/{{ row.shop_gid|urlencode }}{% if selected_app %}?app={{ selected_app.slug|urlencode }}{% endif %}">{{ row.shop }}</a>
+                    {% if row.shop_domain %}<span class="sub"> &middot; <a href="https://{{ row.shop_domain }}">storefront</a></span>{% endif %}
+                </td>
+                <td><a href="/activity?app={{ row.app_slug|urlencode }}">{{ row.app_name }}</a></td>
+                <td class="num {% if row.net_change and row.net_change > 0 %}money-up{% elif row.net_change and row.net_change < 0 %}money-down{% endif %}">
+                    {% if row.net_change is not none %}{{ "+" if row.net_change >= 0 else "-" }}${{ "%.2f"|format(row.net_change|abs) }}{% else %}&mdash;{% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No events match these filters.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="pager">
+    <span class="sub">{{ feed.total }} event{{ "" if feed.total == 1 else "s" }}</span>
+    {% if feed.pages > 1 %}
+    <span class="pager-links">
+        {% if feed.page > 1 %}<a href="/activity?{{ base_qs }}page={{ feed.page - 1 }}">&larr; Newer</a>{% else %}<span class="disabled">&larr; Newer</span>{% endif %}
+        <span class="sub">Page {{ feed.page }} of {{ feed.pages }}</span>
+        {% if feed.page < feed.pages %}<a href="/activity?{{ base_qs }}page={{ feed.page + 1 }}">Older &rarr;</a>{% else %}<span class="disabled">Older &rarr;</span>{% endif %}
+    </span>
+    {% endif %}
+</div>
+{% endblock %}

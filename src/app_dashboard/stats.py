@@ -1,7 +1,7 @@
 """Read-side aggregates for the dashboard pages. All pure SQL/Python over
 app_events / shops / subscriptions; no external data sources."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import psycopg
@@ -16,6 +16,10 @@ from app_dashboard.uninstall_reasons import (
 )
 
 PAYING_THRESHOLD = Decimal("0.01")
+ACTIVITY_TYPES = (
+    "installed", "reinstalled", "subscribed", "upgraded", "downgraded",
+    "unsubscribed", "uninstalled",
+)
 
 
 def _billable(alias: str = "sub") -> tuple[str, tuple]:
@@ -1065,6 +1069,66 @@ def recent_events(
         }
         for kind, shop, shop_gid, shop_domain, at, slug, name in rows
     ]
+
+
+def activity_feed(
+    conn: psycopg.Connection,
+    *,
+    scope: Scope = Scope.all(),
+    on: date | None = None,
+    event_type: str | None = None,
+    page: int = 1,
+    per_page: int = 100,
+) -> dict:
+    """A pageable stream over the same derived events as the reports."""
+    conditions = []
+    params: list = []
+    predicate, scope_params = scope.predicate("e")
+    conditions.append(predicate)
+    params.extend(scope_params)
+    if on is not None:
+        conditions.append("e.occurred_at >= %s and e.occurred_at < %s + interval '1 day'")
+        params.extend((on, on))
+    if event_type is not None:
+        conditions.append("e.type = %s")
+        params.append(event_type)
+    where = " and ".join(conditions)
+
+    total = conn.execute(
+        f"select count(*) from app_events e where {where}", params
+    ).fetchone()[0]
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(max(1, page), pages)
+    rows = conn.execute(
+        f"""
+        select e.type, coalesce(s.shop_name, s.shop_domain, e.shop_gid),
+               e.shop_gid, s.shop_domain, e.occurred_at, e.net_change,
+               a.slug, a.name
+        from app_events e
+        join apps a on a.id = e.app_id
+        left join shops s on s.app_id = e.app_id and s.shop_gid = e.shop_gid
+        where {where}
+        order by e.occurred_at desc, e.id desc
+        limit %s offset %s
+        """,
+        (*params, per_page, (page - 1) * per_page),
+    ).fetchall()
+    return {
+        "rows": [
+            {
+                "type": kind, "shop": shop, "shop_gid": shop_gid,
+                "shop_domain": shop_domain, "at": at,
+                "net_change": net_change, "app_slug": app_slug,
+                "app_name": app_name,
+            }
+            for kind, shop, shop_gid, shop_domain, at, net_change, app_slug, app_name
+            in rows
+        ],
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "per_page": per_page,
+    }
 
 
 def funnel_stats(

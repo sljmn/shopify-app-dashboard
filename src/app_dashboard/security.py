@@ -20,8 +20,8 @@ from app_dashboard.config import get_settings
 # stops the first request of a session from going out in the clear at all.
 HSTS = "max-age=31536000; includeSubDomains"
 
-# 'nonce-...' rather than 'unsafe-inline': base.html carries four inline blocks
-# (the hamburger toggle, the Copy MD fetch, the count-up animation, and the
+# 'nonce-...' rather than 'unsafe-inline': base.html carries three inline blocks
+# (the hamburger toggle, the count-up animation, and the
 # stylesheet), and allowing unsafe-inline to keep them working would leave the
 # policy doing nothing at all. The nonce is minted per request and read in the
 # template as {{ request.state.nonce }}, which needs no route changes because

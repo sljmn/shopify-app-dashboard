@@ -16,7 +16,6 @@
 {% block bodyclass %}{% if art %}cover{% endif %}{% endblock %}
 {% block bodystyle %}{% if art %}--cover-art: url('{{ art }}'){% endif %}{% endblock %}
 {% block sidebar %}{% if signed_in %}{{ super() }}{% endif %}{% endblock %}
-{#- No Copy MD anywhere in here: none of these pages has a markdown twin. -#}
 {% block pagehead %}{% endblock %}
 {% block content %}
 <div class="gate">

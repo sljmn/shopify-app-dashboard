@@ -172,8 +172,7 @@ def test_detail_is_none_for_an_unknown_shop(db):
 
 
 def test_detail_never_selects_contact_details(db):
-    """markdown_export renders this dict straight to a copyable document, so a
-    contact column reaching it would leak on the next paste."""
+    """Customer detail does not need private contact fields to identify a shop."""
     _shop(db, "g1", shop_domain="x.myshopify.com", owner_name="Jo Smith",
           email="jo@x.myshopify.com")
     db.commit()

@@ -57,8 +57,8 @@ properties. `GA4_EARLIEST_DATA` is the shared lower bound for first backfills.
 ## Scope semantics
 
 No `?app=` means All apps. Lifecycle and financial figures add app installations, so one shop
-installed in two apps counts twice. `?app=<slug>` narrows the complete page, markdown twin, and JSON
-export. Traffic, activation, and annotation writes require one selected app.
+installed in two apps counts twice. `?app=<slug>` narrows the complete page. Traffic, activation,
+and annotation writes require one selected app.
 
 ## Operational settings
 

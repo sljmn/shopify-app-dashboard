@@ -29,17 +29,23 @@
 </div>
 
 {% if app_comparison %}
+<h2>Portfolio</h2>
+<p class="sub">Current subscription state plus 90-day unit economics. Active trials stay outside MRR and paying shops.</p>
 <div class="table-card">
     <table>
-        <thead><tr><th>App</th><th class="num">MRR</th><th class="num">Paying</th><th class="num">Installs 30d</th><th class="num">Churn 30d</th></tr></thead>
+        <thead><tr><th>App</th><th class="num">MRR</th><th class="num">Installed</th><th class="num">Paying</th><th class="num">Paid share</th><th class="num">Monthly churn</th><th class="num">LTV</th><th class="num">Current trials</th><th class="num">Trial MRR</th></tr></thead>
         <tbody>
             {% for row in app_comparison %}
             <tr>
                 <td><a href="/?app={{ row.app.slug|urlencode }}">{{ row.app.name }}</a></td>
                 <td class="num">${{ "%.2f"|format(row.stats.active_mrr) }}</td>
+                <td class="num">{{ row.stats.installed }}</td>
                 <td class="num">{{ row.stats.paying }}</td>
-                <td class="num">{{ row.stats.installs_30d }}</td>
-                <td class="num">{{ row.stats.churn_30d }}%</td>
+                <td class="num">{% if row.paid_share is not none %}{{ row.paid_share }}%{% else %}&mdash;{% endif %}</td>
+                <td class="num{% if row.monthly_churn_pct > 10 %} money-down{% endif %}">{{ row.monthly_churn_pct }}%</td>
+                <td class="num">{% if row.ltv is not none %}${{ "%.0f"|format(row.ltv) }}{% else %}&mdash;{% endif %}</td>
+                <td class="num">{{ row.current_trials }}</td>
+                <td class="num">${{ "%.2f"|format(row.trial_mrr) }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -272,7 +278,7 @@
 
 <div class="table-card">
     <table>
-        <thead><tr><th>Latest activity</th><th>Shop</th><th>When (UTC)</th></tr></thead>
+        <thead><tr><th><a href="/activity{{ scope_qs }}">Latest activity</a></th><th>Shop</th><th>When (UTC)</th></tr></thead>
         <tbody>
             {% for e in events %}
             <tr>

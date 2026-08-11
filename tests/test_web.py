@@ -1,4 +1,3 @@
-import json
 import re
 from html import unescape
 
@@ -314,38 +313,6 @@ def test_trials_page_and_customer_detail_show_current_trial(db, test_app):
     assert "cancellation scheduled" in detail.text
 
 
-MD_PATHS = ["/index.md", "/customers.md", "/trials.md", "/actions.md", "/reports/funnel.md",
-            "/reports/churn.md", "/reports/retention.md", "/reports/traffic.md"]
-
-
-@pytest.mark.parametrize("path", MD_PATHS)
-def test_markdown_mirrors_render_with_frontmatter(db, path):
-    app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    r = c.get(path, auth=("tester", "suite-only-credential"))
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("text/markdown")
-    assert r.text.startswith("---\n")
-    assert "source_url:" in r.text and f"{path}'" in r.text
-    assert "## How to read this" in r.text
-
-
-@pytest.mark.parametrize("path", MD_PATHS)
-def test_markdown_mirrors_are_behind_the_same_auth_as_the_pages(db, path):
-    app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    r = c.get(path, follow_redirects=False)
-    assert r.status_code == 307
-    assert "source_url" not in r.text
-
-
-def test_unknown_markdown_slug_is_a_404_not_a_render(db):
-    app = create_app(conn_factory=lambda: db)
-    c = TestClient(app)
-    assert c.get("/etc-passwd.md", auth=("tester", "suite-only-credential")).status_code == 404
-    assert c.get("/reports/nope.md", auth=("tester", "suite-only-credential")).status_code == 404
-
-
 def test_login_is_a_page_that_explains_the_dashboard(db):
     """It used to bounce straight to Google, so nobody ever read what they
     were signing in to, and a disallowed account's first words were a 403."""
@@ -488,7 +455,7 @@ def test_footer_reports_the_render_time(db):
 
 def test_browser_404_renders_the_page_and_others_keep_json(db):
     """A browser gets the app's own chrome; anything parsing a response does
-    not, so the .md twins and curl see the JSON body they always saw."""
+    not, so API-style requests and curl see the JSON body they always saw."""
     # keep_open: this test makes more than one request, and the customer route
     # closes the connection it was handed.
     app = create_app(conn_factory=lambda: keep_open(db))
@@ -501,15 +468,11 @@ def test_browser_404_renders_the_page_and_others_keep_json(db):
     # Unescaped because Jinja autoescaping renders the apostrophe as &#39;.
     assert "That shop isn't on record" in unescape(missing_shop.text)
     assert "Back to Customers" in missing_shop.text
-    # No Copy MD: there is no markdown twin of a 404 to copy.
-    assert 'id="copy-md"' not in missing_shop.text
-
     generic = c.get("/no-such-route", auth=("tester", "suite-only-credential"), headers=accept_html)
     assert generic.status_code == 404
     assert "Page not found" in generic.text
 
-    # Default TestClient Accept is */*, which is what curl and the Copy MD
-    # fetch send.
+    # Default TestClient Accept is */*, which is what curl sends.
     as_json = c.get("/customers/nope.myshopify.com", auth=("tester", "suite-only-credential"))
     assert as_json.status_code == 404
     assert as_json.json() == {"detail": "No such shop"}
@@ -536,7 +499,7 @@ def test_non_404_errors_keep_their_shape(db):
     assert r.headers["location"] == "/auth/login"
 
 
-def test_customers_markdown_carries_shops_but_no_contact_details(db):
+def test_customers_page_carries_shops_but_no_contact_details(db):
     db.execute(
         "insert into shops (shop_gid, shop_name, shop_domain, owner_name, email, "
         "country, install_state) values "
@@ -545,18 +508,17 @@ def test_customers_markdown_carries_shops_but_no_contact_details(db):
     db.commit()
     app = create_app(conn_factory=lambda: db)
     c = TestClient(app)
-    text = c.get("/customers.md", auth=("tester", "suite-only-credential")).text
+    text = c.get("/customers", auth=("tester", "suite-only-credential")).text
     assert "Visible Shop" in text and "visible.myshopify.com" in text
-    # The page shows these; the exportable document must not.
     assert "jane@visible.example" not in text
     assert "Jane Merchant" not in text
 
 
-def test_actions_carries_no_contact_details_on_either_surface(db):
+def test_actions_carries_no_contact_details(db):
     """A vendor export's contact columns were every staff account on the shop, agencies
     and our own team included, so the review sheet was naming the wrong people
-    entirely. Neither the page nor its .md twin carries them now, and the shop
-    still identifies itself by name and domain."""
+    entirely. The page omits them and the shop still identifies itself by name
+    and domain."""
     db.execute(
         "insert into shops (shop_gid, shop_name, shop_domain, owner_name, email, "
         "install_state) values ('g1','Askable','askable.myshopify.com',"
@@ -567,11 +529,10 @@ def test_actions_carries_no_contact_details_on_either_surface(db):
     db.commit()
     c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
 
-    for path in ("/actions", "/actions.md"):
-        body = c.get(path, auth=("tester", "suite-only-credential")).text
-        assert "askable.myshopify.com" in body    # the shop still identifies itself
-        assert "Jane Merchant" not in body
-        assert "jane@askable.example" not in body
+    body = c.get("/actions", auth=("tester", "suite-only-credential")).text
+    assert "askable.myshopify.com" in body
+    assert "Jane Merchant" not in body
+    assert "jane@askable.example" not in body
 
 
 # --- POST /ingest/usage ----------------------------------------------------
@@ -747,7 +708,7 @@ def test_funnel_shows_an_honest_empty_state_before_any_usage_data(db):
     assert "Median time to first offer" not in r.text
 
 
-def test_customer_detail_page_and_its_markdown_twin(db):
+def test_customer_detail_page_uses_the_stable_shop_gid(db):
     """Customer identity is the stable shop GID, not a mutable domain."""
     db.execute("insert into shops (shop_gid, shop_domain, shop_name, install_state, "
                "owner_name, email) values ('g1', 'x.myshopify.com', 'Ex', 'installed', "
@@ -762,14 +723,6 @@ def test_customer_detail_page_and_its_markdown_twin(db):
     page = c.get("/customers/g1", auth=("tester", "suite-only-credential"))
     assert page.status_code == 200
     assert "Ex" in page.text
-
-    md = c.get("/customers/g1.md", auth=("tester", "suite-only-credential"))
-    assert md.status_code == 200
-    assert md.headers["content-type"].startswith("text/markdown")
-    assert "x.myshopify.com" in md.text
-    # Same no-contact-details rule as every other .md document here.
-    assert "Jo Smith" not in md.text
-    assert "jo@example.com" not in md.text
 
     assert c.get("/customers/nope", auth=("tester", "suite-only-credential")).status_code == 404
 
@@ -842,7 +795,89 @@ def test_customer_detail_needs_auth(db):
     assert r.status_code == 307
 
 
-# --- Definitions, deltas, and the FAQ ----------------------------------------
+def test_activity_page_filters_and_links_to_the_merchant_and_store(db):
+    db.execute(
+        "insert into shops (shop_gid, shop_name, shop_domain, install_state) "
+        "values ('activity-shop', 'Activity Shop', 'activity.myshopify.com', 'installed')"
+    )
+    db.execute(
+        """insert into app_events
+               (platform_event_id, type, occurred_at, shop_gid, net_change)
+           values ('activity-paid', 'subscribed', '2026-08-10T10:00:00Z',
+                   'activity-shop', 19.00),
+                  ('activity-install', 'installed', '2026-08-11T10:00:00Z',
+                   'activity-shop', null)"""
+    )
+    db.commit()
+
+    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    page = c.get(
+        "/activity?app=test-app&on=2026-08-10&event_type=subscribed",
+        auth=("tester", "suite-only-credential"),
+    )
+    assert page.status_code == 200
+    assert "Activity Shop" in page.text
+    assert "Subscribed" in page.text
+    assert "+$19.00" in page.text
+    assert 'class="pill installed"' not in page.text
+    assert 'href="/customers/activity-shop?app=test-app"' in page.text
+    assert 'href="https://activity.myshopify.com"' in page.text
+    assert 'href="/activity?app=test-app"' in page.text
+
+
+def test_activity_page_rejects_invalid_filters_without_a_422(db):
+    c = TestClient(create_app(conn_factory=lambda: keep_open(db)))
+    page = c.get(
+        "/activity?on=not-a-date&event_type=not-a-real-event&page=banana",
+        auth=("tester", "suite-only-credential"),
+    )
+    assert page.status_code == 200
+
+
+def test_all_apps_overview_shows_portfolio_unit_economics_and_live_trials(
+    db, app_factory, test_app, monkeypatch
+):
+    monkeypatch.setenv("TOKEN_2", "test-partner-token-2")
+    beta = app_factory(slug="beta", name="Beta")
+    db.execute(
+        """insert into shops
+               (app_id, shop_gid, shop_name, install_state, installed_at)
+           values (%s, 'paid', 'Paid Shop', 'installed', now() - interval '300 days'),
+                  (%s, 'free', 'Free Shop', 'installed', now() - interval '300 days'),
+                  (%s, 'trial', 'Trial Shop', 'installed', now() - interval '2 days')""",
+        (test_app.id, test_app.id, beta.id),
+    )
+    db.execute(
+        """insert into subscriptions
+               (app_id, id, shop_gid, monthly_amount, converted_at)
+           values (%s, 'paid-sub', 'paid', 20.00, now() - interval '250 days'),
+                  (%s, 'trial-sub', 'trial', 30.00, now() - interval '2 days')""",
+        (test_app.id, beta.id),
+    )
+    db.execute(
+        """insert into active_subscriptions
+               (app_id, shop_gid, legacy_subscription_id, trial_ends_at, observed_at)
+           values (%s, 'trial', 'trial-sub', now() + interval '5 days', now())""",
+        (beta.id,),
+    )
+    db.commit()
+
+    page = _signed_in().get("/")
+    body = unescape(page.text)
+    assert page.status_code == 200
+    for heading in (
+        "Installed", "Paying", "Paid share", "Monthly churn", "LTV",
+        "Current trials", "Trial MRR",
+    ):
+        assert heading in body
+    assert "Paid Shop" not in body
+    assert "50%" in body
+    assert "Beta" in body
+    assert "$30.00" in body
+    assert "Trial conversion" not in body
+
+
+# --- Definitions and deltas ---------------------------------------------------
 
 def _signed_in():
     """A client with a real session cookie. The annotation write path needs one
@@ -874,24 +909,6 @@ def test_overview_compares_every_headline_tile(db):
     assert r.text.count('class="delta-num"') == 6
     assert "vs 30 days ago" in r.text
     assert "vs prior 30 days" in r.text
-
-
-def test_faq_renders_and_has_a_markdown_twin(db):
-    from app_dashboard.faq import FAQ
-    c = _signed_in()
-    page = c.get("/faq")
-    assert page.status_code == 200
-    twin = c.get("/faq.md")
-    assert twin.status_code == 200
-    assert twin.headers["content-type"].startswith("text/markdown")
-    for question, paragraphs in FAQ:
-        assert question in unescape(page.text)
-        assert question in twin.text
-        assert paragraphs[0] in twin.text
-
-
-def test_the_tips_panel_links_to_the_faq(db):
-    assert 'href="/faq"' in _signed_in().get("/").text
 
 
 # --- Annotations --------------------------------------------------------------
@@ -972,26 +989,13 @@ def test_an_anonymous_post_never_reaches_the_database(db):
 
 
 def test_a_note_cannot_inject_markup_into_the_page(db):
-    """The first route that stores something a person typed, so the two places
-    it comes back out both get checked.
-
-    The page is Jinja-autoescaped. The markdown twin is not, and does not need
-    to be: it json-encodes the note into a fenced block, and is served as
-    text/markdown with nosniff, so a browser never parses it as HTML. That is
-    the actual protection, so that is what is asserted -- testing for escaping
-    the twin does not do would have meant weakening the twin to satisfy a test.
-    """
+    """The first route that stores user text must return it HTML-escaped."""
     c = _signed_in()
     c.post("/annotations", data={"on_date": "2026-03-01",
                                  "note": "<script>alert(1)</script>"})
     page = c.get("/")
     assert "<script>alert(1)</script>" not in page.text
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page.text
-
-    twin = c.get("/index.md")
-    assert twin.headers["content-type"].startswith("text/markdown")
-    assert twin.headers["x-content-type-options"] == "nosniff"
-
 
 def _only_note_id():
     from app_dashboard import annotations as anno
@@ -1083,38 +1087,13 @@ def test_the_delete_control_is_hidden_from_a_reader_who_cannot_use_it(db):
     assert 'class="anno-del"' in _signed_in().get("/?app=test-app").text
 
 
-# --- JSON export --------------------------------------------------------------
-
-def test_the_export_downloads_as_a_dated_file(db):
-    r = _signed_in().get("/export.json")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("application/json")
-    assert r.headers["content-disposition"].startswith("attachment; filename=")
-    assert ".json" in r.headers["content-disposition"]
-    # Merchant-typed strings ride in this file, so the browser must never be
-    # allowed to guess it is anything but JSON.
-    assert r.headers["x-content-type-options"] == "nosniff"
-    assert json.loads(r.text)["meta"]["windows"]
-
-
-def test_the_download_button_is_on_the_overview_and_nowhere_else(db):
-    """One file covers the whole dashboard, so repeating the control on seven
-    pages would offer seven ways to fetch the identical bytes."""
+def test_exports_faq_and_tips_are_removed(db):
     c = _signed_in()
-    assert 'href="/export.json"' in c.get("/").text
-    for path in ("/customers", "/trials", "/actions", "/reports/funnel", "/reports/churn",
-                 "/reports/retention", "/reports/traffic", "/faq"):
-        assert 'href="/export.json"' not in c.get(path).text, path
-        # Copy MD stays everywhere: each page has its own twin.
-        assert 'id="copy-md"' in c.get(path).text, path
-
-
-def test_the_export_needs_credentials(db):
-    from app_dashboard.db import connect
-    anon = TestClient(create_app(conn_factory=connect))
-    # A GET keeps the 307; only writes were moved to 303.
-    assert anon.get("/export.json",
-                    follow_redirects=False).status_code in (307, 401, 403)
+    page = c.get("/")
+    for label in ("Copy MD", "Download JSON", "Tips"):
+        assert label not in page.text
+    for path in ("/export.json", "/index.md", "/customers.md", "/faq"):
+        assert c.get(path).status_code == 404
 
 
 # --- Window controls ----------------------------------------------------------
@@ -1157,17 +1136,6 @@ def test_the_window_is_stated_on_the_page(db):
     _ga4_row("2026-08-01")
     assert "Last 180 days" in c.get("/reports/traffic?days=180&app=test-app").text
     assert "Last 90 days" in c.get("/reports/traffic?days=7&app=test-app").text
-
-
-def test_the_markdown_twin_honours_the_same_window(db):
-    """A twin that ignored ?days= would quietly stop being a mirror of what is
-    on screen."""
-    c = _signed_in()
-    assert "MRR by month, last 24 months" in c.get("/index.md?months=24").text
-    assert "MRR by month, last 12 months" in c.get("/index.md?months=banana").text
-    assert "last 180 days" in c.get(
-        "/reports/traffic.md?days=180&app=test-app"
-    ).text
 
 
 def test_the_headline_tiles_ignore_the_range(db):

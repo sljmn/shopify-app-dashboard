@@ -3,8 +3,7 @@
     from child blocks. METRICS, COMPARE_LABEL and signed() are environment
     globals, so an import without context still sees them. -#}
 
-{#- The info affordance beside a number. A <details> for the same reasons the
-    Tips and account menus are: it opens with no JavaScript, it is
+{#- The info affordance beside a number. A <details> opens with no JavaScript, is
     keyboard-operable for free, and there is no state it can get stuck in.
     Everything it shows comes from app_dashboard.metrics, so a tile physically cannot
     display a number it has no definition for -- METRICS[key] would raise. -#}

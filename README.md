@@ -31,7 +31,8 @@ revenue figure appears anywhere in this repository, in the screenshots, or in th
 ## What it gives you
 
 - **Overview** with prior-period comparison on every tile, an MRR movements waterfall
-  (new / expansion / contraction / churn), and an ops health strip.
+  (new / expansion / contraction / churn), portfolio unit economics, and an ops health strip.
+- **Activity**, filterable by app, date, and event type, with merchant links and MRR deltas.
 - **Customers**, filterable and paginated, plus a per-merchant detail page with the full lifecycle
   timeline, payment history, and product usage.
 - **Churn** with Shopify's uninstall reasons normalised across languages, and free-text verbatims.
@@ -40,7 +41,6 @@ revenue figure appears anywhere in this repository, in the screenshots, or in th
 - **Actions**: three call sheets (merchants worth asking for a review, monthly subscribers worth
   pitching the annual plan, recent installs that have not subscribed).
 - **Traffic** from GA4: listing sessions, Add App clicks, installs, by channel, source and country.
-- **A `.md` twin of every page** with a Copy button, and `/export.json` for the whole thing at once.
 - **Slack** stale-sync alerts and a weekly digest.
 
 ## Install
@@ -178,7 +178,6 @@ out the cookie it already issued.
 | [docs/partner-api-notes.md](docs/partner-api-notes.md) | What the Partner API actually does. Field notes, each one paid for. |
 | [docs/architecture.md](docs/architecture.md) | The pipeline, which table is the truth for which number, and the traps. Read before changing `derive.py` or `stats.py`. |
 | [docs/deploy.md](docs/deploy.md) | Secrets, deploy, verification, forcing a replay, backfills. |
-| [docs/exports.md](docs/exports.md) | The `.md` twin of every page, and `/export.json`. |
 | [docs/usage-events-integration.md](docs/usage-events-integration.md) | The per-app usage ingest contract. Hand this to whoever writes your app. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Running the tests, and what is likely to be merged. |
 

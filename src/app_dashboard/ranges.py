@@ -1,9 +1,8 @@
 """Every window a reader can pick, and the one function that validates them.
 
-Its own module because two callers need the same answer: the HTML page and its
-markdown twin both read the window off the query string, and a `?days=180` that
-the page honours and the `.md` ignores would make the twin quietly stop being a
-mirror. One allowlist, imported by both.
+Its own module so every HTML report validates time windows the same way. One
+allowlist prevents two pages from silently interpreting the same query value
+differently.
 
 A range control is a number from the query string reaching a query. It is
 validated against a fixed set and falls back to the default rather than being

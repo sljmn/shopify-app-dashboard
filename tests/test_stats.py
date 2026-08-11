@@ -1,7 +1,7 @@
 """stats.py computes the numbers on the dashboard, so it gets direct coverage
 rather than being exercised only through page renders against an empty DB."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -14,6 +14,7 @@ from app_dashboard.stats import (
     funnel_stats,
     churn_composition,
     annual_upgrade_candidates,
+    activity_feed,
     churn_rows,
     install_reconciliation,
     installed_at_time,
@@ -710,6 +711,46 @@ def test_all_app_financial_and_lifecycle_metrics_equal_per_app_sums(
     assert [row["count"] for row in all_funnel] == [
         a["count"] + b["count"] for a, b in zip(alpha_funnel, beta_funnel)
     ]
+
+
+def test_activity_feed_is_scoped_filtered_ordered_and_paginated(db, app_factory):
+    beta = app_factory(slug="beta", name="Beta")
+    for app_id, gid, name, domain in (
+        (APP.id, "alpha-shop", "Alpha Shop", "alpha.myshopify.com"),
+        (beta.id, "beta-shop", "Beta Shop", "beta.myshopify.com"),
+    ):
+        db.execute(
+            "insert into shops (app_id, shop_gid, shop_name, shop_domain, install_state) "
+            "values (%s, %s, %s, %s, 'installed')",
+            (app_id, gid, name, domain),
+        )
+    for app_id, event_id, gid, kind, at, delta in (
+        (APP.id, "alpha-old", "alpha-shop", "installed", "2026-08-10T08:00:00Z", None),
+        (APP.id, "alpha-new", "alpha-shop", "subscribed", "2026-08-10T10:00:00Z", "19.00"),
+        (APP.id, "alpha-other-day", "alpha-shop", "unsubscribed", "2026-08-09T10:00:00Z", "-19.00"),
+        (beta.id, "beta-new", "beta-shop", "subscribed", "2026-08-10T11:00:00Z", "29.00"),
+    ):
+        db.execute(
+            """insert into app_events
+                   (app_id, platform_event_id, type, occurred_at, shop_gid, net_change)
+               values (%s, %s, %s, %s, %s, %s)""",
+            (app_id, event_id, kind, at, gid, delta),
+        )
+    db.commit()
+
+    combined = activity_feed(db, on=date(2026, 8, 10), event_type="subscribed")
+    assert combined["total"] == 2
+    assert [row["app_slug"] for row in combined["rows"]] == ["beta", "test-app"]
+    assert combined["rows"][1]["net_change"] == Decimal("19.00")
+    assert combined["rows"][1]["shop_domain"] == "alpha.myshopify.com"
+
+    scoped = activity_feed(
+        db, scope=Scope.for_app(APP.id), on=date(2026, 8, 10), per_page=1, page=2
+    )
+    assert scoped["total"] == 2
+    assert scoped["pages"] == 2
+    assert scoped["page"] == 2
+    assert scoped["rows"][0]["type"] == "installed"
 
 
 # --- Comparison to the previous period ---------------------------------------
