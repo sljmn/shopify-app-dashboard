@@ -65,6 +65,9 @@ class ListingChangeRow:
     field: str
     before_value: object
     after_value: object
+    improved: int
+    declined: int
+    unchanged: int
 
 
 @dataclass(frozen=True)
@@ -175,6 +178,28 @@ def portfolio_report(conn, apps: list[AppConfig], period) -> tuple[PortfolioRow,
         (start, end),
     ).fetchall()
     totals = {row[0]: row[1:] for row in rows}
+    previous_start, previous_end = _bounds(period, True)
+    movements = dict(conn.execute(
+        """
+        with current_positions as (
+            select distinct on (app_id,keyword) app_id,keyword,latest_position
+            from aso_keyword_daily
+            where date >= %s and date <= %s and latest_position is not null
+            order by app_id,keyword,date desc
+        ), previous_positions as (
+            select distinct on (app_id,keyword) app_id,keyword,latest_position
+            from aso_keyword_daily
+            where date >= %s and date <= %s and latest_position is not null
+            order by app_id,keyword,date desc
+        ), changes as (
+            select c.app_id, p.latest_position-c.latest_position movement
+            from current_positions c join previous_positions p using (app_id,keyword)
+        )
+        select app_id,(array_agg(movement order by abs(movement) desc))[1]
+        from changes group by app_id
+        """,
+        (start, end, previous_start, previous_end),
+    ).fetchall())
     statuses = dict(conn.execute(
         "select app_id, status from aso_source_capabilities where source='aso_keywords'"
     ).fetchall())
@@ -187,7 +212,7 @@ def portfolio_report(conn, apps: list[AppConfig], period) -> tuple[PortfolioRow,
         result.append(PortfolioRow(
             app=app, status=status, users=users, install_clicks=clicks,
             conversion_pct=round(100 * clicks / users, 1) if users else 0.0,
-            top_keyword=top, largest_movement=None,
+            top_keyword=top, largest_movement=movements.get(app.id),
         ))
     return tuple(result)
 
@@ -242,9 +267,30 @@ def listing_history(conn, app_id: int, locale: str | None = None):
         extra = " and locale=%s"
         params.append(locale)
     rows = conn.execute(
-        f"""select changed_at,locale,field,before_value,after_value
-            from aso_listing_changes where app_id=%s {extra}
-            order by changed_at desc,id desc""",
+        f"""select c.changed_at,c.locale,c.field,c.before_value,c.after_value,
+                   coalesce(m.improved,0),coalesce(m.declined,0),coalesce(m.unchanged,0)
+            from aso_listing_changes c
+            left join lateral (
+                with before_positions as (
+                    select keyword,avg(average_position) position
+                    from aso_keyword_daily
+                    where app_id=c.app_id
+                      and date >= c.changed_at::date-7 and date < c.changed_at::date
+                      and average_position is not null group by keyword
+                ), after_positions as (
+                    select keyword,avg(average_position) position
+                    from aso_keyword_daily
+                    where app_id=c.app_id
+                      and date >= c.changed_at::date and date < c.changed_at::date+7
+                      and average_position is not null group by keyword
+                )
+                select count(*) filter (where a.position < b.position)::int improved,
+                       count(*) filter (where a.position > b.position)::int declined,
+                       count(*) filter (where a.position = b.position)::int unchanged
+                from before_positions b join after_positions a using (keyword)
+            ) m on true
+            where c.app_id=%s {extra}
+            order by c.changed_at desc,c.id desc""",
         params,
     ).fetchall()
     return tuple(ListingChangeRow(*row) for row in rows)

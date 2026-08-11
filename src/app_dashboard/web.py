@@ -40,6 +40,7 @@ from app_dashboard.aso import (
     keyword_report,
     keyword_research,
     listing_history,
+    position_history,
     portfolio_report,
 )
 from app_dashboard.catalog import AppConfig, list_apps
@@ -1045,6 +1046,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         device: str | None = None,
         source: str | None = None,
         keyword: str | None = None,
+        focus: str | None = None,
         user: str = Depends(verify_creds),
     ):
         selection = resolve_period(period, start, end)
@@ -1078,11 +1080,27 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             research = (
                 keyword_research(conn, selected_app.id, keyword) if selected_app else ()
             )
-            capabilities = dict(conn.execute(
-                """select source, status from aso_source_capabilities
-                   where app_id=%s""",
+            history_rows = (
+                position_history(conn, selected_app.id, focus, selection, facets)
+                if selected_app and focus else ()
+            )
+            capability_rows = conn.execute(
+                """select source, status, checked_at, error_code
+                   from aso_source_capabilities where app_id=%s""",
                 (selected_app.id,),
-            ).fetchall()) if selected_app else {}
+            ).fetchall() if selected_app else []
+            capabilities = {
+                row[0]: {"status": row[1], "checked_at": row[2], "error": row[3]}
+                for row in capability_rows
+            }
+            research_state = conn.execute(
+                "select last_run_at from operations_state where source='aso_popular_keywords'"
+            ).fetchone()
+            capabilities["aso_research"] = {
+                "status": "ready" if research_state else "pending",
+                "checked_at": research_state[0] if research_state else None,
+                "error": None,
+            }
             facet_rows = conn.execute(
                 """select distinct locale, country, device, search_type
                    from aso_keyword_daily where app_id=%s""",
@@ -1126,6 +1144,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "source_rows": sources, "view": safe_view, "facets": facets,
                 "listings": listings, "listing_changes": listing_changes,
                 "research_rows": research,
+                "history_rows": history_rows, "focus": focus or "",
                 "facet_options": facet_options, "capabilities": capabilities,
                 "tab_url": lambda tab: href(view=tab),
             },

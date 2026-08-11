@@ -59,6 +59,46 @@ Traffic report asks for one selected app and never blends listing properties.
 `GA4_EARLIEST_DATA` is the shared lower bound for first backfills. `listing_locales` defaults to
 `[en]` and accepts language codes such as `de` or language-region codes such as `pt-BR`.
 
+### Owned ASO setup
+
+1. Create one Google Cloud service account and a JSON key for it.
+2. In every GA4 property used by a Shopify App Store listing, open **Admin > Property access
+   management** and grant the service-account email the read-only **Viewer** role.
+3. Store the complete JSON as one deployment secret, for example
+   `SHARED_GA4_CREDENTIALS_JSON`. Do not put the JSON in `config/apps.yml`.
+4. Add the verified numeric property ID to each app and reuse that environment-variable name:
+
+```yaml
+listing_locales: [en, de, nl]
+ga4:
+  property_id: "123456789"
+  credentials_env: SHARED_GA4_CREDENTIALS_JSON
+```
+
+5. Deploy, open the ASO page, and run **Fetch all data again**. A full refresh asks GA4 only for
+   history still inside the property's retention window. The daily job rewrites the latest seven
+   days because GA4 can process recent rows late.
+
+Mantle queries GA4 metadata first and stores separate compatibility states for keyword reporting
+and merchant attribution. `ready`, `partial`, `unsupported`, and `failed` have different meanings;
+an empty successful report is not treated as an API failure. The exact Shopify dimensions depend
+on what that property actually receives. Mantle does not synthesize rankings or attribution when
+the dimensions are absent.
+
+The Partner API remains authoritative for installs and uninstalls. GA4 attribution can be missing
+because of consent, blockers, retention, or an absent shop-domain dimension. Compare attributed
+install rows against Partner installs to measure coverage; do not expect them to reconcile to
+100%.
+
+For Dokku, set the shared secret without echoing it into shell history, then redeploy:
+
+```bash
+dokku config:set --no-restart mantle SHARED_GA4_CREDENTIALS_JSON="$(cat service-account.json)"
+git push dokku-mantle HEAD:master
+```
+
+Delete `service-account.json` from the workstation after the secret is set. Never commit it.
+
 ## Scope semantics
 
 No `?app=` means All apps. Lifecycle and financial figures add app installations, so one shop

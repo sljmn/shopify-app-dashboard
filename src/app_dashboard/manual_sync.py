@@ -22,6 +22,7 @@ from app_dashboard.aso_ga4 import (
 from app_dashboard.partner_api import PartnerClient
 from app_dashboard.pipeline import run_sync, sync_transactions
 from app_dashboard.listing_intelligence import sync_listing
+from app_dashboard.listing_intelligence import research_seeds, sync_popular_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,8 @@ class ManualSyncCoordinator:
         if not apps:
             raise ValueError("No apps selected")
         total_steps = sum(len(self._sources(app)) for app in apps)
+        if self._source_runner is None:
+            total_steps += 1
         with self._lock:
             if self._status["state"] == "running":
                 raise SyncAlreadyRunning()
@@ -137,6 +140,24 @@ class ManualSyncCoordinator:
                 finally:
                     with self._lock:
                         self._status["completed_steps"] += 1
+        if self._source_runner is None:
+            with self._lock:
+                self._status["current_app"] = None
+                self._status["current_source"] = "aso_research"
+            conn = self._conn_factory()
+            try:
+                sync_popular_keywords(conn, research_seeds(conn))
+            except Exception as exc:
+                logger.exception("manual ASO research sync failed")
+                with self._lock:
+                    self._status["errors"].append({
+                        "app": None, "source": "aso_research",
+                        "error": type(exc).__name__,
+                    })
+            finally:
+                conn.close()
+                with self._lock:
+                    self._status["completed_steps"] += 1
         with self._lock:
             self._status["state"] = (
                 "failed" if self._status["errors"] else "complete"

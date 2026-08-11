@@ -43,6 +43,9 @@ revenue figure appears anywhere in this repository, in the screenshots, or in th
 - **Actions**: three call sheets (merchants worth asking for a review, monthly subscribers worth
   pitching the annual plan, recent installs that have not subscribed).
 - **Traffic** from GA4: listing sessions, Add App clicks, installs, by channel, source and country.
+- **ASO intelligence** owned in Postgres: verified GA4 keyword positions and install attribution,
+  localized App Store listing history, public autocomplete research, merchant source filters, and
+  CSV export. It does not call Rankbase.
 - **Slack** stale-sync alerts and a weekly digest.
 
 ## Install
@@ -161,6 +164,18 @@ GA4 and reconciles listing installs against the installs in the events feed, whi
 agree.
 
 ![The Traffic page](docs/screenshots/traffic.png)
+
+### ASO intelligence
+
+The ASO page keeps source data locally so reports remain fast and reproducible. Each GA4 property
+is inspected before import; missing keyword, position, or shop dimensions render as unsupported or
+partial rather than as zero. Shopify Partner lifecycle events remain the truth for installs. GA4
+only enriches those installs with discovery data, and a missing match remains unknown rather than
+being relabelled Direct.
+
+Public listing and autocomplete collectors run at most daily with bounded retries. They retain the
+last valid listing snapshot if Shopify is temporarily unavailable. Community monitoring is not
+part of this feature.
 
 ### Customers, and the sign-in page
 

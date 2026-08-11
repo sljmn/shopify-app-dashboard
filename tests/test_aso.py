@@ -6,6 +6,7 @@ from app_dashboard.aso import (
     keyword_research,
     listing_history,
     opportunity_score,
+    position_history,
     portfolio_report,
 )
 from psycopg.types.json import Jsonb
@@ -51,9 +52,17 @@ def test_opportunity_score_is_bounded_and_transparent():
 def test_portfolio_keeps_apps_without_ga4_rows(db, test_app, app_factory):
     other = app_factory(slug="other", name="Other")
     _seed(db, test_app.id, "2026-08-01", "vat exemption", 20, 4, Decimal("8"))
+    _seed(db, test_app.id, "2026-07-12", "vat exemption", 10, 1, Decimal("12"))
     rows = portfolio_report(db, [test_app, other], _period())
     assert {row.app.slug for row in rows} == {"test-app", "other"}
+    assert next(row for row in rows if row.app == test_app).largest_movement == 4
     assert next(row for row in rows if row.app == other).status == "not_configured"
+
+
+def test_position_history_returns_daily_weighted_positions(db, test_app):
+    _seed(db, test_app.id, "2026-08-01", "vat exemption", 20, 4, Decimal("8"))
+    rows = position_history(db, test_app.id, "vat exemption", _period())
+    assert rows == [(datetime(2026, 8, 1).date(), Decimal("8.0000000000000000"))]
 
 
 def test_listing_history_and_research_cross_reference_owned_data(db, test_app):
