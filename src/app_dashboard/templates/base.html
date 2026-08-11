@@ -451,6 +451,35 @@
             .app-picker-options { max-height: calc(78dvh - 122px); padding: 2px 12px 16px; }
             .app-picker-option { min-height: 48px; font-size: 15px; }
         }
+        @media (max-width: 620px) {
+            .sidebar { gap: 4px 10px; padding: 9px 12px 10px; }
+            .side-top { min-width: 0; }
+            .wordmark {
+                align-items: center; padding-inline: 4px; font-size: 16px;
+            }
+            .wordmark .confetti { padding-top: 0; }
+            .wordmark [data-wordmark-secondary],
+            .acct [data-account-identity], .acct .caret { display: none; }
+            .acct summary { padding: 5px; }
+            .acct .avatar { width: 30px; height: 30px; }
+            .app-selector { padding-top: 0; }
+            .app-picker-trigger { height: 38px; }
+            .app-picker-dialog {
+                inset: max(8px, env(safe-area-inset-top)) 0 0;
+                height: calc(100dvh - max(8px, env(safe-area-inset-top)));
+                max-height: none; border-radius: 14px 14px 0 0;
+            }
+            .app-picker-dialog[open] {
+                display: grid;
+                grid-template-rows: auto auto minmax(0, 1fr) auto;
+            }
+            .app-picker-head { padding-top: 12px; }
+            .app-picker-options {
+                min-height: 0; max-height: none; overflow-y: auto;
+                align-content: start; grid-auto-rows: max-content;
+                padding-bottom: max(16px, env(safe-area-inset-bottom));
+            }
+        }
         main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 48px; }
         /* One vertical rhythm for the whole page: every direct child of main
            sits 16px below the previous one, exactly matching the 16px grid
@@ -1236,7 +1265,7 @@
         <div class="side-top">
             <a class="wordmark" href="/{{ scope_qs }}">
                 <span class="confetti"><i></i><i></i><i></i></span>
-                <span>{{ APP_NAME }} <small>Analytics</small></span>
+                <span>{{ APP_NAME }} <small data-wordmark-secondary>Analytics</small></span>
             </a>
             <button type="button" class="hamburger" id="nav-toggle"
                     aria-controls="sidenav" aria-expanded="false" aria-label="Menu">
@@ -1284,6 +1313,7 @@
                                placeholder="Search apps" autocomplete="off" data-app-picker-search>
                     </div>
                     <div class="app-picker-options" role="listbox" aria-label="Apps"
+                         data-app-picker-body
                          data-app-picker-options>
                         <button type="button" class="app-picker-option" role="option"
                                 aria-selected="{{ 'true' if not selected_app else 'false' }}"
@@ -1325,7 +1355,7 @@
         <details class="acct">
             <summary>
                 <span class="avatar" aria-hidden="true">{{ (user or "?")[0] }}</span>
-                <span class="who">{{ user or "Signed in" }}</span>
+                <span class="who" data-account-identity>{{ user or "Signed in" }}</span>
                 <svg class="caret" viewBox="0 0 16 16" width="12" height="12" fill="none"
                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
                      aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg>

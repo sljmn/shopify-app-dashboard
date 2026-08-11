@@ -105,7 +105,8 @@ def integration_rows(
                a.listing_status_reason, a.ga4_property_id,
                a.ga4_credentials_env, a.tracking_status, a.active,
                a.archived_at, a.updated_at, o.id, o.name, o.partner_org_id,
-               o.token_env, o.archived_at
+               o.token_env, o.archived_at,
+               exists(select 1 from ga4_daily g where g.app_id=a.id) as has_ga4_data
         from apps a
         join organizations o on o.id = a.organization_id
         order by a.archived_at nulls first, o.name, a.name
@@ -113,13 +114,20 @@ def integration_rows(
     ).fetchall()
     result = []
     for row in rows:
+        tracking_display_status = (
+            "awaiting_data"
+            if row[11] == "connected" and not row[20]
+            else row[11]
+        )
         result.append({
             "id": row[0], "slug": row[1], "name": row[2],
             "partner_app_id": row[3], "lifecycle_status": row[4],
             "listing_url": row[5], "listing_locales": tuple(row[6]),
             "listing_status": row[7], "listing_status_reason": row[8],
             "ga4_property_id": row[9], "ga4_credentials_env": row[10],
-            "tracking_status": row[11], "active": row[12],
+            "tracking_status": row[11],
+            "tracking_display_status": tracking_display_status,
+            "active": row[12],
             "archived": row[13] is not None, "updated_at": row[14],
             "organization_id": row[15], "organization_name": row[16],
             "partner_org_id": row[17], "partner_token_env": row[18],

@@ -134,6 +134,16 @@ def test_integration_management_is_authenticated_and_never_renders_secrets(db):
     assert "Management" in page.text
 
 
+def test_integration_management_labels_connected_tracking_without_data_as_waiting(db):
+    db.execute("update apps set tracking_status='connected'")
+
+    page = dashboard_client(
+        create_app(conn_factory=lambda: keep_open(db))
+    ).get("/management/integrations")
+
+    assert "Awaiting first data" in page.text
+
+
 def test_management_can_create_a_draft_and_runbook_is_available(db):
     client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     created = client.post(
@@ -321,6 +331,10 @@ def test_selector_lists_every_app_and_unknown_slugs_404(
     assert "Test App" in combined.text and other.name in combined.text
     assert 'data-app-picker' in combined.text
     assert 'data-app-picker-search' in combined.text
+    assert 'data-wordmark-secondary' in combined.text
+    assert 'data-account-identity' in combined.text
+    assert 'data-app-picker-body' in combined.text
+    assert "grid-auto-rows: max-content" in combined.text
     assert 'data-app-value="other-app"' in combined.text
     assert 'data-app-search-text="other app other-app"' in combined.text
     assert 'class="app-selector-fallback"' in combined.text

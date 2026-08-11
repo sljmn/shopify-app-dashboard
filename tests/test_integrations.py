@@ -85,6 +85,23 @@ def test_active_app_with_missing_partner_secret_is_not_scheduled(db, test_app):
     assert row["partner_token_present"] is False
 
 
+def test_connected_tracking_waits_for_first_ga4_data(db, test_app):
+    db.execute(
+        "update apps set tracking_status='connected' where id=%s", (test_app.id,)
+    )
+
+    assert integration_rows(db, {})[0]["tracking_display_status"] == "awaiting_data"
+
+    db.execute(
+        """insert into ga4_daily
+               (app_id, date, dimension, value, sessions, users)
+           values (%s, '2026-08-12', 'total', 'total', 1, 1)""",
+        (test_app.id,),
+    )
+
+    assert integration_rows(db, {})[0]["tracking_display_status"] == "connected"
+
+
 @pytest.mark.parametrize("field,value,message", [
     ("partner_app_id", "987", "Partner app GID"),
     ("ga4_property_id", "G-ABC", "GA4 property ID"),

@@ -43,7 +43,7 @@
             <td data-label="Partner">{{ row.organization_name }}<small class="status {{ 'ok' if row.partner_token_present else 'bad' }}">Token {{ 'present' if row.partner_token_present else 'missing' }}</small></td>
             <td data-label="Listing"><span class="status neutral">{{ row.listing_status|replace('_', ' ') }}</span><small>{{ row.listing_locales|join(', ') }}</small></td>
             <td data-label="GA4">{{ row.ga4_property_id or 'Not set' }}<small class="status {{ 'ok' if row.ga4_credentials_present else 'bad' }}">Credentials {{ 'present' if row.ga4_credentials_present else 'missing' }}</small></td>
-            <td data-label="Tracking"><span class="status {{ 'ok' if row.tracking_status == 'connected' else 'neutral' }}">{{ row.tracking_status }}</span></td>
+            <td data-label="Tracking"><span class="status {{ 'ok' if row.tracking_display_status == 'connected' else 'neutral' }}">{{ 'Awaiting first data' if row.tracking_display_status == 'awaiting_data' else row.tracking_display_status|replace('_', ' ')|title }}</span></td>
             <td data-label="Status"><span class="status {{ 'ok' if row.lifecycle_status == 'active' else 'neutral' }}">{{ 'archived' if row.archived else row.lifecycle_status }}</span></td>
             <td><a href="/management/apps/{{ row.id }}/edit">Edit</a></td>
         </tr>
