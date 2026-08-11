@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Callable
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from google.analytics.data_v1beta.types import (
     DateRange,
@@ -37,6 +37,7 @@ ASO_LOOKBACK_DAYS = 7
 PAGE_SIZE = 100_000
 CAPABILITY_SOURCES = ("aso_keywords", "aso_attribution")
 FIELD_CANDIDATES = {
+    "page_location": ("pageLocation",),
     "keyword": ("searchTerm", "customEvent:search_term", "customEvent:keyword"),
     "position": ("customEvent:position", "customEvent:search_position"),
     "shop_domain": ("customEvent:shop_url", "customEvent:shop_domain"),
@@ -79,16 +80,22 @@ def discover_capabilities(client, property_id: str) -> CapabilityReport:
         for logical, candidates in FIELD_CANDIDATES.items()
         if any(candidate in dimensions for candidate in candidates)
     }
-    keyword_required = ("keyword", "position")
+    if "page_location" in fields:
+        keyword_status = "ready"
+        keyword_missing = ()
+    else:
+        keyword_required = ("keyword", "position")
+        keyword_status = _status(fields, keyword_required)
+        keyword_missing = tuple(key for key in keyword_required if key not in fields)
     attribution_required = ("shop_domain", "source")
     return CapabilityReport(
         statuses={
-            "aso_keywords": _status(fields, keyword_required),
+            "aso_keywords": keyword_status,
             "aso_attribution": _status(fields, attribution_required),
         },
         fields=fields,
         missing={
-            "aso_keywords": tuple(key for key in keyword_required if key not in fields),
+            "aso_keywords": keyword_missing,
             "aso_attribution": tuple(
                 key for key in attribution_required if key not in fields
             ),
@@ -130,7 +137,10 @@ def sync_capabilities(conn, client, app: AppConfig) -> CapabilityReport:
             for key, value in report.fields.items()
             if key
             in (
-                {"keyword", "position", "locale", "country", "device", "search_type"}
+                {
+                    "page_location", "keyword", "position", "locale", "country",
+                    "device", "search_type",
+                }
                 if source == "aso_keywords"
                 else {
                     "keyword", "shop_domain", "shop_id", "source", "source_type",
@@ -187,11 +197,15 @@ def fetch_keyword_rows(
     end: date,
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[dict]:
-    if "keyword" not in fields:
+    url_mode = "page_location" in fields
+    if not url_mode and "keyword" not in fields:
         raise UnsupportedAsoSource("keyword dimension is unavailable")
-    selected = _dimensions(
-        fields, ("keyword", "position", "locale", "country", "device", "search_type")
+    names = (
+        ("page_location", "locale", "country", "device")
+        if url_mode
+        else ("keyword", "position", "locale", "country", "device", "search_type")
     )
+    selected = _dimensions(fields, names)
     ga_dimensions = [Dimension(name="date"), *[Dimension(name=value) for _, value in selected]]
     date_range = DateRange(start_date=start.isoformat(), end_date=end.isoformat())
     prop = f"properties/{property_id}"
@@ -221,6 +235,18 @@ def fetch_keyword_rows(
         values = [value.value for value in row.dimension_values]
         raw = {"date": values[0]}
         raw.update({name: values[index + 1] for index, (name, _) in enumerate(selected)})
+        if url_mode:
+            query = parse_qs(urlsplit(raw.pop("page_location", "")).query)
+            surface_type = (query.get("surface_type") or [""])[0]
+            if surface_type not in {"search", "search_ad"}:
+                raw["keyword"] = ""
+                return raw
+            raw.update({
+                "keyword": (query.get("surface_detail") or [""])[0],
+                "position": (query.get("surface_intra_position") or [""])[0],
+                "search_type": surface_type,
+                "locale": (query.get("locale") or [raw.get("locale", "")])[0],
+            })
         return raw
 
     def key_and_slot(raw):
@@ -312,13 +338,18 @@ def sync_aso_keywords(
         keyword_fields = {
             key: value
             for key, value in fields.items()
-            if key in {"keyword", "position", "locale", "country", "device", "search_type"}
+            if key in {
+                "page_location", "keyword", "position", "locale", "country",
+                "device", "search_type",
+            }
         }
         _store_capability(
             conn,
             app.id,
             "aso_keywords",
-            ("ready" if "position" in fields else "partial") if rows else "unsupported",
+            (
+                "ready" if "page_location" in fields or "position" in fields else "partial"
+            ) if rows else "unsupported",
             keyword_fields,
             None if rows else "NoKeywordValues",
         )

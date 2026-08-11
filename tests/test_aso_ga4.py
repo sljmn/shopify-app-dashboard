@@ -36,6 +36,15 @@ def test_discovery_keeps_keyword_and_attribution_status_separate():
     assert report.fields["keyword"] == "searchTerm"
 
 
+def test_discovery_uses_shopify_listing_url_for_keywords_and_positions():
+    report = discover_capabilities(FakeMetadataClient({
+        "pageLocation", "country", "language", "deviceCategory",
+    }), "123")
+
+    assert report.statuses["aso_keywords"] == "ready"
+    assert report.fields["page_location"] == "pageLocation"
+
+
 def test_discovery_marks_attribution_unsupported_without_shop_domain():
     report = discover_capabilities(FakeMetadataClient({"searchTerm"}), "123")
     assert report.statuses["aso_keywords"] == "partial"
@@ -89,6 +98,53 @@ def test_keyword_fetch_merges_traffic_and_clicks():
     assert rows[0]["users"] == 12
     assert rows[0]["install_clicks"] == 3
     assert rows[0]["average_position"] == 4
+
+
+class ShopifyListingUrlClient:
+    def run_report(self, request):
+        metric = request.metrics[0].name
+        row = _row([
+            "20260810",
+            "https://apps.shopify.com/tax-exemption?locale=de&surface_detail=vat+id&surface_inter_position=1&surface_intra_position=5&surface_type=search",
+            "en-us", "DE", "mobile",
+        ], 7 if metric == "totalUsers" else 2)
+        return SimpleNamespace(rows=[row], row_count=1)
+
+
+def test_keyword_fetch_parses_shopify_search_parameters_from_page_location():
+    rows = fetch_keyword_rows(
+        ShopifyListingUrlClient(),
+        "123",
+        {
+            "page_location": "pageLocation", "locale": "language",
+            "country": "country", "device": "deviceCategory",
+        },
+        date(2026, 8, 10),
+        date(2026, 8, 10),
+    )
+
+    assert rows == [{
+        "date": date(2026, 8, 10), "keyword": "vat id", "locale": "de",
+        "country": "DE", "device": "mobile", "search_type": "search",
+        "users": 7, "install_clicks": 2, "average_position": 5,
+        "latest_position": 5, "position_samples": 7,
+    }]
+
+
+class NonSearchListingUrlClient:
+    def run_report(self, request):
+        row = _row([
+            "20260810",
+            "https://apps.shopify.com/tax-exemption?surface_detail=taxes&surface_type=category",
+        ], 4)
+        return SimpleNamespace(rows=[row], row_count=1)
+
+
+def test_keyword_fetch_excludes_non_search_shopify_surfaces():
+    assert fetch_keyword_rows(
+        NonSearchListingUrlClient(), "123", {"page_location": "pageLocation"},
+        date(2026, 8, 10), date(2026, 8, 10),
+    ) == []
 
 
 class EmptyKeywordClient:
