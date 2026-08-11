@@ -574,6 +574,33 @@
         }
         .ops-strip.stale { border-color: var(--down); color: var(--down); }
         .ops-strip.stale .dot { background: var(--down); }
+        .sync-actions { position: relative; margin-left: auto; color: var(--ink-2); }
+        .sync-actions > summary { list-style: none; white-space: nowrap; }
+        .sync-actions > summary::-webkit-details-marker { display: none; }
+        .sync-actions[open] > summary { color: var(--ink); border-color: var(--muted); }
+        .sync-menu {
+            position: absolute; z-index: 20; top: calc(100% + 7px); right: 0;
+            width: 286px; padding: 6px; background: var(--card);
+            border: 1px solid var(--border); border-radius: 8px;
+            box-shadow: 0 12px 30px rgba(31, 24, 46, .14);
+        }
+        .sync-menu form + form { border-top: 1px solid var(--border); }
+        .sync-menu button {
+            width: 100%; display: block; padding: 10px; text-align: left;
+            color: var(--ink); background: transparent; border-radius: 6px;
+        }
+        .sync-menu button:hover { background: var(--row-hover); }
+        .sync-menu button:disabled { opacity: .5; cursor: not-allowed; }
+        .sync-menu strong, .sync-menu small { display: block; }
+        .sync-menu strong { font-size: 13px; }
+        .sync-menu small { margin-top: 3px; color: var(--muted); font: 400 12px var(--body); }
+        .sync-progress { flex-basis: 100%; min-height: 0; color: var(--muted); }
+        .sync-progress:empty { display: none; }
+        @media (max-width: 620px) {
+            .sync-actions { width: 100%; margin-left: 0; }
+            .sync-actions > summary { width: 100%; justify-content: center; }
+            .sync-menu { position: static; width: 100%; margin-top: 7px; }
+        }
 
         /* MRR movement waterfall: one row per month, zero axis down the middle.
            Sign is carried by which side of the axis a segment sits on, so the
@@ -888,6 +915,26 @@
             });
             location.assign(target);
         });
+
+        document.querySelector("[data-confirm-full]")?.addEventListener(
+            "submit", (event) => {
+                if (!confirm("Fetch all available history again? This can take several minutes.")) {
+                    event.preventDefault();
+                }
+            }
+        );
+
+        (function trackManualSync() {
+            const progress = document.getElementById("sync-progress");
+            if (!progress || progress.dataset.state !== "running") return;
+            const buttons = document.querySelectorAll(".sync-menu button");
+            buttons.forEach((button) => button.disabled = true);
+            // A full navigation works in hardened/internal browsers that omit
+            // page-level fetch/XHR, and preserves cached credentials.
+            // The next render reads the same coordinator snapshot and stops
+            // refreshing as soon as the job is no longer running.
+            setTimeout(() => location.reload(), 2000);
+        })();
 
         // Count the stat tiles up to the number that is already in the HTML.
         // The server rendered the final value, so this only animates toward

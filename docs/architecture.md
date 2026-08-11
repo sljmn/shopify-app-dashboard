@@ -38,8 +38,13 @@ Shopify Partner API
                                        (HTML reports)
 ```
 
-`pipeline.py` runs the whole thing on a schedule (`scheduler.py`, every 30 minutes on one machine).
-`sync_state` holds the cursor per source.
+`pipeline.py` runs the whole thing on the configured schedule (`scheduler.py`, on one machine).
+`sync_state` holds the cursor per source. `manual_sync.py` invokes those same pipelines from the
+Overview's **Fetch data** menu. Fresh mode keeps the normal cursors and overlap windows; complete
+mode ignores them for one idempotent replay and writes the terminal state only after successful
+work. Its process-local coordinator permits one manual job at a time, reports per-source progress,
+and is intentionally not a durable queue: restarting the one application process stops the job,
+but never leaves a partial cursor update or requires cleanup before retrying.
 
 **Derivation is a full replay, not an incremental apply.** `derive_installation` re-reads every raw
 event for a shop and recomputes its state from scratch on every run. That is why it is safe to run
@@ -65,8 +70,8 @@ figures. `app_events` is an audit log of what happened, not a ledger.
 
 **Per-number definitions live in `src/app_dashboard/metrics.py`, not here.** That registry carries the
 display name, the plain-English definition, the exact counting rule and the source table for every
-headline figure, and it is what the tiles render behind the ⓘ and what the `.md` twins print. It is
-deliberately the only copy: a definition restated in this document is a definition that drifts, and
+headline figure, and it is what the tiles render behind the ⓘ. It is deliberately the only copy: a
+definition restated in this document is a definition that drifts, and
 the failure mode is never that one of them is wrong, it is that nobody knows which one shipped
 first. Add a metric there and it appears on the page, in the twin, and in any agent the twin is
 pasted into, with no second edit. The table above stays because it answers a different question:
@@ -180,8 +185,8 @@ its button at `/auth/google`. Those are separate on purpose: when they were one 
 unauthenticated visitor was thrown at Google having read nothing, and a disallowed account's first
 words from us were a 403.
 
-401, 403 and 404 render `error.html` for browsers and keep their JSON body for everything else,
-which is what the `.md` twins and curl see. Nothing here is indexable: `<meta name="robots">` in
+401, 403 and 404 render `error.html` for browsers and keep their JSON body for everything else.
+Nothing here is indexable: `<meta name="robots">` in
 `base.html`, an `X-Robots-Tag` header in `security.py` for the responses with no `<head>`, and
 `/robots.txt`.
 
@@ -200,6 +205,7 @@ it will not run.
 |---|---|
 | `src/app_dashboard/ingest_raw.py` | Partner API → `raw_app_events`, `charges`, `transactions` |
 | `src/app_dashboard/derive.py` | replay → `app_events`, `subscriptions`, `shops` |
+| `src/app_dashboard/manual_sync.py` | one operator-triggered background refresh and its progress snapshot |
 | `src/app_dashboard/stats.py` | every read-side aggregate; no writes |
 | `src/app_dashboard/metrics.py` | one definition per number: name, rule, source table. Read by the tiles |
 | `src/app_dashboard/annotations.py` | dated notes on the charts; the only place a person writes to this database |

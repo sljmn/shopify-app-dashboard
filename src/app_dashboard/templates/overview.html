@@ -11,6 +11,45 @@
     </span>
     <span>{{ health.events_24h }} events ingested in 24h</span>
     <span>{{ health.shops }} shops on record</span>
+    <details class="sync-actions">
+        <summary class="ghost">
+            <svg viewBox="0 0 20 20" width="15" height="15" fill="none"
+                 stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                 stroke-linejoin="round" aria-hidden="true">
+                <path d="M16 7a6.5 6.5 0 1 0 .2 5"/><path d="M16 3v4h-4"/>
+            </svg>
+            Fetch data
+        </summary>
+        <div class="sync-menu">
+            <form method="post" action="/sync">
+                <input type="hidden" name="mode" value="fresh">
+                {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
+                <button type="submit" {% if manual_sync.state == "running" %}disabled{% endif %}>
+                    <strong>Fetch fresh data</strong>
+                    <small>New events, payments, trials and traffic</small>
+                </button>
+            </form>
+            <form method="post" action="/sync" data-confirm-full>
+                <input type="hidden" name="mode" value="all">
+                {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
+                <button type="submit" {% if manual_sync.state == "running" %}disabled{% endif %}>
+                    <strong>Fetch all data again</strong>
+                    <small>Replay complete available history</small>
+                </button>
+            </form>
+        </div>
+    </details>
+    <span class="sync-progress" id="sync-progress" aria-live="polite"
+          data-state="{{ manual_sync.state }}">
+        {% if manual_sync.state == "running" %}
+        Fetching {{ manual_sync.current_source or "data" }}{% if manual_sync.current_app %} for {{ manual_sync.current_app }}{% endif %}
+        &middot; {{ manual_sync.completed_steps }}/{{ manual_sync.total_steps }}
+        {% elif manual_sync.state == "failed" %}
+        Last refresh finished with {{ manual_sync.errors|length }} error{{ "" if manual_sync.errors|length == 1 else "s" }}
+        {% elif manual_sync.state == "complete" %}
+        Data refresh complete
+        {% endif %}
+    </span>
 </div>
 
 <div class="cards">

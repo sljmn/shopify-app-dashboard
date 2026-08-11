@@ -116,3 +116,46 @@ def test_event_cursors_are_independent_per_app(db, app_factory, monkeypatch):
     }
     assert (alpha.partner_app_id, None) in calls
     assert (beta.partner_app_id, None) in calls
+
+
+def test_full_lifecycle_sync_ignores_saved_cursor(db, test_app, monkeypatch):
+    db.execute(
+        "insert into sync_state(app_id, source, cursor, last_synced_at) "
+        "values (%s, 'partner_api', 'saved-cursor', now())",
+        (test_app.id,),
+    )
+    db.commit()
+    seen = []
+
+    def fetch(client, app_id, after_cursor):
+        seen.append(after_cursor)
+        return [], None
+
+    monkeypatch.setattr("app_dashboard.pipeline.fetch_app_events", fetch)
+    run_sync(
+        db, FakeClient(), test_app, _settings(),
+        http_post=lambda *a, **k: None, full_history=True,
+    )
+
+    assert seen == [None]
+
+
+def test_full_transaction_sync_ignores_latest_transaction(db, test_app, monkeypatch):
+    monkeypatch.setattr(
+        "app_dashboard.pipeline.fetch_transactions",
+        lambda *a, **k: ([_txn("existing", "2026-08-02T12:00:00Z")], None),
+    )
+    sync_transactions(db, FakeClient(), test_app, _settings(), sleep=lambda _: None)
+    seen = {}
+
+    def capture(client, **kwargs):
+        seen.update(kwargs)
+        return [], None
+
+    monkeypatch.setattr("app_dashboard.pipeline.fetch_transactions", capture)
+    sync_transactions(
+        db, FakeClient(), test_app, _settings(), sleep=lambda _: None,
+        full_history=True,
+    )
+
+    assert seen["created_at_min"] is None

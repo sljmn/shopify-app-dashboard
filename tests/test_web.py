@@ -63,10 +63,117 @@ def keep_open(conn):
     return NoClose()
 
 
+class FakeManualSync:
+    def __init__(self, state="idle", error=None):
+        self.calls = []
+        self.state = state
+        self.error = error
+
+    def start(self, apps, *, mode):
+        if self.error:
+            raise self.error
+        self.calls.append(([app.slug for app in apps], mode))
+        self.state = "running"
+
+    def status(self):
+        return {
+            "state": self.state,
+            "mode": None,
+            "scope": [],
+            "completed_steps": 0,
+            "total_steps": 0,
+            "current_app": None,
+            "current_source": None,
+            "started_at": None,
+            "finished_at": None,
+            "errors": [],
+        }
+
+
 def test_healthz_open(db):
     app = create_app(conn_factory=lambda: db)
     c = TestClient(app)
     assert c.get("/healthz").status_code == 200
+
+
+def test_manual_sync_follows_selected_app_or_all_apps(db, app_factory, monkeypatch):
+    other = app_factory(slug="other-app", name="Other App")
+    monkeypatch.setenv("TOKEN_2", "second-partner-token")
+    sync = FakeManualSync()
+    c = TestClient(create_app(
+        conn_factory=lambda: keep_open(db), manual_sync_coordinator=sync
+    ))
+    auth = ("tester", "suite-only-credential")
+
+    selected = c.post(
+        "/sync", data={"mode": "fresh", "app": other.slug},
+        headers={"origin": "https://dash.test"}, auth=auth,
+        follow_redirects=False,
+    )
+    assert selected.status_code == 303
+    assert selected.headers["location"] == "/?app=other-app"
+    assert sync.calls == [(["other-app"], "fresh")]
+
+    sync.state = "idle"
+    all_apps = c.post(
+        "/sync", data={"mode": "all"},
+        headers={"origin": "https://dash.test"}, auth=auth,
+        follow_redirects=False,
+    )
+    assert all_apps.status_code == 303
+    assert set(sync.calls[-1][0]) == {"test-app", "other-app"}
+    assert sync.calls[-1][1] == "all"
+
+
+def test_manual_sync_routes_validate_boundary(db):
+    from app_dashboard.manual_sync import SyncAlreadyRunning
+
+    auth = ("tester", "suite-only-credential")
+    sync = FakeManualSync()
+    c = TestClient(create_app(
+        conn_factory=lambda: keep_open(db), manual_sync_coordinator=sync
+    ))
+
+    assert c.post(
+        "/sync", data={"mode": "fresh"},
+        headers={"origin": "https://evil.test"}, auth=auth,
+    ).status_code == 403
+    assert c.post(
+        "/sync", data={"mode": "wrong"},
+        headers={"origin": "https://dash.test"}, auth=auth,
+    ).status_code == 400
+    assert c.post(
+        "/sync", data={"mode": "fresh", "app": "missing"},
+        headers={"origin": "https://dash.test"}, auth=auth,
+    ).status_code == 404
+
+    sync.error = SyncAlreadyRunning()
+    assert c.post(
+        "/sync", data={"mode": "fresh"},
+        headers={"origin": "https://dash.test"}, auth=auth,
+    ).status_code == 409
+    status = c.get("/sync/status", auth=auth)
+    assert status.status_code == 200
+    assert status.json()["state"] == "idle"
+
+
+def test_overview_renders_scoped_manual_sync_controls(db):
+    sync = FakeManualSync(state="running")
+    c = TestClient(create_app(
+        conn_factory=lambda: keep_open(db), manual_sync_coordinator=sync
+    ))
+    auth = ("tester", "suite-only-credential")
+
+    overview = c.get("/?app=test-app", auth=auth)
+    assert overview.status_code == 200
+    assert "Fetch data" in overview.text
+    assert "Fetch fresh data" in overview.text
+    assert "Fetch all data again" in overview.text
+    assert 'name="app" value="test-app"' in overview.text
+    assert 'id="sync-progress"' in overview.text
+    assert "data-confirm-full" in overview.text
+    assert "trackManualSync" in overview.text
+    assert c.get("/customers?app=test-app", auth=auth).text.count("Fetch data") == 0
 
 
 def test_selector_lists_every_app_and_unknown_slugs_404(

@@ -19,7 +19,8 @@ THROTTLE_SECONDS = 0.3
 
 
 def run_sync(
-    conn: psycopg.Connection, client, app: AppConfig, settings, http_post
+    conn: psycopg.Connection, client, app: AppConfig, settings, http_post,
+    *, full_history: bool = False,
 ) -> dict:
     """Poll the Partner API, derive clean events, and Slack-notify fresh installs.
 
@@ -35,7 +36,7 @@ def run_sync(
         "select cursor from sync_state where app_id = %s and source = %s",
         (app.id, SOURCE),
     ).fetchone()
-    cursor = row[0] if row else None
+    cursor = None if full_history else (row[0] if row else None)
 
     # Snapshot before deriving: ON CONFLICT (platform_event_id) DO NOTHING
     # means already-seen events never get a new id, so any app_events row with
@@ -97,8 +98,15 @@ def run_sync(
     }
 
 
-def sync_transactions(conn: psycopg.Connection, client, app: AppConfig, settings,
-                      sleep=time.sleep) -> dict:
+def sync_transactions(
+    conn: psycopg.Connection,
+    client,
+    app: AppConfig,
+    settings,
+    sleep=time.sleep,
+    *,
+    full_history: bool = False,
+) -> dict:
     """Poll the money feed into `transactions`.
 
     Its own sync_state row, keyed apart from the events cursor, so replaying
@@ -118,7 +126,7 @@ def sync_transactions(conn: psycopg.Connection, client, app: AppConfig, settings
         "select max(created_at) from transactions where app_id = %s", (app.id,)
     ).fetchone()
     created_at_min = None
-    if latest is not None:
+    if latest is not None and not full_history:
         # Normalized to UTC before formatting: psycopg hands back timestamptz in
         # the session's timezone, so an un-normalized isoformat would send
         # Shopify a local offset that reads correctly but is needlessly

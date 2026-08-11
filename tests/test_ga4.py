@@ -1,4 +1,6 @@
-from app_dashboard.ga4 import upsert_rows
+from datetime import date
+
+from app_dashboard.ga4 import sync_ga4, upsert_rows
 
 
 def _row(sessions):
@@ -24,3 +26,20 @@ def test_identical_ga4_keys_are_isolated_per_app(db, test_app, app_factory):
     assert db.execute(
         "select app_id, sessions from ga4_daily order by app_id"
     ).fetchall() == [(test_app.id, 15), (other.id, 20)]
+
+
+def test_force_full_ga4_sync_ignores_existing_rows(db, test_app, monkeypatch):
+    upsert_rows(db, test_app.id, [_row(10)])
+    seen = {}
+
+    def fetch(client, property_id, start, end):
+        seen.update(start=start, end=end)
+        return []
+
+    monkeypatch.setattr("app_dashboard.ga4.fetch_rows", fetch)
+    sync_ga4(
+        db, object(), test_app, today=date(2026, 8, 11),
+        earliest=date(2025, 1, 1), force_full=True,
+    )
+
+    assert seen == {"start": date(2025, 1, 1), "end": date(2026, 8, 11)}

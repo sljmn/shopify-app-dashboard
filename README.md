@@ -33,6 +33,8 @@ revenue figure appears anywhere in this repository, in the screenshots, or in th
 - **Overview** with prior-period comparison on every tile, an MRR movements waterfall
   (new / expansion / contraction / churn), portfolio unit economics, and an ops health strip.
 - **Activity**, filterable by app, date, and event type, with merchant links and MRR deltas.
+- **Manual refresh** for one selected app or the whole portfolio, with incremental and complete
+  replay modes plus live progress.
 - **Customers**, filterable and paginated, plus a per-merchant detail page with the full lifecycle
   timeline, payment history, and product usage.
 - **Churn** with Shopify's uninstall reasons normalised across languages, and free-text verbatims.

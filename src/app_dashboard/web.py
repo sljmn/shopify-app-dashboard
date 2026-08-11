@@ -47,6 +47,12 @@ from app_dashboard.customers import (
 )
 from app_dashboard.db import connect
 from app_dashboard.metrics import COMPARE_LABEL, METRICS, signed
+from app_dashboard.manual_sync import (
+    InvalidSyncMode,
+    ManualSyncCoordinator,
+    MODES,
+    SyncAlreadyRunning,
+)
 from app_dashboard.ops import sync_health
 from app_dashboard.ranges import (
     CHURN_DAYS,
@@ -147,8 +153,11 @@ LOGIN_LIMIT, LOGIN_WINDOW = 10, 300
 INGEST_LIMIT, INGEST_WINDOW = 20, 60
 
 
-def create_app(conn_factory) -> FastAPI:
+def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     settings = get_settings()
+    sync_coordinator = manual_sync_coordinator or ManualSyncCoordinator(
+        conn_factory, settings
+    )
     # Fail closed on a weak session secret. This repository is public, so the
     # placeholder in .env.example and the cookie salt are both known to anyone
     # who wants them: a deployment running on either forges any session, for any
@@ -459,6 +468,52 @@ def create_app(conn_factory) -> FastAPI:
             chunks.append(chunk)
         return b"".join(chunks)
 
+    @app.get("/sync/status")
+    def manual_sync_status(user: str = Depends(verify_creds)):
+        return sync_coordinator.status()
+
+    @app.post("/sync")
+    async def start_manual_sync(
+        request: Request, user: str = Depends(verify_creds)
+    ):
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != settings.public_base_url.rstrip("/"):
+            raise HTTPException(status_code=403, detail="Cross-origin write refused")
+        if not request.headers.get("content-type", "").startswith(
+            "application/x-www-form-urlencoded"
+        ):
+            raise HTTPException(status_code=415, detail="Send a form body")
+        form = parse_qs((await _read_capped(request)).decode("utf-8", "replace"))
+        mode = (form.get("mode") or [""])[0]
+        app_slug = (form.get("app") or [""])[0]
+        if mode not in MODES:
+            raise HTTPException(status_code=400, detail="Unknown sync mode")
+
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+            if app_slug:
+                selected = next(
+                    (candidate for candidate in apps if candidate.slug == app_slug),
+                    None,
+                )
+                if selected is None:
+                    raise HTTPException(status_code=404, detail="Unknown app")
+                scoped_apps = [selected]
+            else:
+                scoped_apps = apps
+        finally:
+            conn.close()
+
+        try:
+            sync_coordinator.start(scoped_apps, mode=mode)
+        except InvalidSyncMode:
+            raise HTTPException(status_code=400, detail="Unknown sync mode") from None
+        except SyncAlreadyRunning:
+            raise HTTPException(status_code=409, detail="A sync is already running") from None
+        target = "/" + ("?" + urlencode({"app": app_slug}) if app_slug else "")
+        return RedirectResponse(target, status_code=303)
+
     @app.post("/ingest/usage/{app_slug}")
     async def ingest_usage(request: Request, app_slug: str):
         """Product-usage events from the app itself.
@@ -646,6 +701,7 @@ def create_app(conn_factory) -> FastAPI:
              "plans": plans, "reasons": reasons["buckets"][:5],
              "comparison": comparison, "months": months,
              "app_comparison": app_comparison,
+             "manual_sync": sync_coordinator.status(),
              "month_choices": MONEY_MONTHS,
              "notes": notes, "notes_by_month": notes_by_month,
              "note_max": anno.NOTE_MAX, "today": date.today().isoformat(),

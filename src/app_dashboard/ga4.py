@@ -143,8 +143,16 @@ def upsert_rows(conn, app_id: int, rows: list[dict]) -> int:
     return len(rows)
 
 
-def sync_ga4(conn, client, app: AppConfig, *, lookback_days=DEFAULT_LOOKBACK_DAYS,
-             today=None, earliest=None) -> int:
+def sync_ga4(
+    conn,
+    client,
+    app: AppConfig,
+    *,
+    lookback_days=DEFAULT_LOOKBACK_DAYS,
+    today=None,
+    earliest=None,
+    force_full=False,
+) -> int:
     """Refresh a trailing window. On an empty table, pull everything instead.
 
     "Everything" starts at GA4_EARLIEST_DATA. Setting it earlier than the day
@@ -156,7 +164,7 @@ def sync_ga4(conn, client, app: AppConfig, *, lookback_days=DEFAULT_LOOKBACK_DAY
     (existing,) = conn.execute(
         "select count(*) from ga4_daily where app_id = %s", (app.id,)
     ).fetchone()
-    start = earliest if not existing else today - timedelta(days=lookback_days)
+    start = earliest if force_full or not existing else today - timedelta(days=lookback_days)
     rows = fetch_rows(client, app.ga4_property_id or "", start, today)
     written = upsert_rows(conn, app.id, rows)
     logger.info("%s GA4 sync wrote %s rows from %s to %s", app.slug, written, start, today)
