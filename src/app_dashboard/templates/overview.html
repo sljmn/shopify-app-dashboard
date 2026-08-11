@@ -181,7 +181,7 @@
     {% endfor %}
     {% if money.count %}
     <p class="sub">Across all {{ money.count }} transactions on record, back to
-    {{ money.first_at.strftime("%b %-d, %Y") }}: <strong>${{ "%.2f"|format(money.gross) }}</strong>
+    {{ money.first_at|local_time("%b %-d, %Y") }}: <strong>${{ "%.2f"|format(money.gross) }}</strong>
     billed, <strong>${{ "%.2f"|format(money.net) }}</strong> received.
     Shopify kept <strong>${{ "%.2f"|format(money.taken) }}</strong>, or
     {{ money.taken_pct }}%.</p>
@@ -331,7 +331,7 @@
 
 <div class="table-card">
     <table>
-        <thead><tr><th><a href="/activity{{ scope_qs }}">Latest activity</a></th><th>Shop</th><th>When (UTC)</th></tr></thead>
+        <thead><tr><th><a href="/activity{{ scope_qs }}">Latest activity</a></th><th>Shop</th><th>When ({{ DISPLAY_TIMEZONE_LABEL }})</th></tr></thead>
         <tbody>
             {% for e in events %}
             <tr>
@@ -341,7 +341,7 @@
                     {% if e.shop_domain %}<span class="sub"> &middot;
                         <a href="https://{{ e.shop_domain }}">storefront</a></span>{% endif %}
                 </td>
-                <td class="sub">{{ e.at.strftime("%b %-d, %H:%M") }}</td>
+                <td class="sub">{{ e.at|local_time("%b %-d, %H:%M %Z") }}</td>
             </tr>
             {% endfor %}
         </tbody>

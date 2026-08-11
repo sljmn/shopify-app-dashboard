@@ -42,6 +42,11 @@ from app_dashboard.customers import (
     list_customers,
 )
 from app_dashboard.db import connect
+from app_dashboard.display_time import (
+    DISPLAY_TIMEZONE_LABEL,
+    format_local_time,
+    local_today,
+)
 from app_dashboard.metrics import COMPARE_LABEL, METRICS, signed
 from app_dashboard.manual_sync import (
     InvalidSyncMode,
@@ -204,6 +209,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     templates.env.globals["APP_NAME"] = "Shopify Apps"
     templates.env.globals["APP_LISTING_URL"] = ""
     templates.env.globals["GA4_PROPERTY_ID"] = None
+    templates.env.globals["DISPLAY_TIMEZONE_LABEL"] = DISPLAY_TIMEZONE_LABEL
+    templates.env.filters["local_time"] = format_local_time
 
     secure_cookies = urlparse(settings.public_base_url).scheme == "https"
     login_limiter = RateLimiter(LOGIN_LIMIT, LOGIN_WINDOW)
@@ -640,7 +647,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
              "manual_sync": sync_coordinator.status(),
              "month_choices": MONEY_MONTHS,
              "notes": notes, "notes_by_month": notes_by_month,
-             "note_max": anno.NOTE_MAX, "today": date.today().isoformat(),
+             "note_max": anno.NOTE_MAX, "today": local_today().isoformat(),
              # Only a cookie session may write. See the POST route.
              "can_annotate": bool(selected_app and _session_email(request)),
              "note_error": request.query_params.get("note_error")},

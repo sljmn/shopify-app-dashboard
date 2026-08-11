@@ -53,7 +53,7 @@
                     <span class="trial-deadline{% if trial.days_left <= 7 %} soon{% endif %}">
                         {% if trial.hours_left <= 24 %}{{ trial.hours_left }} hours{% else %}{{ trial.days_left }} days{% endif %}
                     </span>
-                    <div class="sub">{{ trial.trial_ends_at.strftime("%b %-d, %Y") }}</div>
+                    <div class="sub">{{ trial.trial_ends_at|local_time("%b %-d, %Y") }}</div>
                 </td>
                 <td>
                     {% if trial.cancel_at_end_of_cycle %}<span class="pill cancelling">Cancelling</span>{% else %}<span class="pill trial">In trial</span>{% endif %}
@@ -66,5 +66,5 @@
         </tbody>
     </table>
 </div>
-{% if trials.oldest_sync %}<p class="sub">Oldest selected app snapshot: {{ trials.oldest_sync.strftime("%b %-d, %Y %H:%M UTC") }}.</p>{% endif %}
+{% if trials.oldest_sync %}<p class="sub">Oldest selected app snapshot: {{ trials.oldest_sync|local_time("%b %-d, %Y %H:%M %Z") }}.</p>{% endif %}
 {% endblock %}

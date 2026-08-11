@@ -53,8 +53,8 @@ work the lists, then come back.</p>
                 <tr>
                     <td><a href="/customers/{{ r.shop_gid|urlencode }}{{ scope_qs }}">{{ r.shop }}</a><div class="sub">{{ r.domain or "" }}</div></td>
                     <td class="sub">{{ r.country or "" }}</td>
-                    <td class="num sub">{{ r.installed_at.strftime("%b %-d, %Y") if r.installed_at else "" }}</td>
-                    <td class="num">{{ r.since.strftime("%b %-d, %Y") }}<div class="sub">{{ r.days }} days</div></td>
+                    <td class="num sub">{{ r.installed_at|local_time("%b %-d, %Y") if r.installed_at else "" }}</td>
+                    <td class="num">{{ r.since|local_time("%b %-d, %Y") }}<div class="sub">{{ r.days }} days</div></td>
                     <td class="num">${{ "%.0f"|format(r.mrr) }}</td>
                 </tr>
                 {% else %}

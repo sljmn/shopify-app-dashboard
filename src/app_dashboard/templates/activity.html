@@ -18,11 +18,11 @@
 
 <div class="table-card">
     <table>
-        <thead><tr><th>When (UTC)</th><th>Event</th><th>Shop</th><th>App</th><th class="num">MRR change</th></tr></thead>
+        <thead><tr><th>When ({{ DISPLAY_TIMEZONE_LABEL }})</th><th>Event</th><th>Shop</th><th>App</th><th class="num">MRR change</th></tr></thead>
         <tbody>
             {% for row in feed.rows %}
             <tr>
-                <td class="sub">{{ row.at.strftime("%b %-d, %Y %H:%M") }}</td>
+                <td class="sub">{{ row.at|local_time("%b %-d, %Y %H:%M %Z") }}</td>
                 <td><span class="pill {{ row.type }}">{{ event_labels[row.type] }}</span></td>
                 <td>
                     <a href="/customers/{{ row.shop_gid|urlencode }}{% if selected_app %}?app={{ selected_app.slug|urlencode }}{% endif %}">{{ row.shop }}</a>

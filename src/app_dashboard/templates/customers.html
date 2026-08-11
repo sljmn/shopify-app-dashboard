@@ -58,10 +58,10 @@
                 <td>{{ row.plan_label or "—" }}</td>
                 <td class="num">{% if row.mrr %}${{ "%.2f"|format(row.mrr) }}{% else %}<span class="sub">—</span>{% endif %}</td>
                 <td><span class="pill {{ row.customer_status|lower }}">{{ row.customer_status }}</span></td>
-                <td class="sub">{{ row.installed_at.strftime("%b %-d, %Y") if row.installed_at else "—" }}</td>
+                <td class="sub">{{ row.installed_at|local_time("%b %-d, %Y") if row.installed_at else "—" }}</td>
                 <td>
                     {% if row.latest_event_type %}{{ row.latest_event_type|replace("_", " ")|title }}{% else %}<span class="sub">—</span>{% endif %}
-                    {% if row.latest_event_at %}<span class="sub customer-event-at">{{ row.latest_event_at.strftime("%b %-d, %Y") }}</span>{% endif %}
+                    {% if row.latest_event_at %}<span class="sub customer-event-at">{{ row.latest_event_at|local_time("%b %-d, %Y") }}</span>{% endif %}
                 </td>
             </tr>
             {% else %}

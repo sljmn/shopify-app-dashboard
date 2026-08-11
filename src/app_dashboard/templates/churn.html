@@ -34,7 +34,7 @@
         nobody was shown the exit survey, so they are kept out of every number above.</p>
         {% if deaths.rows %}
         <div class="legend">
-            {% for d in deaths.rows %}<span>{{ d.shop }} &middot; {{ d.at.strftime("%b %Y") }}</span>{% endfor %}
+            {% for d in deaths.rows %}<span>{{ d.shop }} &middot; {{ d.at|local_time("%b %Y") }}</span>{% endfor %}
         </div>
         {% endif %}
     </div>
@@ -72,7 +72,7 @@
         <p class="verbatim">{{ n.note }}
             <span class="sub">&mdash;
             <a href="/customers/{{ n.shop_gid|urlencode }}{{ scope_qs }}">{{ n.shop }}</a>,
-            {{ n.at.strftime("%b %Y") }}</span></p>
+            {{ n.at|local_time("%b %Y") }}</span></p>
         {% endfor %}
         {% endfor %}
         <p class="sub">The bars above count which box a merchant ticked; these are what they typed
@@ -146,8 +146,8 @@ window here will not move them.</p>
             {% for r in rows %}
             <tr>
                 <td><a href="/customers/{{ r.shop_gid|urlencode }}{{ scope_qs }}">{{ r.shop }}</a><div class="sub">{{ r.domain or "" }}</div></td>
-                <td class="sub">{{ r.installed_at.strftime("%b %-d, %Y") if r.installed_at else "unknown" }}</td>
-                <td class="sub">{{ r.at.strftime("%b %-d, %Y") }}</td>
+                <td class="sub">{{ r.installed_at|local_time("%b %-d, %Y") if r.installed_at else "unknown" }}</td>
+                <td class="sub">{{ r.at|local_time("%b %-d, %Y") }}</td>
                 <td class="num">{{ r.days if r.days is not none else "" }}</td>
                 <td>{% if r.paid %}<span class="pill paid">${{ "%.0f"|format(r.monthly_amount) }}/mo</span>{% else %}<span class="sub">never</span>{% endif %}</td>
                 <td class="sub">{{ r.buckets|join(", ") }}</td>

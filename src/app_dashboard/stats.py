@@ -7,6 +7,7 @@ from decimal import Decimal
 import psycopg
 
 from app_dashboard.config import get_settings
+from app_dashboard.display_time import local_day_bounds
 from app_dashboard.scope import Scope
 from app_dashboard.uninstall_reasons import (
     bucket_counts,
@@ -1132,8 +1133,9 @@ def activity_feed(
     conditions.append(predicate)
     params.extend(scope_params)
     if on is not None:
-        conditions.append("e.occurred_at >= %s and e.occurred_at < %s + interval '1 day'")
-        params.extend((on, on))
+        start, end = local_day_bounds(on)
+        conditions.append("e.occurred_at >= %s and e.occurred_at < %s")
+        params.extend((start, end))
     if event_type is not None:
         conditions.append("e.type = %s")
         params.append(event_type)

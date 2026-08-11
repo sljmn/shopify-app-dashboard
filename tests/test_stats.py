@@ -748,8 +748,12 @@ def test_activity_feed_is_scoped_filtered_ordered_and_paginated(db, app_factory)
             (app_id, gid, name, domain),
         )
     for app_id, event_id, gid, kind, at, delta in (
+        (APP.id, "alpha-local-midnight", "alpha-shop", "subscribed",
+         "2026-08-09T22:30:00Z", "9.00"),
         (APP.id, "alpha-old", "alpha-shop", "installed", "2026-08-10T08:00:00Z", None),
         (APP.id, "alpha-new", "alpha-shop", "subscribed", "2026-08-10T10:00:00Z", "19.00"),
+        (APP.id, "alpha-next-local-day", "alpha-shop", "subscribed",
+         "2026-08-10T22:30:00Z", "39.00"),
         (APP.id, "alpha-other-day", "alpha-shop", "unsubscribed", "2026-08-09T10:00:00Z", "-19.00"),
         (beta.id, "beta-new", "beta-shop", "subscribed", "2026-08-10T11:00:00Z", "29.00"),
     ):
@@ -762,16 +766,18 @@ def test_activity_feed_is_scoped_filtered_ordered_and_paginated(db, app_factory)
     db.commit()
 
     combined = activity_feed(db, on=date(2026, 8, 10), event_type="subscribed")
-    assert combined["total"] == 2
-    assert [row["app_slug"] for row in combined["rows"]] == ["beta", "test-app"]
+    assert combined["total"] == 3
+    assert [row["app_slug"] for row in combined["rows"]] == [
+        "beta", "test-app", "test-app"
+    ]
     assert combined["rows"][1]["net_change"] == Decimal("19.00")
     assert combined["rows"][1]["shop_domain"] == "alpha.myshopify.com"
 
     scoped = activity_feed(
         db, scope=Scope.for_app(APP.id), on=date(2026, 8, 10), per_page=1, page=2
     )
-    assert scoped["total"] == 2
-    assert scoped["pages"] == 2
+    assert scoped["total"] == 3
+    assert scoped["pages"] == 3
     assert scoped["page"] == 2
     assert scoped["rows"][0]["type"] == "installed"
 

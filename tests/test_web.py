@@ -926,6 +926,8 @@ def test_activity_page_filters_and_links_to_the_merchant_and_store(db):
     assert "Activity Shop" in page.text
     assert "Subscribed" in page.text
     assert "+$19.00" in page.text
+    assert "When (CET/CEST)" in page.text
+    assert "Aug 10, 2026 12:00 CEST" in page.text
     assert 'class="pill installed"' not in page.text
     assert 'href="/customers/activity-shop?app=test-app"' in page.text
     assert 'href="https://activity.myshopify.com"' in page.text
