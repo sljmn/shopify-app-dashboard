@@ -81,7 +81,7 @@ Use Playwright at 1440x900 and 390x844. Confirm the signed-in error page uses
 the normal dashboard surface, text and controls do not overlap, the sidebar or
 mobile navigation remains usable, and `/activiteit` resolves to `/activity`.
 
-- [ ] **Step 3: Commit, push master, and deploy**
+- [x] **Step 3: Commit, push master, and deploy**
 
 Commit the focused source and test changes, push `master` to `fork`, then push
 `master` to `dokku-mantle`. Confirm `https://mantle.newcraft.dev/auth/login`
