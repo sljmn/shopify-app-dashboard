@@ -14,7 +14,7 @@ Keep the two existing representations, but give each one a precise job:
 
 - `app_events` is the canonical lifecycle movement ledger. Its signed `net_change` values independently reconstruct current MRR and will become the historical source after trial outcomes are persisted.
 - `subscriptions` is the current materialized subscription state used for fast current-MRR and merchant-detail queries.
-- `active_subscriptions` is Shopify's current source snapshot and validates, rather than independently defines, derived state.
+- `active_subscriptions` is Shopify's current source snapshot. It validates derived state and, when Shopify retains a different legacy subscription ID, reconciles the current interval and price using the latest positive subscription sale on that snapshot ID.
 
 Full replay remains the repair mechanism. A replay updates all derived fields for a stable raw event and removes clean events that the corrected classifier now suppresses. Raw events remain immutable.
 

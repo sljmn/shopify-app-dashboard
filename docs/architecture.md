@@ -120,6 +120,14 @@ activation.** Both movements remain explicit in `app_events`, so the independent
 detect current-state drift. Declined and expired charges become zero-MRR `charge_abandoned` events
 for funnel analysis rather than fake subscription rows.
 
+**Fresh active-subscription snapshots reconcile Partner feed ID drift.** Shopify can retain an older
+legacy subscription ID after the lifecycle feed emits a plan change under a new ID. When those IDs
+differ, the snapshot supplies the authoritative current billing interval and the newest positive
+subscription sale on the snapshot ID supplies its price. The derived live subscription and its clean
+plan-change movement are corrected together, keeping current state, the MRR chart, and the independent
+event ledger equal without rewriting raw events. Matching IDs continue to use the lifecycle price, so
+discounted or partial payments cannot silently redefine contracted MRR.
+
 **Historical MRR remains subscription-state based until trial outcomes are historical.** The
 current `active_subscriptions` table is a replaceable snapshot: it can exclude today's trials but
 cannot say which churned subscriptions were trialing in an old month. `app_events.net_change` is

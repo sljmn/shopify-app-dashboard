@@ -45,7 +45,8 @@ def _filters(
                    select 1 from subscriptions sub
                    join charges c on c.app_id = sub.app_id and c.gid = sub.id
                    where sub.app_id = s.app_id and sub.shop_gid = s.shop_gid
-                     and sub.churned_at is null and c.plan_interval = %s
+                     and sub.churned_at is null
+                     and coalesce(sub.billing_type, c.plan_interval) = %s
                )"""
         )
         params.append(plan)
@@ -94,7 +95,8 @@ def list_customers(conn: psycopg.Connection, *, industry=None, country=None,
             join apps a on a.id = s.app_id
             left join lateral (
                 select sub.monthly_amount,
-                       coalesce(c.plan_interval, latest_payment.billing_interval)
+                       coalesce(sub.billing_type, c.plan_interval,
+                                latest_payment.billing_interval)
                            as plan_interval
                 from subscriptions sub
                 left join charges c
@@ -187,6 +189,7 @@ EVENT_LABELS = {
     "unsubscribed": "Subscription ended",
     "subscription_frozen": "Subscription frozen",
     "subscription_unfrozen": "Subscription unfrozen",
+    "subscription_reconciled": "Subscription reconciled with Shopify",
     "charge_abandoned": "Charge abandoned",
 }
 

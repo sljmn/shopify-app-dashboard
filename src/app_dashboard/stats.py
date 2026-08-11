@@ -19,7 +19,8 @@ PAYING_THRESHOLD = Decimal("0.01")
 ACTIVITY_TYPES = (
     "installed", "reinstalled", "subscribed", "upgraded", "downgraded",
     "resubscribed", "unsubscribed", "subscription_frozen",
-    "subscription_unfrozen", "charge_abandoned", "uninstalled",
+    "subscription_unfrozen", "subscription_reconciled", "charge_abandoned",
+    "uninstalled",
 )
 
 
@@ -608,7 +609,8 @@ def plan_mix(conn: psycopg.Connection, scope: Scope = Scope.all()) -> list[dict]
     billable, billable_params = _billable("sub")
     rows = conn.execute(
         f"""
-        select c.plan_interval, count(*), coalesce(sum(sub.monthly_amount), 0)
+        select coalesce(sub.billing_type, c.plan_interval), count(*),
+               coalesce(sum(sub.monthly_amount), 0)
         from subscriptions sub
         join charges c on c.app_id = sub.app_id and c.gid = sub.id
         join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
@@ -616,7 +618,7 @@ def plan_mix(conn: psycopg.Connection, scope: Scope = Scope.all()) -> list[dict]
           and s.install_state = 'installed'
           and {billable}
           and {predicate}
-        group by c.plan_interval
+        group by coalesce(sub.billing_type, c.plan_interval)
         order by 3 desc
         """,
         (*billable_params, *params),

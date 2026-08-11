@@ -90,7 +90,8 @@ def _insert_event(conn, app_id, shop_gid, platform_event_id, clean_type, occurre
 
 
 def _upsert_subscription(conn, app_id, sub_id, shop_gid, monthly_amount=None,
-                          converted_at=None, churned_at=None, clear_churn=False):
+                          billing_type=None, converted_at=None, churned_at=None,
+                          clear_churn=False):
     """Upsert one subscription's state.
 
     `clear_churn` un-churns a subscription id that is activating again. The
@@ -102,16 +103,23 @@ def _upsert_subscription(conn, app_id, sub_id, shop_gid, monthly_amount=None,
     """
     conn.execute(
         """
-        insert into subscriptions (app_id, id, shop_gid, monthly_amount, converted_at, churned_at)
-        values (%s, %s, %s, %s, %s, %s)
+        insert into subscriptions (
+            app_id, id, shop_gid, monthly_amount, billing_type,
+            converted_at, churned_at
+        )
+        values (%s, %s, %s, %s, %s, %s, %s)
         on conflict (app_id, id) do update set
             shop_gid = excluded.shop_gid,
             monthly_amount = coalesce(excluded.monthly_amount, subscriptions.monthly_amount),
+            billing_type = coalesce(excluded.billing_type, subscriptions.billing_type),
             converted_at = coalesce(excluded.converted_at, subscriptions.converted_at),
             churned_at = case when %s then null
                               else coalesce(excluded.churned_at, subscriptions.churned_at) end
         """,
-        (app_id, sub_id, shop_gid, monthly_amount, converted_at, churned_at, clear_churn),
+        (
+            app_id, sub_id, shop_gid, monthly_amount, billing_type,
+            converted_at, churned_at, clear_churn,
+        ),
     )
 
 
@@ -261,6 +269,7 @@ def derive_installation(
             # on converted_at -- so the MRR chart read below the MRR tile.
             _upsert_subscription(
                 conn, app_id, sub_id, shop_gid, monthly_amount=new_monthly,
+                billing_type=charge["plan_interval"],
                 converted_at=None if sub_id in converted else occurred_at,
                 clear_churn=True,
             )
@@ -319,7 +328,8 @@ def derive_installation(
             if relationship_installed:
                 _upsert_subscription(
                     conn, app_id, charge["subscription_id"], shop_gid,
-                    monthly_amount=charge["monthly"], clear_churn=True,
+                    monthly_amount=charge["monthly"],
+                    billing_type=charge["plan_interval"], clear_churn=True,
                 )
             ever_paid = ever_paid or charge["monthly"] > 0
             most_recent_subscription = charge["subscription_id"]

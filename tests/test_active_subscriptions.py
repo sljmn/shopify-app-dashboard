@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from app_dashboard.active_subscriptions import (
     SOURCE,
@@ -56,6 +57,7 @@ def test_refresh_only_queries_installed_shops_and_replaces_current_state(
         "stored": 1,
         "removed": 0,
         "trials": 1,
+        "reconciled": 0,
     }
     row = db.execute(
         "select legacy_subscription_id, item_handle, observed_at "
@@ -98,3 +100,71 @@ def test_nil_response_removes_a_stale_snapshot(db, test_app, monkeypatch):
 
     assert summary["removed"] == 1
     assert db.execute("select count(*) from active_subscriptions").fetchone()[0] == 0
+
+
+def test_snapshot_id_mismatch_reconciles_current_mrr_from_latest_payment(
+    db, test_app, monkeypatch
+):
+    changed_at = datetime(2026, 5, 24, 15, 39, 38, tzinfo=timezone.utc)
+    db.execute(
+        "insert into shops (app_id, shop_gid, install_state) "
+        "values (%s, 'shop-1', 'installed')",
+        (test_app.id,),
+    )
+    db.execute(
+        """insert into subscriptions
+               (app_id, id, shop_gid, monthly_amount, billing_type,
+                converted_at, churned_at)
+           values (%s, 'old-annual', 'shop-1', 8.33, 'ANNUAL',
+                   '2026-03-26Z', %s),
+                  (%s, 'new-monthly', 'shop-1', 29, 'EVERY_30_DAYS',
+                   %s, null)""",
+        (test_app.id, changed_at, test_app.id, changed_at),
+    )
+    db.execute(
+        """insert into app_events
+               (app_id, platform_event_id, type, occurred_at, net_change, shop_gid)
+           values (%s, 'plan-change', 'upgraded', %s, 20.67, 'shop-1')""",
+        (test_app.id, changed_at),
+    )
+    db.execute(
+        """insert into transactions
+               (app_id, id, type, created_at, shop_gid, charge_gid,
+                billing_interval, gross_amount)
+           values (%s, 'payment-1', 'AppSubscriptionSale', '2026-04-02Z',
+                   'shop-1', 'old-annual', 'ANNUAL', 99.90)""",
+        (test_app.id,),
+    )
+
+    monkeypatch.setattr(
+        "app_dashboard.active_subscriptions.fetch_active_subscription",
+        lambda *args, **kwargs: {
+            "legacy_subscription_id": "old-annual",
+            "billing_period": "ANNUAL",
+            "trial_ends_at": None,
+            "cancel_at_end_of_cycle": False,
+            "item_handle": "starter",
+            "item_description": "Starter",
+            "currency_code": "USD",
+            "payload": {"source": "test"},
+        },
+    )
+
+    summary = sync_active_subscriptions(
+        db, FakeClient(), test_app, sleep=lambda _: None,
+        now=lambda: datetime(2026, 8, 11, tzinfo=timezone.utc),
+    )
+
+    assert summary["reconciled"] == 1
+    current = db.execute(
+        "select id, monthly_amount, billing_type from subscriptions "
+        "where app_id=%s and shop_gid='shop-1' and churned_at is null",
+        (test_app.id,),
+    ).fetchone()
+    assert current == ("new-monthly", Decimal("8.33"), "ANNUAL")
+    movement = db.execute(
+        "select type, net_change from app_events "
+        "where app_id=%s and platform_event_id='plan-change'",
+        (test_app.id,),
+    ).fetchone()
+    assert movement == ("subscription_reconciled", Decimal("0.00"))
