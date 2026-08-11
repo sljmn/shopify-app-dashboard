@@ -788,6 +788,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         search: str | None = None,
         install_state: str | None = None,
         plan: str | None = None,
+        source: str | None = None,
+        keyword: str | None = None,
         page: int = 1,
         user: str = Depends(verify_creds),
     ):
@@ -799,6 +801,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             # Whitelisted in customers._filters; anything else falls through to
             # no filter rather than to an empty page.
             "plan": plan or None,
+            "source": source or None,
+            "keyword": keyword or None,
         }
         conn = conn_factory()
         try:
@@ -832,6 +836,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "search": search or "",
                 "install_state": install_state or "",
                 "plan": plan or "",
+                "source": source or "",
+                "keyword": keyword or "",
                 "plan_choices": [(v, PLAN_LABELS.get(v, v)) for v in PLAN_INTERVALS],
                 "page": page,
                 "pages": max(1, ceil(total / CUSTOMERS_PAGE_SIZE)),

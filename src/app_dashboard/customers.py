@@ -24,7 +24,7 @@ PLAN_INTERVALS = ("EVERY_30_DAYS", "ANNUAL")
 
 
 def _filters(
-    industry, country, search, install_state, plan, scope: Scope
+    industry, country, search, install_state, plan, source, keyword, scope: Scope
 ) -> tuple[str, list]:
     """Build the additive WHERE shared by the page query and its count.
 
@@ -60,16 +60,33 @@ def _filters(
         where.append("(s.shop_name ilike %s or s.shop_domain ilike %s or a.name ilike %s)")
         needle = f"%{search}%"
         params.extend([needle, needle, needle])
+    if source is not None:
+        where.append(
+            """exists (select 1 from aso_install_sources attr
+                       where attr.app_id=s.app_id
+                         and lower(attr.shop_domain)=lower(s.shop_domain)
+                         and attr.source=%s)"""
+        )
+        params.append(source)
+    if keyword is not None:
+        where.append(
+            """exists (select 1 from aso_install_sources attr
+                       where attr.app_id=s.app_id
+                         and lower(attr.shop_domain)=lower(s.shop_domain)
+                         and attr.source_value ilike %s)"""
+        )
+        params.append(f"%{keyword}%")
     return f"where {' and '.join(where)}", params
 
 
 def list_customers(conn: psycopg.Connection, *, industry=None, country=None,
                     search=None, install_state=None, plan=None,
+                    source=None, keyword=None,
                     sort="installed_at", limit=100, offset=0,
                     scope: Scope = Scope.all()) -> list[dict]:
     """Filter shops by industry/country/state/plan/search (additive), sorted via whitelist."""
     where_sql, params = _filters(
-        industry, country, search, install_state, plan, scope
+        industry, country, search, install_state, plan, source, keyword, scope
     )
     order_sql = SORTS.get(sort, SORTS["installed_at"])
     params.extend([limit, offset])
@@ -90,7 +107,10 @@ def list_customers(conn: psycopg.Connection, *, industry=None, country=None,
                        as plan_interval,
                    trial.trial_ends_at,
                    latest_event.type as latest_event_type,
-                   latest_event.occurred_at as latest_event_at
+                   latest_event.occurred_at as latest_event_at,
+                   attribution.source as attribution_source,
+                   attribution.source_type as attribution_source_type,
+                   attribution.source_value as attribution_keyword
             from shops s
             join apps a on a.id = s.app_id
             left join lateral (
@@ -125,6 +145,14 @@ def list_customers(conn: psycopg.Connection, *, industry=None, country=None,
                 where e.app_id = s.app_id and e.shop_gid = s.shop_gid
                 order by e.occurred_at desc, e.id desc limit 1
             ) latest_event on true
+            left join lateral (
+                select attr.source, attr.source_type, attr.source_value
+                from aso_install_sources attr
+                where attr.app_id=s.app_id
+                  and lower(attr.shop_domain)=lower(s.shop_domain)
+                order by attr.installed_on desc, attr.observed_at desc
+                limit 1
+            ) attribution on true
             {where_sql} order by {order_sql} limit %s offset %s""",
         params,
     )
@@ -164,11 +192,12 @@ def list_customers(conn: psycopg.Connection, *, industry=None, country=None,
 
 def count_customers(conn: psycopg.Connection, *, industry=None, country=None,
                     search=None, install_state=None, plan=None,
+                    source=None, keyword=None,
                     scope: Scope = Scope.all()) -> int:
     """How many rows the same filters match, ignoring limit/offset. Without this
     the page can only say "here are 50 rows", not "50 of 119"."""
     where_sql, params = _filters(
-        industry, country, search, install_state, plan, scope
+        industry, country, search, install_state, plan, source, keyword, scope
     )
     return conn.execute(
         f"select count(*) from shops s join apps a on a.id=s.app_id {where_sql}",
@@ -321,6 +350,16 @@ def customer_detail(
             """,
             (app_id, shop_gid),
         ).fetchall()
+        attribution_row = conn.execute(
+            """
+            select installed_on, source, source_type, source_value,
+                   locale, country, device
+            from aso_install_sources
+            where app_id=%s and lower(shop_domain)=lower(%s)
+            order by installed_on desc, observed_at desc limit 1
+            """,
+            (app_id, installation["shop_domain"]),
+        ).fetchone() if installation["shop_domain"] else None
         installs = [
             event for event in timeline
             if event["kind"] in ("installed", "reinstalled")
@@ -363,6 +402,13 @@ def customer_detail(
                  "last_at": last}
                 for kind, count, first, last in usage
             ],
+            "attribution": (
+                {"installed_on": attribution_row[0], "source": attribution_row[1],
+                 "source_type": attribution_row[2], "source_value": attribution_row[3],
+                 "locale": attribution_row[4], "country": attribution_row[5],
+                 "device": attribution_row[6]}
+                if attribution_row else None
+            ),
             "first_install_at": installs[0]["at"] if installs else None,
             "install_count": len(installs),
             "current_state": (
@@ -421,4 +467,19 @@ def distinct_facets(
             params,
         ).fetchall()
     ]
-    return {"industries": industries, "countries": countries, "states": states}
+    source_predicate, source_params = scope.predicate("shops")
+    sources = [
+        row[0] for row in conn.execute(
+            f"""select distinct attr.source
+                from aso_install_sources attr
+                join shops on shops.app_id=attr.app_id
+                          and lower(shops.shop_domain)=lower(attr.shop_domain)
+                where attr.source <> '' and {source_predicate}
+                order by attr.source""",
+            source_params,
+        ).fetchall()
+    ]
+    return {
+        "industries": industries, "countries": countries, "states": states,
+        "sources": sources,
+    }

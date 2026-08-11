@@ -50,6 +50,26 @@ def test_filter_by_industry_and_country(db):
     assert [r["shop_gid"] for r in rows] == ["ai1"]
 
 
+def test_customer_rows_join_and_filter_attribution_by_app_and_domain(db):
+    _shop(db, "attributed", shop_domain="Example.MyShopify.com")
+    db.execute(
+        """insert into aso_install_sources
+           (app_id, attribution_key, shop_domain, installed_on, source, source_value)
+           values (%s, 'key', 'example.myshopify.com', '2026-08-11',
+                   'App Store Search', 'vat exemption')""",
+        (APP.id,),
+    )
+    rows = list_customers(db, source="App Store Search", keyword="vat")
+    assert [(row["shop_gid"], row["attribution_keyword"]) for row in rows] == [
+        ("attributed", "vat exemption")
+    ]
+
+
+def test_customer_detail_distinguishes_missing_attribution(db):
+    _shop(db, "missing", shop_domain="missing.myshopify.com")
+    assert _only_app(customer_detail(db, "missing"))["attribution"] is None
+
+
 def test_facets_are_distinct_sorted(db):
     _shop(db, "ai1", industry="Apparel", country="US")
     _shop(db, "ai2", industry="Food", country="US")

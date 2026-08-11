@@ -680,6 +680,15 @@
             display: flex; flex-wrap: wrap; gap: 10px 24px; margin-bottom: 18px;
             color: var(--ink-2); font-size: 13px;
         }
+        .customer-attribution { margin: 10px 0 24px; }
+        .customer-attribution h2 { margin-bottom: 10px; }
+        .detail-list {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 12px 22px; margin: 0;
+        }
+        .detail-list div { min-width: 0; }
+        .detail-list dt { color: var(--muted); font-size: 12px; font-weight: 600; }
+        .detail-list dd { margin: 2px 0 0; overflow-wrap: anywhere; }
         select:not(.app-selector-fallback), input[type="search"],
         input[data-datepicker], .flatpickr-input,
         .date-control input:not([type="hidden"]) {

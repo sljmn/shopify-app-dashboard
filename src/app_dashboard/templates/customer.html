@@ -18,6 +18,7 @@
 {% set install_count = installation.install_count %}
 {% set payments = installation.payments %}
 {% set usage = installation.usage %}
+{% set attribution = installation.attribution %}
 <section class="app-installation">
 <h2>{{ app.name }}</h2>
 <p class="sub">
@@ -75,6 +76,21 @@
         <div class="num">{{ money.count }}</div>
     </div>
 </div>
+
+<section class="customer-attribution">
+    <h2>Install attribution</h2>
+    {% if attribution %}
+    <dl class="detail-list">
+        <div><dt>Date</dt><dd>{{ attribution.installed_on }}</dd></div>
+        <div><dt>Source</dt><dd>{{ attribution.source or "—" }}</dd></div>
+        <div><dt>Type</dt><dd>{{ attribution.source_type or "—" }}</dd></div>
+        <div><dt>Keyword/referrer</dt><dd>{{ attribution.source_value or "—" }}</dd></div>
+        <div><dt>Locale</dt><dd>{{ attribution.locale or "—" }}</dd></div>
+        <div><dt>Country</dt><dd>{{ attribution.country or "—" }}</dd></div>
+        <div><dt>Device</dt><dd>{{ attribution.device or "—" }}</dd></div>
+    </dl>
+    {% else %}<p class="sub">No attribution found in the connected GA4 property.</p>{% endif %}
+</section>
 
 <div class="card">
     <h2 id="timeline">Everything that happened</h2>

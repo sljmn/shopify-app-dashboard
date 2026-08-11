@@ -30,6 +30,11 @@
         <option value="{{ value }}" {% if value == plan %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
     </select>
+    <select name="source">
+        <option value="">All install sources</option>
+        {% for value in facets.sources %}<option value="{{ value }}"{% if value == source %} selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+    <input type="search" name="keyword" value="{{ keyword }}" placeholder="Keyword or referrer">
     <input type="search" name="search" value="{{ search }}" placeholder="Search merchant or domain">
     <button type="submit">Filter</button>
 </form>
@@ -43,6 +48,8 @@
                 <th>Plan</th>
                 <th class="num">MRR</th>
                 <th>Status</th>
+                <th>Source</th>
+                <th>Keyword</th>
                 <th>Installed</th>
                 <th>Latest event</th>
             </tr>
@@ -58,6 +65,8 @@
                 <td>{{ row.plan_label or "—" }}</td>
                 <td class="num">{% if row.mrr %}${{ "%.2f"|format(row.mrr) }}{% else %}<span class="sub">—</span>{% endif %}</td>
                 <td><span class="pill {{ row.customer_status|lower }}">{{ row.customer_status }}</span></td>
+                <td>{{ row.attribution_source or "—" }}</td>
+                <td>{{ row.attribution_keyword or "—" }}</td>
                 <td class="sub">{{ row.installed_at|local_time("%b %-d, %Y") if row.installed_at else "—" }}</td>
                 <td>
                     {% if row.latest_event_type %}{{ row.latest_event_type|replace("_", " ")|title }}{% else %}<span class="sub">—</span>{% endif %}
@@ -65,7 +74,7 @@
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="7">No shops match these filters. The search box matches app, shop name,
+            <tr><td colspan="9">No shops match these filters. The search box matches app, shop name,
                 and domain, not industry.</td></tr>
             {% endfor %}
         </tbody>
