@@ -1,0 +1,24 @@
+<div id="merchant-search-results" aria-live="polite">
+    {% if search %}
+    <div class="merchant-search-results">
+        {% for row in rows %}
+        <a class="merchant-search-result" data-merchant-result
+           href="/customers/{{ row.shop_gid|urlencode }}{% if selected_app %}?app={{ selected_app.slug|urlencode }}{% endif %}">
+            <span class="merchant-search-identity">
+                <strong>{{ row.shop_name or row.shop_domain or row.shop_gid }}</strong>
+                {% if row.shop_domain %}<span class="sub">{{ row.shop_domain }}</span>{% endif %}
+            </span>
+            <span class="merchant-search-meta">
+                <span>{{ row.app_name }}</span>
+                <span class="pill {{ row.install_state }}">{{ row.install_state }}</span>
+            </span>
+        </a>
+        {% else %}
+        <p class="merchant-search-empty">No merchants found.</p>
+        {% endfor %}
+        {% if has_more %}
+        <a class="merchant-search-all" href="{{ all_results_url }}">View all results</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>

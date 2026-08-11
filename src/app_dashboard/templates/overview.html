@@ -52,6 +52,20 @@
     </span>
 </div>
 
+<form class="merchant-search" method="get" action="/customers" role="search">
+    {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
+    <input type="search" name="search" aria-label="Search merchants"
+           placeholder="Search merchant or Shopify domain"
+           autocomplete="off"
+           hx-get="/customer-search"
+           hx-trigger="input changed delay:250ms, search"
+           hx-target="#merchant-search-results"
+           hx-swap="outerHTML"
+           hx-include="closest form">
+    <button type="submit">Search</button>
+</form>
+<div id="merchant-search-results" aria-live="polite"></div>
+
 <div class="cards">
     {{ ui.stat("installed", stats.installed, compare=comparison.installed) }}
     {{ ui.stat("active_mrr", "$" ~ "%.2f"|format(stats.active_mrr),

@@ -1256,6 +1256,87 @@ def test_the_headline_tiles_ignore_the_range(db):
 
 # --- Drill-downs ---------------------------------------------------------------
 
+def test_overview_contains_the_scoped_merchant_search(db):
+    body = _signed_in().get("/?app=test-app").text
+    assert 'class="merchant-search"' in body
+    assert 'action="/customers"' in body
+    assert 'hx-get="/customer-search"' in body
+    assert 'name="app" value="test-app"' in body
+
+
+def test_merchant_search_is_scoped_bounded_and_links_to_details(
+    db, app_factory, monkeypatch
+):
+    other = app_factory(slug="other-app", name="Other App")
+    monkeypatch.setenv("TOKEN_2", "second-partner-token")
+    for index in range(10):
+        db.execute(
+            """insert into shops
+                   (shop_gid, shop_name, shop_domain, install_state, installed_at)
+               values (%s, %s, %s, 'installed', '2026-01-01Z')""",
+            (
+                f"needle-{index}",
+                f"Needle Merchant {index}",
+                f"needle-{index}.myshopify.com",
+            ),
+        )
+    db.execute(
+        """insert into shops
+               (app_id, shop_gid, shop_name, shop_domain, install_state)
+           values (%s, 'other-needle', 'Other Needle',
+                   'other-needle.myshopify.com', 'installed')""",
+        (other.id,),
+    )
+    db.commit()
+
+    c = _signed_in()
+    combined = c.get("/customer-search?search=needle")
+    assert combined.status_code == 200
+    assert combined.text.count("data-merchant-result") == 8
+    assert "View all results" in combined.text
+
+    scoped = c.get("/customer-search?search=needle&app=other-app")
+    assert "Other Needle" in scoped.text
+    assert "Needle Merchant 0" not in scoped.text
+    assert "?app=other-app" in scoped.text
+
+    blank = c.get("/customer-search?search=   ")
+    assert blank.status_code == 200
+    assert "data-merchant-result" not in blank.text
+
+
+def test_customer_table_shows_current_commercial_state(db):
+    db.execute(
+        """insert into shops
+               (shop_gid, shop_name, shop_domain, install_state, installed_at)
+           values ('paid-shop', 'Paid Merchant', 'paid.myshopify.com',
+                   'installed', '2026-01-01Z')"""
+    )
+    db.execute(
+        """insert into subscriptions
+               (id, shop_gid, monthly_amount, converted_at)
+           values ('paid-sub', 'paid-shop', 19.00, '2026-01-02Z')"""
+    )
+    db.execute(
+        "insert into charges (gid, plan_interval) "
+        "values ('paid-sub', 'EVERY_30_DAYS')"
+    )
+    db.execute(
+        """insert into app_events
+               (platform_event_id, type, occurred_at, shop_gid)
+           values ('paid-event', 'subscribed', '2026-01-02Z', 'paid-shop')"""
+    )
+    db.commit()
+
+    body = unescape(_signed_in().get("/customers").text)
+    for heading in ("Merchant", "App", "Plan", "MRR", "Status", "Installed", "Latest event"):
+        assert heading in body
+    assert "Paid Merchant" in body
+    assert "Monthly" in body
+    assert "$19.00" in body
+    assert "Paying" in body
+    assert "Subscribed" in body
+
 def test_country_and_plan_rows_link_into_the_customers_filters(db):
     from app_dashboard.db import connect
     conn = connect()

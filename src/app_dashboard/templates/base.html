@@ -480,6 +480,8 @@
         .pill.uninstalled { background: var(--gone-soft); color: var(--muted); }
         .pill.reinstalled { background: var(--brand-soft); color: var(--brand); }
         .pill.paid { background: var(--ok-soft); color: var(--ok); font-family: var(--mono); }
+        .pill.paying { background: var(--ok-soft); color: var(--ok); }
+        .pill.free, .pill.cancelled { background: var(--gone-soft); color: var(--ink-2); }
         .pill.trial { background: var(--brand-soft); color: var(--brand); }
         .pill.cancelling { background: color-mix(in srgb, var(--down) 12%, var(--card)); color: var(--down); }
         .money-up { color: var(--ok); }
@@ -499,6 +501,8 @@
             padding: 8px 10px; background: var(--card);
         }
         input[type="search"] { min-width: 260px; }
+        .customer-table { min-width: 860px; }
+        .customer-domain, .customer-event-at { display: block; margin-top: 2px; }
         /* Read-only block for lists meant to be selected and pasted elsewhere. */
         .copyable {
             width: 100%; font: 13px var(--mono); color: var(--ink-2);
@@ -576,6 +580,33 @@
         }
         .ops-strip.stale { border-color: var(--down); color: var(--down); }
         .ops-strip.stale .dot { background: var(--down); }
+        .merchant-search {
+            display: flex; gap: 10px; padding: 12px;
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 10px;
+        }
+        .merchant-search input[type="search"] { flex: 1; min-width: 0; }
+        #merchant-search-results:empty { display: none; }
+        .merchant-search-results {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 10px; overflow: hidden;
+        }
+        .merchant-search-result {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 18px; padding: 11px 14px; color: var(--ink);
+            border-bottom: 1px solid var(--border);
+        }
+        .merchant-search-result:hover { background: var(--row-hover); text-decoration: none; }
+        .merchant-search-identity { min-width: 0; }
+        .merchant-search-identity strong, .merchant-search-identity .sub { display: block; }
+        .merchant-search-identity strong {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .merchant-search-meta { display: flex; align-items: center; gap: 12px; flex: none; }
+        .merchant-search-empty { margin: 0; padding: 12px 14px; color: var(--muted); }
+        .merchant-search-all {
+            display: block; padding: 10px 14px; font-size: 13px; font-weight: 600;
+        }
         .sync-actions { position: relative; margin-left: auto; color: var(--ink-2); }
         .sync-actions > summary { list-style: none; white-space: nowrap; }
         .sync-actions > summary::-webkit-details-marker { display: none; }
@@ -599,6 +630,11 @@
         .sync-progress { flex-basis: 100%; min-height: 0; color: var(--muted); }
         .sync-progress:empty { display: none; }
         @media (max-width: 620px) {
+            .merchant-search { align-items: stretch; flex-direction: column; }
+            .merchant-search input[type="search"] { width: 100%; }
+            .merchant-search button { justify-content: center; }
+            .merchant-search-result { align-items: flex-start; flex-direction: column; gap: 6px; }
+            .merchant-search-meta { width: 100%; justify-content: space-between; }
             .sync-actions { width: 100%; margin-left: 0; }
             .sync-actions > summary { width: 100%; justify-content: center; }
             .sync-menu { position: static; width: 100%; margin-top: 7px; }

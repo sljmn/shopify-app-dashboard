@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import psycopg
 from psycopg.rows import dict_row
 
@@ -13,6 +15,7 @@ SORTS = {
 
 
 INSTALL_STATES = ("installed", "uninstalled")
+PAYING_THRESHOLD = Decimal("0.01")
 
 # Billing intervals a shop can be filtered by. A whitelist rather than a facet
 # query: these two are the whole plan catalogue, and an unrecognised value has
@@ -80,12 +83,81 @@ def list_customers(conn: psycopg.Connection, *, industry=None, country=None,
         f"""select s.app_id, a.slug as app_slug, a.name as app_name,
                    s.shop_gid, s.shop_domain, s.shop_name, s.country, s.industry,
                    s.install_state, s.installed_at, s.uninstalled_at,
-                   s.uninstall_reason, s.uninstall_description, s.reviewed_at
-            from shops s join apps a on a.id = s.app_id
+                   s.uninstall_reason, s.uninstall_description, s.reviewed_at,
+                   current_sub.monthly_amount,
+                   coalesce(current_sub.plan_interval, trial.billing_period)
+                       as plan_interval,
+                   trial.trial_ends_at,
+                   latest_event.type as latest_event_type,
+                   latest_event.occurred_at as latest_event_at
+            from shops s
+            join apps a on a.id = s.app_id
+            left join lateral (
+                select sub.monthly_amount,
+                       coalesce(c.plan_interval, latest_payment.billing_interval)
+                           as plan_interval
+                from subscriptions sub
+                left join charges c
+                  on c.app_id = sub.app_id and c.gid = sub.id
+                left join lateral (
+                    select t.billing_interval
+                    from transactions t
+                    where t.app_id = sub.app_id
+                      and t.shop_gid = sub.shop_gid
+                      and t.billing_interval is not null
+                    order by t.created_at desc limit 1
+                ) latest_payment on true
+                where sub.app_id = s.app_id
+                  and sub.shop_gid = s.shop_gid
+                  and sub.churned_at is null
+                order by sub.converted_at desc nulls last, sub.id
+                limit 1
+            ) current_sub on true
+            left join active_subscriptions trial
+              on trial.app_id = s.app_id
+             and trial.shop_gid = s.shop_gid
+             and trial.trial_ends_at > now()
+            left join lateral (
+                select e.type, e.occurred_at
+                from app_events e
+                where e.app_id = s.app_id and e.shop_gid = s.shop_gid
+                order by e.occurred_at desc, e.id desc limit 1
+            ) latest_event on true
             {where_sql} order by {order_sql} limit %s offset %s""",
         params,
     )
-    return cur.fetchall()
+    rows = cur.fetchall()
+    for row in rows:
+        amount = row["monthly_amount"]
+        in_trial = row["trial_ends_at"] is not None
+        installed = row["install_state"] == "installed"
+        paying = amount is not None and amount > PAYING_THRESHOLD
+
+        if in_trial:
+            row["plan_label"] = "Trial"
+        elif amount is None:
+            row["plan_label"] = None
+        elif paying:
+            row["plan_label"] = (
+                "Annual" if row["plan_interval"] == "ANNUAL" else "Monthly"
+            )
+        else:
+            row["plan_label"] = "Free"
+
+        row["mrr"] = amount if installed and not in_trial and paying else Decimal("0")
+        if not installed:
+            row["customer_status"] = "Uninstalled"
+        elif in_trial:
+            row["customer_status"] = "Trial"
+        elif paying:
+            row["customer_status"] = "Paying"
+        elif amount is not None:
+            row["customer_status"] = "Free"
+        elif row["latest_event_type"] == "unsubscribed":
+            row["customer_status"] = "Cancelled"
+        else:
+            row["customer_status"] = "Installed"
+    return rows
 
 
 def count_customers(conn: psycopg.Connection, *, industry=None, country=None,

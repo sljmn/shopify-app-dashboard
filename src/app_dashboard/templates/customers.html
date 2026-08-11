@@ -30,34 +30,42 @@
         <option value="{{ value }}" {% if value == plan %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
     </select>
-    <input type="search" name="search" value="{{ search }}" placeholder="Search shop or domain">
+    <input type="search" name="search" value="{{ search }}" placeholder="Search merchant or domain">
     <button type="submit">Filter</button>
 </form>
 <div id="customers-results">
 <div class="table-card">
-    <table>
+    <table class="customer-table">
         <thead>
             <tr>
+                <th>Merchant</th>
                 <th>App</th>
-                <th>Shop</th>
-                <th>Domain</th>
-                <th>Country</th>
-                <th>Industry</th>
-                <th>State</th>
+                <th>Plan</th>
+                <th class="num">MRR</th>
+                <th>Status</th>
+                <th>Installed</th>
+                <th>Latest event</th>
             </tr>
         </thead>
         <tbody>
             {% for row in rows %}
             <tr>
+                <td>
+                    <a href="/customers/{{ row.shop_gid|urlencode }}{% if selected_app %}?app={{ selected_app.slug|urlencode }}{% endif %}">{{ row.shop_name or row.shop_domain or row.shop_gid }}</a>
+                    {% if row.shop_domain %}<span class="sub customer-domain">{{ row.shop_domain }}</span>{% endif %}
+                </td>
                 <td>{{ row.app_name }}</td>
-                <td><a href="/customers/{{ row.shop_gid|urlencode }}{% if selected_app %}?app={{ selected_app.slug|urlencode }}{% endif %}">{{ row.shop_name or row.shop_domain or row.shop_gid }}</a></td>
-                <td class="sub">{{ row.shop_domain or "" }}</td>
-                <td>{{ row.country or "" }}</td>
-                <td class="sub">{{ row.industry or "" }}</td>
-                <td>{% if row.install_state %}<span class="pill {{ row.install_state }}">{{ row.install_state }}</span>{% endif %}</td>
+                <td>{{ row.plan_label or "—" }}</td>
+                <td class="num">{% if row.mrr %}${{ "%.2f"|format(row.mrr) }}{% else %}<span class="sub">—</span>{% endif %}</td>
+                <td><span class="pill {{ row.customer_status|lower }}">{{ row.customer_status }}</span></td>
+                <td class="sub">{{ row.installed_at.strftime("%b %-d, %Y") if row.installed_at else "—" }}</td>
+                <td>
+                    {% if row.latest_event_type %}{{ row.latest_event_type|replace("_", " ")|title }}{% else %}<span class="sub">—</span>{% endif %}
+                    {% if row.latest_event_at %}<span class="sub customer-event-at">{{ row.latest_event_at.strftime("%b %-d, %Y") }}</span>{% endif %}
+                </td>
             </tr>
             {% else %}
-            <tr><td colspan="6">No shops match these filters. The search box matches app, shop name,
+            <tr><td colspan="7">No shops match these filters. The search box matches app, shop name,
                 and domain, not industry.</td></tr>
             {% endfor %}
         </tbody>

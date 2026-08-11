@@ -894,6 +894,37 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             },
         )
 
+    @app.get("/customer-search")
+    def customer_search(
+        request: Request,
+        search: str | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        query = (search or "").strip()
+        conn = conn_factory()
+        try:
+            scope, selected_app, _ = resolve_scope(request, conn)
+            matches = (
+                list_customers(conn, search=query, limit=9, scope=scope)
+                if query else []
+            )
+        finally:
+            conn.close()
+        query_values = {"search": query}
+        if selected_app:
+            query_values["app"] = selected_app.slug
+        return templates.TemplateResponse(
+            request,
+            "_merchant_search_results.html",
+            {
+                "search": query,
+                "rows": matches[:8],
+                "has_more": len(matches) > 8,
+                "selected_app": selected_app,
+                "all_results_url": "/customers?" + urlencode(query_values),
+            },
+        )
+
     @app.get("/activity")
     def activity(
         request: Request,

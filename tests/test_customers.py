@@ -13,7 +13,7 @@ from app_dashboard.scope import Scope
 APP = None
 OWNED_TABLES = (
     "raw_app_events", "app_events", "charges", "subscriptions", "shops",
-    "transactions", "usage_events",
+    "transactions", "usage_events", "active_subscriptions",
 )
 
 
@@ -91,6 +91,82 @@ def test_paging_walks_the_whole_result_set_without_gaps_or_repeats(db):
     for page in range(3):
         seen += [r["shop_gid"] for r in list_customers(db, limit=5, offset=page * 5)]
     assert len(seen) == 12 and len(set(seen)) == 12
+
+
+def test_customer_rows_expose_current_commercial_state_and_latest_event(db):
+    for gid, state in (
+        ("paid", "installed"),
+        ("trial", "installed"),
+        ("free", "installed"),
+        ("cancelled", "installed"),
+        ("gone", "uninstalled"),
+    ):
+        _shop(
+            db,
+            gid,
+            shop_domain=f"{gid}.myshopify.com",
+            install_state=state,
+            installed_at="2026-01-01Z",
+        )
+
+    for identifier, gid, amount, churned_at, interval in (
+        ("sub-paid", "paid", "19.00", None, "EVERY_30_DAYS"),
+        ("sub-trial", "trial", "15.00", None, "EVERY_30_DAYS"),
+        ("sub-free", "free", "0.00", None, "EVERY_30_DAYS"),
+        ("sub-cancelled", "cancelled", "9.00", "2026-02-01Z", "EVERY_30_DAYS"),
+    ):
+        db.execute(
+            "insert into subscriptions "
+            "(id, shop_gid, monthly_amount, converted_at, churned_at) "
+            "values (%s, %s, %s, '2026-01-02Z', %s)",
+            (identifier, gid, amount, churned_at),
+        )
+        db.execute(
+            "insert into charges (gid, plan_interval) values (%s, %s)",
+            (identifier, interval),
+        )
+
+    db.execute(
+        """insert into active_subscriptions
+               (shop_gid, legacy_subscription_id, billing_period, trial_ends_at,
+                observed_at)
+           values ('trial', 'sub-trial', 'EVERY_30_DAYS', '2099-01-01Z', now())"""
+    )
+    for index, (gid, kind, at) in enumerate((
+        ("paid", "installed", "2026-01-01Z"),
+        ("paid", "subscribed", "2026-01-02Z"),
+        ("trial", "subscribed", "2026-01-02Z"),
+        ("free", "subscribed", "2026-01-02Z"),
+        ("cancelled", "unsubscribed", "2026-02-01Z"),
+        ("gone", "uninstalled", "2026-03-01Z"),
+    )):
+        db.execute(
+            "insert into app_events "
+            "(platform_event_id, type, occurred_at, shop_gid) values (%s, %s, %s, %s)",
+            (f"event-{index}", kind, at, gid),
+        )
+    db.commit()
+
+    rows = {row["shop_gid"]: row for row in list_customers(db)}
+
+    assert rows["paid"]["plan_label"] == "Monthly"
+    assert rows["paid"]["mrr"] == Decimal("19.00")
+    assert rows["paid"]["customer_status"] == "Paying"
+    assert rows["paid"]["latest_event_type"] == "subscribed"
+    assert rows["paid"]["latest_event_at"].isoformat().startswith("2026-01-02")
+
+    assert rows["trial"]["plan_label"] == "Trial"
+    assert rows["trial"]["mrr"] == Decimal("0")
+    assert rows["trial"]["customer_status"] == "Trial"
+
+    assert rows["free"]["plan_label"] == "Free"
+    assert rows["free"]["mrr"] == Decimal("0")
+    assert rows["free"]["customer_status"] == "Free"
+
+    assert rows["cancelled"]["plan_label"] is None
+    assert rows["cancelled"]["customer_status"] == "Cancelled"
+    assert rows["gone"]["mrr"] == Decimal("0")
+    assert rows["gone"]["customer_status"] == "Uninstalled"
 
 
 def _event(db, gid, raw_type, clean_type, at, **kw):
