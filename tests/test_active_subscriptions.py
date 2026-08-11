@@ -252,3 +252,64 @@ def test_snapshot_id_mismatch_reconciles_current_mrr_from_latest_payment(
     assert movement == (
         "subscription_reconciled", Decimal("0.00"), Decimal("99.90"), "ANNUAL"
     )
+
+
+def test_snapshot_interval_repairs_annual_mrr_without_a_transaction(
+    db, test_app, monkeypatch
+):
+    converted_at = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    db.execute(
+        "insert into shops (app_id, shop_gid, install_state) "
+        "values (%s, 'shop-1', 'installed')",
+        (test_app.id,),
+    )
+    db.execute(
+        """insert into charges
+               (app_id, gid, amount, plan_amount, plan_interval, subscription_id)
+           values (%s, 'annual-sub', 60, 60, 'EVERY_30_DAYS', 'annual-sub')""",
+        (test_app.id,),
+    )
+    db.execute(
+        """insert into subscriptions
+               (app_id, id, shop_gid, monthly_amount, billing_type, converted_at)
+           values (%s, 'annual-sub', 'shop-1', 60, 'EVERY_30_DAYS', %s)""",
+        (test_app.id, converted_at),
+    )
+    db.execute(
+        """insert into app_events
+               (app_id, platform_event_id, type, occurred_at, net_change,
+                plan_amount, plan_interval, shop_gid)
+           values (%s, 'subscribed', 'subscribed', %s, 60, 60,
+                   'EVERY_30_DAYS', 'shop-1')""",
+        (test_app.id, converted_at),
+    )
+    monkeypatch.setattr(
+        "app_dashboard.active_subscriptions.fetch_active_subscription",
+        lambda *args, **kwargs: {
+            "legacy_subscription_id": "annual-sub",
+            "billing_period": "ANNUAL",
+            "trial_ends_at": None,
+            "cancel_at_end_of_cycle": False,
+            "item_handle": "standard",
+            "item_description": "Standard",
+            "currency_code": "USD",
+            "payload": {"source": "test"},
+        },
+    )
+
+    summary = sync_active_subscriptions(
+        db, FakeClient(), test_app, sleep=lambda _: None,
+        now=lambda: datetime(2026, 8, 11, tzinfo=timezone.utc),
+    )
+
+    assert summary["reconciled"] == 1
+    assert db.execute(
+        "select monthly_amount, billing_type from subscriptions "
+        "where app_id=%s and id='annual-sub'",
+        (test_app.id,),
+    ).fetchone() == (Decimal("5.00"), "ANNUAL")
+    assert db.execute(
+        "select net_change, plan_amount, plan_interval from app_events "
+        "where app_id=%s and platform_event_id='subscribed'",
+        (test_app.id,),
+    ).fetchone() == (Decimal("5.00"), Decimal("60.00"), "ANNUAL")

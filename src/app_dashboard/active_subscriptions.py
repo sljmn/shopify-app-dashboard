@@ -27,32 +27,19 @@ def _reconcile_paid_state(
 ) -> bool:
     """Correct event-derived current MRR with Shopify's current paid state.
 
-    Shopify can keep the legacy subscription ID while a plan change event uses
-    a newly minted ID. The snapshot has the authoritative ID and interval but
-    exposes no amount, so the latest positive subscription sale supplies the
-    price. Historical raw events remain untouched; only their clean movement
-    and the current derived subscription are corrected.
+    The snapshot has the authoritative interval but exposes no amount. Prefer
+    a settled subscription sale for the price and fall back to the event charge
+    while a new app has no transaction history yet. Historical raw events
+    remain untouched; only their clean movement and current derived state are
+    corrected.
     """
     snapshot_id = snapshot.get("legacy_subscription_id")
-    if not snapshot_id:
+    snapshot_period = snapshot.get("billing_period")
+    if not snapshot_id or not snapshot_period:
         return False
-    payment = conn.execute(
-        """
-        select gross_amount, coalesce(billing_interval, %s)
-        from transactions
-        where app_id = %s and shop_gid = %s and charge_gid = %s
-          and type = 'AppSubscriptionSale' and gross_amount > 0
-        order by created_at desc, id desc
-        limit 1
-        """,
-        (snapshot.get("billing_period"), app_id, shop_gid, snapshot_id),
-    ).fetchone()
-    if payment is None or payment[1] is None:
-        return False
-    target = normalize_monthly(payment[0], payment[1])
     live = conn.execute(
         """
-        select id, monthly_amount, converted_at
+        select id, monthly_amount, converted_at, billing_type
         from subscriptions
         where app_id = %s and shop_gid = %s and churned_at is null
         order by converted_at desc nulls last, id
@@ -62,18 +49,51 @@ def _reconcile_paid_state(
     ).fetchone()
     if live is None:
         return False
-    live_id, current, converted_at = live
-    if live_id == snapshot_id:
-        return False
+    live_id, current, converted_at, current_period = live
+
+    payment = conn.execute(
+        """
+        select gross_amount
+        from transactions
+        where app_id = %s and shop_gid = %s and charge_gid = %s
+          and type = 'AppSubscriptionSale' and gross_amount > 0
+        order by created_at desc, id desc
+        limit 1
+        """,
+        (app_id, shop_gid, snapshot_id),
+    ).fetchone()
+    if payment is not None:
+        plan_amount = payment[0]
+    else:
+        charge = conn.execute(
+            """
+            select coalesce(plan_amount, amount)
+            from charges
+            where app_id = %s and gid in (%s, %s)
+              and coalesce(plan_amount, amount) is not null
+              and not test
+            order by case when gid = %s then 0 else 1 end
+            limit 1
+            """,
+            (app_id, snapshot_id, live_id, snapshot_id),
+        ).fetchone()
+        if charge is None:
+            return False
+        plan_amount = charge[0]
+
+    target = normalize_monthly(plan_amount, snapshot_period)
     current = current or 0
     difference = target - current
+    changed = difference != 0 or current_period != snapshot_period
+    if not changed and live_id == snapshot_id:
+        return False
     conn.execute(
         """
         update subscriptions
         set monthly_amount = %s, billing_type = %s
         where app_id = %s and id = %s
         """,
-        (target, payment[1], app_id, live_id),
+        (target, snapshot_period, app_id, live_id),
     )
     if converted_at is not None:
         movement = conn.execute(
@@ -102,9 +122,9 @@ def _reconcile_paid_state(
                    set net_change = %s, type = %s, plan_amount = %s,
                        plan_interval = %s
                    where id = %s""",
-                (corrected, event_type, payment[0], payment[1], event_id),
+                (corrected, event_type, plan_amount, snapshot_period, event_id),
             )
-    return bool(difference or live_id != snapshot_id)
+    return changed or live_id != snapshot_id
 
 
 def sync_active_subscriptions(

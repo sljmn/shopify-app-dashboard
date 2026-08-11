@@ -176,44 +176,58 @@ def main() -> int:
     snapshot_mismatches = rows(conn, """
         select a.slug, coalesce(s.shop_name, s.shop_domain, s.shop_gid),
                sub.monthly_amount,
-               round(latest_payment.gross_amount /
-                   case when latest_payment.billing_interval = 'ANNUAL'
+               round(coalesce(latest_payment.gross_amount,
+                              snapshot_charge.plan_amount, snapshot_charge.amount,
+                              live_charge.plan_amount, live_charge.amount) /
+                   case when current_sub.billing_period = 'ANNUAL'
                         then 12 else 1 end, 2)
         from subscriptions sub
         join apps a on a.id = sub.app_id
         join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
-        left join active_subscriptions current_sub
+        join active_subscriptions current_sub
           on current_sub.app_id = sub.app_id and current_sub.shop_gid = sub.shop_gid
-        join lateral (
-            select t.gross_amount,
-                   coalesce(t.billing_interval, current_sub.billing_period)
-                       as billing_interval
+        left join lateral (
+            select t.gross_amount
             from transactions t
             where t.app_id = sub.app_id and t.shop_gid = sub.shop_gid
               and t.charge_gid = current_sub.legacy_subscription_id
               and t.type = 'AppSubscriptionSale' and t.gross_amount > 0
             order by t.created_at desc, t.id desc limit 1
         ) latest_payment on true
+        left join charges snapshot_charge
+          on snapshot_charge.app_id = sub.app_id
+         and snapshot_charge.gid = current_sub.legacy_subscription_id
+         and not snapshot_charge.test
+        left join charges live_charge
+          on live_charge.app_id = sub.app_id and live_charge.gid = sub.id
+         and not live_charge.test
         where sub.churned_at is null and sub.monthly_amount > 0.01
           and s.install_state = 'installed'
-          and current_sub.legacy_subscription_id <> sub.id
+          and current_sub.legacy_subscription_id is not null
+          and current_sub.billing_period is not null
           and not exists (
               select 1 from active_subscriptions trial
               where trial.app_id = sub.app_id and trial.shop_gid = sub.shop_gid
                 and trial.trial_ends_at > now()
           )
-          and (sub.monthly_amount <> round(latest_payment.gross_amount /
-                   case when latest_payment.billing_interval = 'ANNUAL'
+          and coalesce(latest_payment.gross_amount,
+                       snapshot_charge.plan_amount, snapshot_charge.amount,
+                       live_charge.plan_amount, live_charge.amount) is not null
+          and (sub.monthly_amount <> round(
+                   coalesce(latest_payment.gross_amount,
+                            snapshot_charge.plan_amount, snapshot_charge.amount,
+                            live_charge.plan_amount, live_charge.amount) /
+                   case when current_sub.billing_period = 'ANNUAL'
                         then 12 else 1 end, 2)
                or coalesce(sub.billing_type, '')
-                    <> coalesce(latest_payment.billing_interval, ''))
+                    <> current_sub.billing_period)
           and exists (
               select 1 from sync_state state
               where state.app_id = sub.app_id
                 and state.source = 'partner_active_subscriptions'
           )
     """)
-    check("Shopify ID mismatches reconcile to current paid pricing",
+    check("Shopify snapshots reconcile to current paid pricing",
           not snapshot_mismatches,
           f"{len(snapshot_mismatches)} paid subscription(s) disagree")
 

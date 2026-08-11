@@ -37,7 +37,9 @@ def test_repository_catalog_contains_all_configured_apps():
     b2b = next(app for app in apps if app.slug == "b2b-portal")
     assert b2b.annual_plan_amounts == {Decimal("150.00")}
     isbn = next(app for app in apps if app.slug == "isbn-book-importer")
-    assert isbn.annual_plan_amounts == {Decimal("100.00"), Decimal("390.00")}
+    assert isbn.annual_plan_amounts == {
+        Decimal("100.00"), Decimal("190.00"), Decimal("390.00")
+    }
     review_apps = [app for app in apps if app.partner_org_id == "4975891"]
     assert {app.slug for app in review_apps} == {
         "best-buy-reviews",
@@ -50,7 +52,13 @@ def test_repository_catalog_contains_all_configured_apps():
         "walmart-reviews",
         "yelp-reviews-importer",
     }
-    assert not any(app.annual_plan_amounts for app in review_apps)
+    tripadvisor = next(app for app in review_apps if app.slug == "tripadvisor-reviews")
+    assert tripadvisor.annual_plan_amounts == {Decimal("60.00")}
+    assert not any(
+        app.annual_plan_amounts
+        for app in review_apps
+        if app.slug != "tripadvisor-reviews"
+    )
 
 
 def test_catalog_requires_every_referenced_secret(tmp_path):
