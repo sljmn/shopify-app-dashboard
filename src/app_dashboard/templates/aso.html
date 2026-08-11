@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% block content %}
+<h1>ASO</h1>
+<p class="sub">Shopify App Store search intelligence &middot; {{ period.display_start.strftime("%-d %b %Y") }} &ndash; {{ period.display_end.strftime("%-d %b %Y") }}</p>
+
+<section class="period-toolbar" aria-label="ASO period">
+    <nav class="period-presets" aria-label="Period presets">
+        {% for link in preset_links %}<a href="{{ link.href }}"{% if link.active %} aria-current="page"{% endif %}>{{ link.label }}</a>{% endfor %}
+    </nav>
+    <form class="period-custom" method="get" action="/aso">
+        <input type="hidden" name="period" value="custom">
+        {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
+        <label><span>From</span><span class="date-control"><input type="date" name="start" value="{{ period.input_start }}" data-datepicker><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8h14"/></svg></span></label>
+        <label><span>To</span><span class="date-control"><input type="date" name="end" value="{{ period.input_end }}" data-datepicker><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8h14"/></svg></span></label>
+        <button type="submit">Apply</button>
+    </form>
+</section>
+
+{% if not selected_app %}
+<div class="table-card">
+<table><thead><tr><th>App</th><th>Status</th><th class="num">Organic users</th><th class="num">Install clicks</th><th class="num">Conversion</th><th>Top keyword</th></tr></thead>
+<tbody>{% for row in portfolio %}<tr>
+    <td><a href="/aso?app={{ row.app.slug|urlencode }}&amp;{{ period_qs }}">{{ row.app.name }}</a></td>
+    <td>{{ row.status|replace('_', ' ')|title }}</td><td class="num">{{ row.users }}</td><td class="num">{{ row.install_clicks }}</td><td class="num">{{ row.conversion_pct }}%</td><td>{{ row.top_keyword or "&mdash;"|safe }}</td>
+</tr>{% endfor %}</tbody></table></div>
+{% else %}
+<nav class="aso-tabs" aria-label="ASO views">
+{% for key, label in [("overview","Overview"),("keywords","Keywords"),("sources","Install sources"),("listing","Listing changes"),("research","Research")] %}
+<a href="{{ tab_url(key) }}"{% if view == key %} aria-current="page"{% endif %}>{{ label }}</a>
+{% endfor %}
+</nav>
+
+<div class="source-band">
+    <span>Keywords: <strong>{{ capabilities.get('aso_keywords', 'pending')|replace('_',' ') }}</strong></span>
+    <span>Attribution: <strong>{{ capabilities.get('aso_attribution', 'pending')|replace('_',' ') }}</strong></span>
+</div>
+
+{% if view in ("overview", "keywords") %}
+<div class="cards">
+{{ ui.stat("aso_organic_users", keyword_report.totals.users) }}
+{{ ui.stat("aso_keywords", keyword_report.totals.keywords) }}
+{{ ui.stat("aso_install_clicks", keyword_report.totals.install_clicks) }}
+{{ ui.stat("aso_click_conversion", keyword_report.totals.conversion_pct ~ "%") }}
+</div>
+<form class="filters" method="get" action="/aso">
+    <input type="hidden" name="app" value="{{ selected_app.slug }}">{% for key, value in period.query_items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<input type="hidden" name="view" value="keywords">
+    {% for key, label in [("search_type","Search type"),("locale","Locale"),("country","Country"),("device","Device")] %}
+    <select name="{{ key }}"><option value="">All {{ label|lower }}s</option>{% for value in facet_options[key] %}<option value="{{ value }}"{% if facets.get(key) == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    {% endfor %}<button type="submit">Filter</button>
+</form>
+<div class="table-card"><table><thead><tr><th>Keyword</th><th class="num">Users</th><th class="num">Clicks</th><th class="num">Conversion</th><th class="num">Latest</th><th class="num">Movement</th><th class="num">Opportunity</th></tr></thead>
+<tbody>{% for row in keyword_report.rows %}<tr><td>{{ row.keyword }}</td><td class="num">{{ row.users }}</td><td class="num">{{ row.install_clicks }}</td><td class="num">{{ row.conversion_pct }}%</td><td class="num">{{ row.latest_position if row.latest_position is not none else "—" }}</td><td class="num">{{ "%+d"|format(row.position_change) if row.position_change is not none else "—" }}</td><td class="num">{{ row.opportunity_score }}</td></tr>{% else %}<tr><td colspan="7">No keyword data matches this period.</td></tr>{% endfor %}</tbody></table></div>
+<p><a href="/aso.csv?app={{ selected_app.slug|urlencode }}&amp;{{ period_qs }}">Download CSV</a></p>
+{% elif view == "sources" %}
+<form class="filters" method="get" action="/aso"><input type="hidden" name="app" value="{{ selected_app.slug }}">{% for key, value in period.query_items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<input type="hidden" name="view" value="sources"><input name="keyword" value="{{ facets.get('keyword','') }}" placeholder="Keyword or referrer"><button>Filter</button></form>
+<div class="table-card"><table><thead><tr><th>Date</th><th>Shop</th><th>Source</th><th>Type</th><th>Keyword/referrer</th><th>Locale</th><th>Country</th><th>Device</th></tr></thead><tbody>{% for row in source_rows %}<tr><td>{{ row.installed_on }}</td><td>{{ row.shop_domain }}</td><td>{{ row.source }}</td><td>{{ row.source_type }}</td><td>{{ row.source_value or "—" }}</td><td>{{ row.locale or "—" }}</td><td>{{ row.country or "—" }}</td><td>{{ row.device }}</td></tr>{% else %}<tr><td colspan="8">No attributed installs match this period.</td></tr>{% endfor %}</tbody></table></div>
+{% elif view == "listing" %}<div class="card empty-state"><h2>No listing snapshots yet</h2><p>The daily listing collector has not stored this app yet.</p></div>
+{% else %}<div class="card empty-state"><h2>No keyword research yet</h2><p>The daily autocomplete collector has not stored suggestions yet.</p></div>{% endif %}
+{% endif %}
+{% endblock %}

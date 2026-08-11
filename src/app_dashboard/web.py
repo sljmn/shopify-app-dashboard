@@ -1,3 +1,5 @@
+import csv
+import io
 import logging
 import os
 import secrets
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 from datetime import date
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -32,6 +34,7 @@ from app_dashboard.auth import (
     valid_login_csrf,
 )
 from app_dashboard import annotations as anno
+from app_dashboard.aso import install_source_report, keyword_report, portfolio_report
 from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.config import get_settings
 from app_dashboard.customers import (
@@ -1013,6 +1016,135 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             {
                 **page_context(request, user, "trials", selected_app, apps),
                 "trials": report,
+            },
+        )
+
+    @app.get("/aso")
+    def aso_report(
+        request: Request,
+        period: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        view: str | None = None,
+        search_type: str | None = None,
+        locale: str | None = None,
+        country: str | None = None,
+        device: str | None = None,
+        source: str | None = None,
+        keyword: str | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        selection = resolve_period(period, start, end)
+        safe_view = view if view in {
+            "overview", "keywords", "sources", "listing", "research"
+        } else "overview"
+        facets = {
+            key: value
+            for key, value in {
+                "search_type": search_type, "locale": locale, "country": country,
+                "device": device, "source": source, "keyword": keyword,
+            }.items()
+            if value
+        }
+        conn = conn_factory()
+        try:
+            _, selected_app, apps = resolve_scope(request, conn)
+            portfolio = portfolio_report(conn, apps, selection)
+            keywords = (
+                keyword_report(conn, selected_app.id, selection, facets)
+                if selected_app else None
+            )
+            sources = (
+                install_source_report(conn, selected_app.id, selection, facets)
+                if selected_app else ()
+            )
+            capabilities = dict(conn.execute(
+                """select source, status from aso_source_capabilities
+                   where app_id=%s""",
+                (selected_app.id,),
+            ).fetchall()) if selected_app else {}
+            facet_rows = conn.execute(
+                """select distinct locale, country, device, search_type
+                   from aso_keyword_daily where app_id=%s""",
+                (selected_app.id,),
+            ).fetchall() if selected_app else []
+        finally:
+            conn.close()
+
+        def href(**changes):
+            values = dict(selection.query_items())
+            if selected_app:
+                values["app"] = selected_app.slug
+            values.update(facets)
+            values["view"] = safe_view
+            for key, value in changes.items():
+                if value is None:
+                    values.pop(key, None)
+                else:
+                    values[key] = value
+            return "/aso?" + urlencode(values)
+
+        preset_links = [
+            {"key": key, "label": label, "href": href(period=key, start=None, end=None),
+             "active": selection.preset == key and not selection.error}
+            for key, label in PRESET_LABELS.items() if key != "custom"
+        ]
+        facet_options = {
+            "locale": sorted({row[0] for row in facet_rows if row[0]}),
+            "country": sorted({row[1] for row in facet_rows if row[1]}),
+            "device": sorted({row[2] for row in facet_rows if row[2]}),
+            "search_type": sorted({row[3] for row in facet_rows if row[3]}),
+        }
+        return templates.TemplateResponse(
+            request,
+            "aso.html",
+            {
+                **page_context(request, user, "aso", selected_app, apps),
+                "period": selection, "preset_links": preset_links,
+                "period_qs": urlencode(selection.query_items()),
+                "portfolio": portfolio, "keyword_report": keywords,
+                "source_rows": sources, "view": safe_view, "facets": facets,
+                "facet_options": facet_options, "capabilities": capabilities,
+                "tab_url": lambda tab: href(view=tab),
+            },
+        )
+
+    @app.get("/aso.csv")
+    def aso_csv(
+        request: Request,
+        period: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        del user
+        selection = resolve_period(period, start, end)
+        conn = conn_factory()
+        try:
+            _, selected_app, _ = resolve_scope(request, conn)
+            if selected_app is None:
+                raise HTTPException(status_code=400, detail="Select one app for CSV export")
+            report = keyword_report(conn, selected_app.id, selection)
+        finally:
+            conn.close()
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerow([
+            "keyword", "users", "install_clicks", "conversion_pct",
+            "average_position", "latest_position", "position_change",
+            "opportunity_score",
+        ])
+        for row in report.rows:
+            writer.writerow([
+                row.keyword, row.users, row.install_clicks, row.conversion_pct,
+                row.average_position, row.latest_position, row.position_change,
+                row.opportunity_score,
+            ])
+        return Response(
+            buffer.getvalue(), media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition":
+                    f'attachment; filename="aso-{selected_app.slug}.csv"'
             },
         )
 

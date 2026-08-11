@@ -667,6 +667,19 @@
         }
 
         form.filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .aso-tabs {
+            display: flex; gap: 4px; overflow-x: auto; margin: 22px 0 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        .aso-tabs a {
+            color: var(--ink-2); text-decoration: none; font-weight: 600;
+            white-space: nowrap; padding: 9px 12px; border-bottom: 2px solid transparent;
+        }
+        .aso-tabs a[aria-current="page"] { color: var(--brand); border-color: var(--brand); }
+        .source-band {
+            display: flex; flex-wrap: wrap; gap: 10px 24px; margin-bottom: 18px;
+            color: var(--ink-2); font-size: 13px;
+        }
         select:not(.app-selector-fallback), input[type="search"],
         input[data-datepicker], .flatpickr-input,
         .date-control input:not([type="hidden"]) {
@@ -1101,6 +1114,9 @@
          '<circle cx="10" cy="10" r="7"/><path d="M3 10h14"/><path d="M10 3a11 11 0 0 1 0 14a11 11 0 0 1 0-14z"/>',
          [("Sessions and installs by month", "monthly"),
           ("What GA4 missed", "reconciliation")]),
+        ("/aso", "aso", "ASO",
+         '<path d="M4 15.5 8 11l3 2 5-7"/><path d="M12.5 6H16v3.5"/><circle cx="5" cy="6" r="2"/>',
+         []),
     ] %}
     {#- One row of the sidebar. The icon is decorative: every row keeps its
         text label, so the picture never has to carry the meaning alone. -#}

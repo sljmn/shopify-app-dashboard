@@ -231,6 +231,43 @@ METRICS: dict[str, Metric] = {
         rule="sum of ad_clicks from the GA4 daily totals row over the window",
         source="ga4_daily",
     ),
+    # -- Owned ASO intelligence -----------------------------------------
+    "aso_organic_users": Metric(
+        name="Organic search users",
+        definition="Users attached to an observed App Store search term.",
+        rule="sum of users in aso_keyword_daily inside the selected period and filters",
+        source="aso_keyword_daily", better="up",
+    ),
+    "aso_keywords": Metric(
+        name="Observed keywords",
+        definition="Distinct search terms observed in the selected period.",
+        rule="count distinct keyword in aso_keyword_daily inside the selected period",
+        source="aso_keyword_daily", better="up",
+    ),
+    "aso_install_clicks": Metric(
+        name="Install clicks",
+        definition="Clicks on Shopify's Add App button attributed to a search term.",
+        rule="sum of Add App button eventCount in aso_keyword_daily",
+        source="aso_keyword_daily", better="up",
+    ),
+    "aso_click_conversion": Metric(
+        name="Search to click",
+        definition="Share of observed search users who clicked Add App.",
+        rule="ASO install clicks divided by ASO organic users for the same rows",
+        source="aso_keyword_daily", unit="pct", better="up",
+    ),
+    "aso_average_position": Metric(
+        name="Average position",
+        definition="User-weighted observed App Store search position.",
+        rule="sum average_position * position_samples divided by position_samples",
+        source="aso_keyword_daily", better="down",
+    ),
+    "aso_opportunity": Metric(
+        name="Opportunity",
+        definition="Observed click intent multiplied by available ranking headroom.",
+        rule="100 * min(clicks,25)/25 * min(max(position-1,0),49)/49",
+        source="aso_keyword_daily", better="up",
+    ),
 }
 
 

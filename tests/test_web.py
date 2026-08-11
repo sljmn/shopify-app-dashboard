@@ -117,6 +117,33 @@ def test_healthz_open(db):
     assert c.get("/healthz").status_code == 200
 
 
+def test_aso_requires_login_and_portfolio_lists_every_app(db):
+    app = create_app(conn_factory=lambda: keep_open(db))
+    assert dashboard_client(app, authenticated=False).get(
+        "/aso", headers={"accept": "text/html"}, follow_redirects=False
+    ).status_code == 307
+    response = dashboard_client(app).get("/aso?period=30d")
+    assert response.status_code == 200
+    assert "ASO" in response.text
+    assert "Organic users" in response.text
+
+
+def test_selected_aso_app_has_views_and_csv(db, test_app):
+    db.execute(
+        """insert into aso_keyword_daily
+           (app_id,date,keyword,search_type,users,install_clicks)
+           values (%s,current_date,'vat exemption','search',10,2)""",
+        (test_app.id,),
+    )
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+    page = client.get("/aso?app=test-app&period=30d&view=keywords")
+    for label in ("Overview", "Keywords", "Install sources", "Listing changes", "Research"):
+        assert label in page.text
+    csv_response = client.get("/aso.csv?app=test-app&period=30d")
+    assert csv_response.status_code == 200
+    assert csv_response.text.startswith("keyword,users,install_clicks")
+
+
 def test_manual_sync_follows_selected_app_or_all_apps(db, app_factory, monkeypatch):
     other = app_factory(slug="other-app", name="Other App")
     monkeypatch.setenv("TOKEN_2", "second-partner-token")
