@@ -18,16 +18,17 @@ TOKEN_ENV = {
     "SHOPIFY_PARTNER_TOKEN_4653231": "token-4653231",
     "SHOPIFY_PARTNER_TOKEN_4742901": "token-4742901",
     "SHOPIFY_PARTNER_TOKEN_4821379": "token-4821379",
+    "SHOPIFY_PARTNER_TOKEN_4975891": "token-4975891",
 }
 
 
-def test_repository_catalog_contains_all_sixteen_apps():
+def test_repository_catalog_contains_all_configured_apps():
     path = Path(__file__).parents[1] / "config/apps.yml"
     apps = load_catalog(path, TOKEN_ENV)
 
-    assert len(apps) == 16
-    assert len({app.slug for app in apps}) == 16
-    assert len({app.partner_app_id for app in apps}) == 16
+    assert len(apps) == 25
+    assert len({app.slug for app in apps}) == 25
+    assert len({app.partner_app_id for app in apps}) == 25
     tax = next(app for app in apps if app.slug == "eu-tax-exemption-easy")
     assert tax.partner_org_id == "3508770"
     assert tax.annual_plan_amounts == {
@@ -37,6 +38,19 @@ def test_repository_catalog_contains_all_sixteen_apps():
     assert b2b.annual_plan_amounts == {Decimal("150.00")}
     isbn = next(app for app in apps if app.slug == "isbn-book-importer")
     assert isbn.annual_plan_amounts == {Decimal("100.00"), Decimal("390.00")}
+    review_apps = [app for app in apps if app.partner_org_id == "4975891"]
+    assert {app.slug for app in review_apps} == {
+        "best-buy-reviews",
+        "bol-com-reviews",
+        "booking-com-reviews",
+        "ebay-reviews",
+        "tripadvisor-reviews",
+        "trustpilot-reviews",
+        "vinted-reviews",
+        "walmart-reviews",
+        "yelp-reviews-importer",
+    }
+    assert not any(app.annual_plan_amounts for app in review_apps)
 
 
 def test_catalog_requires_every_referenced_secret(tmp_path):
@@ -85,7 +99,7 @@ def test_reconciliation_persists_runtime_app_configuration(db):
     configured = load_catalog(path, TOKEN_ENV)
     apps = reconcile_catalog(db, configured)
 
-    assert len(apps) == 16
+    assert len(apps) == 25
     tax = app_by_slug(db, "eu-tax-exemption-easy", TOKEN_ENV)
     assert tax.id > 0
     assert tax.organization_id > 0
@@ -107,4 +121,4 @@ def test_reconciliation_refuses_removing_an_active_app(db):
     ]
     reconcile_catalog(db, inactive)
     remaining = reconcile_catalog(db, configured[:-1])
-    assert len(remaining) == 15
+    assert len(remaining) == 24

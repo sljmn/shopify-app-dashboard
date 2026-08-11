@@ -83,3 +83,35 @@ organizations:
       - slug: moneybird-sync
         name: Moneybird Sync
         partner_app_id: gid://partners/App/338542854145
+
+  - partner_org_id: "4975891"
+    name: Newcraft - Review Sites
+    token_env: SHOPIFY_PARTNER_TOKEN_4975891
+    apps:
+      - slug: best-buy-reviews
+        name: Best Buy Reviews
+        partner_app_id: gid://partners/App/408494374913
+      - slug: bol-com-reviews
+        name: bol.com Reviews
+        partner_app_id: gid://partners/App/399423930369
+      - slug: booking-com-reviews
+        name: Booking.com Reviews
+        partner_app_id: gid://partners/App/408538644481
+      - slug: ebay-reviews
+        name: eBay Reviews
+        partner_app_id: gid://partners/App/399424094209
+      - slug: tripadvisor-reviews
+        name: Tripadvisor Reviews
+        partner_app_id: gid://partners/App/399424061441
+      - slug: trustpilot-reviews
+        name: Trustpilot Reviews
+        partner_app_id: gid://partners/App/409031081985
+      - slug: vinted-reviews
+        name: Vinted Reviews
+        partner_app_id: gid://partners/App/399423373313
+      - slug: walmart-reviews
+        name: Walmart Reviews
+        partner_app_id: gid://partners/App/401666506753
+      - slug: yelp-reviews-importer
+        name: Yelp Reviews Importer
+        partner_app_id: gid://partners/App/408501125121
