@@ -99,7 +99,89 @@ def test_nil_response_removes_a_stale_snapshot(db, test_app, monkeypatch):
     )
 
     assert summary["removed"] == 1
-    assert db.execute("select count(*) from active_subscriptions").fetchone()[0] == 0
+    assert db.execute(
+        "select legacy_subscription_id, trial_ends_at "
+        "from active_subscriptions where app_id=%s and shop_gid='active-shop'",
+        (test_app.id,),
+    ).fetchone() == (None, None)
+
+
+def test_incremental_refresh_only_queries_shops_changed_since_snapshot(
+    db, test_app, monkeypatch
+):
+    db.execute(
+        "insert into shops (app_id, shop_gid, install_state) values "
+        "(%s, 'unchanged', 'installed'), "
+        "(%s, 'event-changed', 'installed'), "
+        "(%s, 'payment-changed', 'installed'), "
+        "(%s, 'never-checked', 'installed')",
+        (test_app.id, test_app.id, test_app.id, test_app.id),
+    )
+    db.execute(
+        "insert into active_subscriptions "
+        "(app_id, shop_gid, observed_at) values "
+        "(%s, 'unchanged', '2026-08-11T10:00:00Z'), "
+        "(%s, 'event-changed', '2026-08-11T10:00:00Z'), "
+        "(%s, 'payment-changed', '2026-08-11T10:00:00Z')",
+        (test_app.id, test_app.id, test_app.id),
+    )
+    db.execute(
+        "insert into app_events "
+        "(app_id, platform_event_id, type, occurred_at, shop_gid) "
+        "values (%s, 'new-event', 'subscribed', '2026-08-11T10:01:00Z', "
+        "'event-changed')",
+        (test_app.id,),
+    )
+    db.execute(
+        "insert into transactions "
+        "(app_id, id, type, created_at, shop_gid) "
+        "values (%s, 'new-payment', 'AppSubscriptionSale', "
+        "'2026-08-11T10:02:00Z', 'payment-changed')",
+        (test_app.id,),
+    )
+    seen = []
+
+    def fetch(client, *, app_id, shop_id):
+        seen.append(shop_id)
+        return None
+
+    monkeypatch.setattr(
+        "app_dashboard.active_subscriptions.fetch_active_subscription", fetch
+    )
+
+    summary = sync_active_subscriptions(
+        db,
+        FakeClient(),
+        test_app,
+        full_refresh=False,
+        sleep=lambda _: None,
+        now=lambda: datetime(2026, 8, 11, 11, tzinfo=timezone.utc),
+    )
+
+    assert seen == ["event-changed", "never-checked", "payment-changed"]
+    assert summary["queried"] == 3
+
+
+def test_empty_snapshot_prevents_requerying_a_free_shop(db, test_app, monkeypatch):
+    db.execute(
+        "insert into shops (app_id, shop_gid, install_state) "
+        "values (%s, 'free-shop', 'installed')",
+        (test_app.id,),
+    )
+    seen = []
+    monkeypatch.setattr(
+        "app_dashboard.active_subscriptions.fetch_active_subscription",
+        lambda *args, **kwargs: seen.append(kwargs["shop_id"]),
+    )
+
+    sync_active_subscriptions(
+        db, FakeClient(), test_app, full_refresh=False, sleep=lambda _: None
+    )
+    sync_active_subscriptions(
+        db, FakeClient(), test_app, full_refresh=False, sleep=lambda _: None
+    )
+
+    assert seen == ["free-shop"]
 
 
 def test_snapshot_id_mismatch_reconciles_current_mrr_from_latest_payment(

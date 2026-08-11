@@ -101,3 +101,25 @@ def test_coordinator_rejects_a_second_running_job(app_factory):
 
     with pytest.raises(SyncAlreadyRunning):
         coordinator.start([app], mode="all")
+
+
+@pytest.mark.parametrize("full_history", [False, True])
+def test_subscription_source_matches_manual_refresh_mode(
+    app_factory, monkeypatch, full_history
+):
+    app = app_factory(slug="alpha")
+    seen = []
+
+    class Connection:
+        def close(self):
+            seen.append("closed")
+
+    monkeypatch.setattr(
+        "app_dashboard.manual_sync.sync_active_subscriptions",
+        lambda conn, client, candidate, *, full_refresh: seen.append(full_refresh),
+    )
+    coordinator = ManualSyncCoordinator(lambda: Connection(), object())
+
+    coordinator._run_source(app, "subscriptions", full_history, object())
+
+    assert seen == [full_history, "closed"]

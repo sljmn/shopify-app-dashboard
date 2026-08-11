@@ -26,7 +26,7 @@
                 {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
                 <button type="submit" {% if manual_sync.state == "running" %}disabled{% endif %}>
                     <strong>Fetch fresh data</strong>
-                    <small>New events, payments, trials and traffic</small>
+                    <small>New events, payments, changed subscriptions and traffic</small>
                 </button>
             </form>
             <form method="post" action="/sync" data-confirm-full>

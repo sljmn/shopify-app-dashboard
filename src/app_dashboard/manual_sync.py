@@ -164,7 +164,12 @@ class ManualSyncCoordinator:
                     full_history=full_history,
                 )
             elif source == "subscriptions":
-                sync_active_subscriptions(conn, partner_client, app)
+                sync_active_subscriptions(
+                    conn,
+                    partner_client,
+                    app,
+                    full_refresh=full_history,
+                )
             elif source == "ga4":
                 client = build_ga4_client(app.ga4_credentials_json or "")
                 sync_ga4(conn, client, app, force_full=full_history)

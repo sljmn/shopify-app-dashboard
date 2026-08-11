@@ -112,18 +112,47 @@ def sync_active_subscriptions(
     client,
     app: AppConfig,
     *,
+    full_refresh: bool = True,
     sleep=time.sleep,
     now=_utcnow,
 ) -> dict:
-    """Refresh Shopify's current subscription snapshot for installed shops."""
+    """Refresh Shopify's current subscription snapshot for installed shops.
+
+    A manual incremental refresh only revisits shops whose lifecycle or payment
+    data changed after their last snapshot. The scheduled six-hour refresh uses
+    ``full_refresh=True`` so state Shopify does not expose as an event is still
+    reconciled regularly.
+    """
     observed_at = now()
     shop_ids = [
         row[0]
         for row in conn.execute(
-            """select shop_gid from shops
-               where app_id=%s and install_state='installed'
-               order by shop_gid""",
-            (app.id,),
+            """
+            select shop.shop_gid
+            from shops shop
+            left join active_subscriptions snapshot
+              on snapshot.app_id = shop.app_id
+             and snapshot.shop_gid = shop.shop_gid
+            where shop.app_id = %s and shop.install_state = 'installed'
+              and (
+                %s
+                or snapshot.observed_at is null
+                or exists (
+                    select 1 from app_events event
+                    where event.app_id = shop.app_id
+                      and event.shop_gid = shop.shop_gid
+                      and event.occurred_at > snapshot.observed_at
+                )
+                or exists (
+                    select 1 from transactions payment
+                    where payment.app_id = shop.app_id
+                      and payment.shop_gid = shop.shop_gid
+                      and payment.created_at > snapshot.observed_at
+                )
+              )
+            order by shop.shop_gid
+            """,
+            (app.id, full_refresh),
         ).fetchall()
     ]
     stored = removed = trials = reconciled = 0
@@ -132,10 +161,34 @@ def sync_active_subscriptions(
             client, app_id=app.partner_app_id, shop_id=shop_gid
         )
         if snapshot is None:
-            removed += conn.execute(
-                "delete from active_subscriptions where app_id=%s and shop_gid=%s",
+            previous = conn.execute(
+                """select legacy_subscription_id is not null
+                   from active_subscriptions
+                   where app_id = %s and shop_gid = %s""",
                 (app.id, shop_gid),
-            ).rowcount
+            ).fetchone()
+            removed += int(bool(previous and previous[0]))
+            conn.execute(
+                """
+                insert into active_subscriptions (
+                    app_id, shop_gid, legacy_subscription_id, billing_period,
+                    trial_ends_at, cancel_at_end_of_cycle, item_handle,
+                    item_description, currency_code, payload, observed_at
+                ) values (%s, %s, null, null, null, false, null, null, null,
+                          '{}'::jsonb, %s)
+                on conflict (app_id, shop_gid) do update set
+                    legacy_subscription_id=null,
+                    billing_period=null,
+                    trial_ends_at=null,
+                    cancel_at_end_of_cycle=false,
+                    item_handle=null,
+                    item_description=null,
+                    currency_code=null,
+                    payload='{}'::jsonb,
+                    observed_at=excluded.observed_at
+                """,
+                (app.id, shop_gid, observed_at),
+            )
         else:
             conn.execute(
                 """
