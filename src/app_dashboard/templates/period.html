@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% block content %}
+<h1>Period</h1>
+<p class="sub">
+    {{ period.display_start.strftime("%-d %b %Y") }} &ndash;
+    {{ period.display_end.strftime("%-d %b %Y") }}
+    {% if selected_app %}&middot; {{ selected_app.name }}{% endif %}
+    &middot; {{ DISPLAY_TIMEZONE_LABEL }}
+</p>
+
+<section class="period-toolbar" aria-label="Report period">
+    <nav class="period-presets" aria-label="Period presets">
+        {% for link in preset_links %}
+        <a href="{{ link.href }}"{% if link.active %} aria-current="page"{% endif %}>{{ link.label }}</a>
+        {% endfor %}
+    </nav>
+    <form class="period-custom" method="get" action="/period">
+        <input type="hidden" name="period" value="custom">
+        {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
+        <label>
+            <span>From</span>
+            <span class="date-control">
+                <input type="date" name="start" value="{{ period.input_start }}"
+                       aria-label="Start date" data-datepicker>
+                <svg viewBox="0 0 20 20" width="17" height="17" fill="none"
+                     stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                     stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M6.5 2.8v3.4M13.5 2.8v3.4M3 8h14"/>
+                </svg>
+            </span>
+        </label>
+        <label>
+            <span>To</span>
+            <span class="date-control">
+                <input type="date" name="end" value="{{ period.input_end }}"
+                       aria-label="End date" data-datepicker>
+                <svg viewBox="0 0 20 20" width="17" height="17" fill="none"
+                     stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                     stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M6.5 2.8v3.4M13.5 2.8v3.4M3 8h14"/>
+                </svg>
+            </span>
+        </label>
+        <button type="submit">Apply</button>
+    </form>
+</section>
+
+{% if period.error %}<p class="form-error period-error" role="alert">{{ period.error }}</p>{% endif %}
+
+<div class="cards period-cards">
+    {{ ui.stat("period_installs", report.totals.installs,
+               compare=report.comparison.installs, compare_label="vs previous period") }}
+    {{ ui.stat("period_uninstalls", report.totals.uninstalls,
+               compare=report.comparison.uninstalls, compare_label="vs previous period") }}
+    {{ ui.stat("period_net_installs", "%+d"|format(report.totals.net_installs),
+               compare=report.comparison.net_installs, compare_label="vs previous period") }}
+    {{ ui.stat("period_mrr_gained", "$" ~ "%.2f"|format(report.totals.mrr_gained),
+               compare=report.comparison.mrr_gained, compare_label="vs previous period") }}
+    {{ ui.stat("period_mrr_lost", "$" ~ "%.2f"|format(report.totals.mrr_lost),
+               compare=report.comparison.mrr_lost, compare_label="vs previous period") }}
+    {{ ui.stat("period_net_mrr", ("+" if report.totals.net_mrr >= 0 else "-") ~ "$" ~ "%.2f"|format(report.totals.net_mrr|abs),
+               compare=report.comparison.net_mrr, compare_label="vs previous period") }}
+    {{ ui.stat("period_collected", ("+" if report.totals.collected >= 0 else "-") ~ "$" ~ "%.2f"|format(report.totals.collected|abs),
+               compare=report.comparison.collected, compare_label="vs previous period") }}
+</div>
+
+{% if period.is_future %}
+<div class="card period-empty">
+    <h2>This period has not started yet</h2>
+    <p class="sub">Choose a current or past period to see portfolio activity.</p>
+</div>
+{% else %}
+<div class="period-section-head">
+    <div>
+        <h2>Apps</h2>
+        <p class="sub">MRR is recurring value; net collected is cash after fees and refunds.</p>
+    </div>
+</div>
+<div class="table-card">
+    <table class="period-table">
+        <thead>
+            <tr>
+                {% for key, label in columns %}
+                <th{% if key != "app" %} class="num"{% endif %}>
+                    <a class="sort-link" href="{{ sort_links[key] }}">
+                        {{ label }}{% if sort_key == key %}<span aria-hidden="true">{{ "&#8593;"|safe if sort_direction == "asc" else "&#8595;"|safe }}</span>{% endif %}
+                    </a>
+                </th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td><a href="/period?{{ period_qs }}&amp;app={{ row.app.slug|urlencode }}">{{ row.app.name }}</a></td>
+                <td class="num">{{ row.installs }}</td>
+                <td class="num">{{ row.uninstalls }}</td>
+                <td class="num{% if row.net_installs > 0 %} money-up{% elif row.net_installs < 0 %} money-down{% endif %}">{{ "%+d"|format(row.net_installs) }}</td>
+                <td class="num money-up">${{ "%.2f"|format(row.mrr_gained) }}</td>
+                <td class="num{% if row.mrr_lost %} money-down{% endif %}">${{ "%.2f"|format(row.mrr_lost) }}</td>
+                <td class="num{% if row.net_mrr > 0 %} money-up{% elif row.net_mrr < 0 %} money-down{% endif %}">{{ "+" if row.net_mrr >= 0 else "-" }}${{ "%.2f"|format(row.net_mrr|abs) }}</td>
+                <td class="num{% if row.collected < 0 %} money-down{% endif %}">{{ "+" if row.collected >= 0 else "-" }}${{ "%.2f"|format(row.collected|abs) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8">No apps are available for this report.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

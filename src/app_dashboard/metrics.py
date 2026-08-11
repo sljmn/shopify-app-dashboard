@@ -134,6 +134,58 @@ METRICS: dict[str, Metric] = {
         unit="usd", better="up",
     ),
 
+    # -- Period report ---------------------------------------------------
+    "period_installs": Metric(
+        name="Installs",
+        definition="Install and reinstall events during the selected period.",
+        rule="count of app_events of type 'installed' or 'reinstalled' where "
+             "occurred_at is inside the selected period",
+        source="app_events", better="up",
+    ),
+    "period_uninstalls": Metric(
+        name="Uninstalls",
+        definition="Uninstall events during the selected period.",
+        rule="count of app_events of type 'uninstalled' where occurred_at is "
+             "inside the selected period",
+        source="app_events", better="down",
+    ),
+    "period_net_installs": Metric(
+        name="Net installs",
+        definition="Installs minus uninstalls during the selected period.",
+        rule="period installs minus period uninstalls",
+        source="app_events", better="up",
+    ),
+    "period_mrr_gained": Metric(
+        name="MRR gained",
+        definition="Monthly recurring revenue added during the selected period.",
+        rule="sum of new, reactivated, and expanded monthly subscription value; "
+             "free plans and active trials are excluded and annual plans count "
+             "as price / 12",
+        source="subscriptions joined to charges and active_subscriptions",
+        unit="usd", better="up",
+    ),
+    "period_mrr_lost": Metric(
+        name="MRR lost",
+        definition="Monthly recurring revenue removed during the selected period.",
+        rule="absolute sum of subscription contractions and churn; free plans "
+             "and active trials are excluded and annual plans count as price / 12",
+        source="subscriptions joined to charges and active_subscriptions",
+        unit="usd", better="down",
+    ),
+    "period_net_mrr": Metric(
+        name="Net MRR",
+        definition="Recurring revenue gained minus recurring revenue lost in the period.",
+        rule="period MRR gained minus period MRR lost",
+        source="subscriptions joined to charges and active_subscriptions",
+        unit="usd", better="up",
+    ),
+    "period_collected": Metric(
+        name="Net collected",
+        definition="Cash that reached payouts during the period, after fees and refunds.",
+        rule="sum of transaction net_amount inside the selected period",
+        source="transactions", unit="usd", better="up",
+    ),
+
     # -- Traffic ----------------------------------------------------------
     "sessions": Metric(
         name="Listing sessions",

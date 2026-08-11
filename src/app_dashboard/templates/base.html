@@ -466,6 +466,61 @@
            212px sidebar wants a ~1430px window. Narrower than that they wrap,
            which is why the tile is sized by a minimum rather than a count. */
         .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+        .period-toolbar {
+            display: flex; align-items: end; justify-content: space-between;
+            gap: 16px; padding: 14px;
+            background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+        }
+        .period-presets {
+            display: inline-flex; gap: 3px; padding: 3px;
+            background: var(--row-hover); border-radius: 8px;
+        }
+        .period-presets a {
+            color: var(--ink-2); text-decoration: none; font-size: 13px;
+            font-weight: 600; padding: 8px 10px; border-radius: 6px; white-space: nowrap;
+        }
+        .period-presets a:hover { color: var(--ink); }
+        .period-presets a[aria-current="page"] {
+            color: var(--ink); background: var(--card);
+            box-shadow: 0 1px 3px rgba(18, 13, 27, .12);
+        }
+        .period-custom { display: flex; align-items: end; gap: 8px; }
+        .period-custom label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 600; }
+        .period-custom .date-control { min-width: 144px; }
+        .period-custom button { min-height: 40px; }
+        .period-error { padding: 10px 12px; border: 1px solid var(--down); border-radius: 8px; }
+        .period-cards { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+        .period-cards .card { min-width: 0; padding: 16px; }
+        .period-cards .stat .num { font-size: 23px; overflow-wrap: anywhere; }
+        .period-section-head { display: flex; align-items: end; justify-content: space-between; }
+        .period-section-head h2, .period-section-head p { margin: 0; }
+        .period-section-head p { margin-top: 4px; }
+        .period-table { min-width: 980px; }
+        .sort-link { color: inherit; text-decoration: none; white-space: nowrap; }
+        .sort-link:hover { color: var(--brand); }
+        .sort-link span { margin-left: 3px; color: var(--brand); }
+        .period-empty { text-align: center; padding: 32px 20px; }
+        .period-empty p { margin-bottom: 0; }
+        @media (max-width: 1200px) {
+            .period-toolbar { align-items: stretch; flex-direction: column; }
+            .period-presets { align-self: flex-start; }
+            .period-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        }
+        @media (max-width: 760px) {
+            .period-toolbar { overflow: hidden; }
+            .period-presets {
+                width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+            .period-presets a { text-align: center; padding-inline: 6px; }
+            .period-custom { display: grid; grid-template-columns: 1fr 1fr auto; }
+            .period-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 520px) {
+            .period-custom { grid-template-columns: minmax(0, 1fr); }
+            .period-custom .date-control { width: 100%; min-width: 0; }
+            .period-custom button { width: 100%; justify-content: center; }
+            .period-cards { grid-template-columns: minmax(0, 1fr); }
+        }
         .app-installation > .cards + .card,
         .app-installation > .card + .card { margin-top: 16px; }
         .card {
@@ -1015,6 +1070,9 @@
           ("Installs vs uninstalls", "activity"), ("Where customers are", "countries"),
           ("Plan mix", "plans"), ("Why people leave", "reasons"),
           ("Annotations", "annotations")]),
+        ("/period", "period", "Period",
+         '<rect x="3" y="4" width="14" height="13" rx="2"/><path d="M6.5 2.8v3.4M13.5 2.8v3.4M3 8h14"/>',
+         []),
         ("/activity", "activity", "Activity",
          '<path d="M3 10h3l2-5 3.5 10 2-5H17"/>',
          []),

@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 from html import unescape
 
 import pytest
@@ -1439,3 +1440,54 @@ def test_a_same_origin_annotation_write_still_works(db):
     assert r.status_code == 303
     from app_dashboard import annotations as anno
     assert [n["note"] for n in anno.recent(db)] == ["shipped v2"]
+
+
+# --- Period report -----------------------------------------------------------
+
+def test_period_requires_login_and_default_report_is_inline(db):
+    signed_out = dashboard_client(
+        create_app(conn_factory=lambda: keep_open(db)), authenticated=False
+    )
+    assert signed_out.get(
+        "/period", headers={"accept": "text/html"}, follow_redirects=False
+    ).headers["location"] == "/auth/login"
+
+    body = unescape(_signed_in().get("/period").text)
+    assert "<h1>Period</h1>" in body
+    assert "30 days" in body
+    assert "MRR gained" in body
+    assert "Net collected" in body
+    assert "vs previous period" in body
+    assert "CET/CEST" in body
+    assert "/period?period=30d&app=test-app" in body
+
+
+def test_custom_period_preserves_app_scope_and_dates(db):
+    response = _signed_in().get(
+        "/period?period=custom&start=2026-08-01&end=2026-08-11&app=test-app"
+    )
+    body = unescape(response.text)
+    assert response.status_code == 200
+    assert 'name="start" value="2026-08-01"' in body
+    assert 'name="end" value="2026-08-11"' in body
+    assert 'name="app" value="test-app"' in body
+    assert "Test App" in body
+    assert "Shopify Apps</a>" not in body
+
+
+def test_invalid_and_future_periods_render_a_useful_page(db):
+    invalid = _signed_in().get(
+        "/period?period=custom&start=bad&end=2026-08-11"
+    )
+    assert invalid.status_code == 200
+    assert "Choose a valid start and end date." in invalid.text
+
+    from app_dashboard.display_time import local_today
+
+    future = local_today() + timedelta(days=3)
+    url = (
+        f"/period?period=custom&start={future.isoformat()}&end={future.isoformat()}"
+    )
+    response = _signed_in().get(url)
+    assert response.status_code == 200
+    assert "This period has not started yet" in response.text

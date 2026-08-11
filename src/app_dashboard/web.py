@@ -55,6 +55,12 @@ from app_dashboard.manual_sync import (
     SyncAlreadyRunning,
 )
 from app_dashboard.ops import sync_health
+from app_dashboard.period_report import (
+    build_period_report,
+    normalise_sort,
+    sort_rows,
+)
+from app_dashboard.periods import PRESET_LABELS, resolve_period
 from app_dashboard.ranges import (
     CHURN_DAYS,
     MONEY_MONTHS,
@@ -909,6 +915,87 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "event_types": ACTIVITY_TYPES,
                 "event_labels": labels,
                 "base_qs": base_qs + "&" if base_qs else "",
+            },
+        )
+
+    @app.get("/period")
+    def period_report(
+        request: Request,
+        period: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        sort: str | None = None,
+        direction: str | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        selection = resolve_period(period, start, end)
+        sort_key, sort_direction = normalise_sort(sort, direction)
+        conn = conn_factory()
+        try:
+            scope, selected_app, apps = resolve_scope(request, conn)
+            report = build_period_report(
+                conn,
+                apps,
+                selection.start,
+                selection.end,
+                selection.previous_start,
+                selection.previous_end,
+                scope,
+            )
+        finally:
+            conn.close()
+
+        def report_url(items: list[tuple[str, str]]) -> str:
+            query = list(items)
+            if selected_app:
+                query.append(("app", selected_app.slug))
+            return "/period?" + urlencode(query)
+
+        period_items = list(selection.query_items())
+        preset_links = [
+            {
+                "key": key,
+                "label": label,
+                "href": report_url([("period", key)]),
+                "active": selection.preset == key and not selection.error,
+            }
+            for key, label in PRESET_LABELS.items()
+            if key != "custom"
+        ]
+        columns = (
+            ("app", "App"),
+            ("installs", "Installs"),
+            ("uninstalls", "Uninstalls"),
+            ("net_installs", "Net installs"),
+            ("mrr_gained", "MRR gained"),
+            ("mrr_lost", "MRR lost"),
+            ("net_mrr", "Net MRR"),
+            ("collected", "Net collected"),
+        )
+        sort_links = {}
+        for key, _ in columns:
+            next_direction = (
+                "asc" if key == sort_key and sort_direction == "desc" else "desc"
+            )
+            sort_links[key] = report_url(
+                period_items
+                + [("sort", key), ("direction", next_direction)]
+            )
+
+        return templates.TemplateResponse(
+            request,
+            "period.html",
+            {
+                **page_context(request, user, "period", selected_app, apps),
+                "period": selection,
+                "report": report,
+                "rows": sort_rows(report.rows, sort_key, sort_direction),
+                "preset_links": preset_links,
+                "columns": columns,
+                "sort_links": sort_links,
+                "sort_key": sort_key,
+                "sort_direction": sort_direction,
+                "period_qs": urlencode(period_items),
             },
         )
 
