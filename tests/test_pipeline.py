@@ -93,29 +93,37 @@ def test_sync_transactions_rewinds_by_overlap_and_dedupes(db, test_app, monkeypa
     assert str(net) == "18.50"
 
 
-def test_event_cursors_are_independent_per_app(db, app_factory, monkeypatch):
-    alpha = app_factory(slug="alpha")
-    beta = app_factory(slug="beta")
+def test_event_poll_starts_at_newest_page_with_time_overlap(
+    db, test_app, monkeypatch
+):
+    db.execute(
+        "insert into sync_state(app_id, source, cursor, last_synced_at) "
+        "values (%s, 'partner_api', 'stale-cursor', "
+        "        timestamptz '2026-08-11 08:00:00+00')",
+        (test_app.id,),
+    )
+    db.commit()
     calls = []
 
-    def fetch(client, app_id, after_cursor):
-        calls.append((app_id, after_cursor))
-        return [], f"next-{app_id}" if after_cursor is None else None
+    def fetch(client, app_id, after_cursor, occurred_at_min):
+        calls.append((app_id, after_cursor, occurred_at_min))
+        return [], None
 
     monkeypatch.setattr("app_dashboard.pipeline.fetch_app_events", fetch)
-    settings = _settings()
-    run_sync(db, FakeClient(), alpha, settings, http_post=lambda *a, **k: None)
-    run_sync(db, FakeClient(), beta, settings, http_post=lambda *a, **k: None)
+    run_sync(
+        db, FakeClient(), test_app, _settings(poll_overlap_minutes=60),
+        http_post=lambda *a, **k: None,
+    )
 
-    cursors = dict(db.execute(
-        "select app_id, cursor from sync_state where source='partner_api'"
-    ).fetchall())
-    assert cursors == {
-        alpha.id: f"next-{alpha.partner_app_id}",
-        beta.id: f"next-{beta.partner_app_id}",
-    }
-    assert (alpha.partner_app_id, None) in calls
-    assert (beta.partner_app_id, None) in calls
+    assert calls == [(
+        test_app.partner_app_id,
+        None,
+        "2026-08-11T07:00:00+00:00",
+    )]
+    assert db.execute(
+        "select cursor from sync_state where app_id=%s and source='partner_api'",
+        (test_app.id,),
+    ).fetchone()[0] is None
 
 
 def test_full_lifecycle_sync_ignores_saved_cursor(db, test_app, monkeypatch):
@@ -127,8 +135,8 @@ def test_full_lifecycle_sync_ignores_saved_cursor(db, test_app, monkeypatch):
     db.commit()
     seen = []
 
-    def fetch(client, app_id, after_cursor):
-        seen.append(after_cursor)
+    def fetch(client, app_id, after_cursor, occurred_at_min):
+        seen.append((after_cursor, occurred_at_min))
         return [], None
 
     monkeypatch.setattr("app_dashboard.pipeline.fetch_app_events", fetch)
@@ -137,7 +145,7 @@ def test_full_lifecycle_sync_ignores_saved_cursor(db, test_app, monkeypatch):
         http_post=lambda *a, **k: None, full_history=True,
     )
 
-    assert seen == [None]
+    assert seen == [(None, None)]
 
 
 def test_full_transaction_sync_ignores_latest_transaction(db, test_app, monkeypatch):

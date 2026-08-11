@@ -22,21 +22,26 @@ def run_sync(
     conn: psycopg.Connection, client, app: AppConfig, settings, http_post,
     *, full_history: bool = False,
 ) -> dict:
-    """Poll the Partner API, derive clean events, and Slack-notify fresh installs.
+    """Poll the Partner API, derive clean events, and notify fresh installs.
 
-    poll_overlap_minutes is not applied here: fetch_app_events' cursor (Task 7)
-    is an opaque Partner API pagination token with no time semantics to rewind,
-    and upsert_raw_events already dedups on conflict, so replaying the last
-    page on the next poll (which happens naturally, since a fully-drained
-    cursor has nothing further to advance to) is the safety margin in practice.
+    The feed is newest-first. Its cursor is valid only while paging toward older
+    events inside this run; persisting it would make the next run resume below
+    newly-added events. Cross-run progress therefore uses an overlapping time
+    boundary and every run starts with a null cursor.
     """
     start_ts = datetime.now(timezone.utc)
 
     row = conn.execute(
-        "select cursor from sync_state where app_id = %s and source = %s",
+        "select last_synced_at from sync_state where app_id = %s and source = %s",
         (app.id, SOURCE),
     ).fetchone()
-    cursor = None if full_history else (row[0] if row else None)
+    last_synced_at = row[0] if row else None
+    occurred_at_min = None
+    if last_synced_at is not None and not full_history:
+        occurred_at_min = (
+            last_synced_at - timedelta(minutes=settings.poll_overlap_minutes)
+        ).astimezone(timezone.utc).isoformat()
+    cursor = None
 
     # Snapshot before deriving: ON CONFLICT (platform_event_id) DO NOTHING
     # means already-seen events never get a new id, so any app_events row with
@@ -49,7 +54,10 @@ def run_sync(
     touched_ids: set[str] = set()
     while True:
         events, next_cursor = fetch_app_events(
-            client, app_id=app.partner_app_id, after_cursor=cursor
+            client,
+            app_id=app.partner_app_id,
+            after_cursor=cursor,
+            occurred_at_min=occurred_at_min,
         )
         raw_inserted += upsert_raw_events(conn, app, events)
         upsert_charges(conn, app, events)
@@ -82,10 +90,10 @@ def run_sync(
         insert into sync_state (app_id, source, cursor, last_synced_at)
         values (%s, %s, %s, %s)
         on conflict (app_id, source) do update set
-            cursor = excluded.cursor,
+            cursor = null,
             last_synced_at = excluded.last_synced_at
         """,
-        (app.id, SOURCE, cursor, start_ts),
+        (app.id, SOURCE, None, start_ts),
     )
     conn.commit()
 
@@ -109,7 +117,7 @@ def sync_transactions(
 ) -> dict:
     """Poll the money feed into `transactions`.
 
-    Its own sync_state row, keyed apart from the events cursor, so replaying
+    Its own sync_state row, keyed apart from lifecycle progress, so replaying
     payments never forces an event replay (and a broken money sync never stalls
     the lifecycle one).
 

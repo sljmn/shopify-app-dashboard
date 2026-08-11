@@ -32,9 +32,9 @@ _UNINSTALL_FRAGMENT = (
 )
 
 _APP_EVENTS_QUERY = f"""
-query AppEvents($appId: ID!, $after: String) {{
+query AppEvents($appId: ID!, $after: String, $occurredAtMin: DateTime) {{
   app(id: $appId) {{
-    events(first: 100, after: $after) {{
+    events(first: 100, after: $after, occurredAtMin: $occurredAtMin) {{
       pageInfo {{ hasNextPage }}
       edges {{
         cursor
@@ -184,13 +184,21 @@ def fetch_active_subscription(
 
 
 def fetch_app_events(
-    client: PartnerClient, *, app_id: str, after_cursor: str | None = None
+    client: PartnerClient,
+    *,
+    app_id: str,
+    after_cursor: str | None = None,
+    occurred_at_min: str | None = None,
 ) -> tuple[list[dict], str | None]:
     response = client.http.post(
         "",
         json={
             "query": _APP_EVENTS_QUERY,
-            "variables": {"appId": app_id, "after": after_cursor},
+            "variables": {
+                "appId": app_id,
+                "after": after_cursor,
+                "occurredAtMin": occurred_at_min,
+            },
         },
     )
     response.raise_for_status()
@@ -245,8 +253,8 @@ def fetch_transactions(
 ) -> tuple[list[dict], str | None]:
     """One page of the money feed.
 
-    `created_at_min` is a real time bound, unlike the events cursor, so an
-    incremental poll can rewind a window rather than trusting an opaque token.
+    `created_at_min` is the cross-run time bound. As with app events, the opaque
+    cursor exists only to page within one request window.
     """
     response = client.http.post(
         "",

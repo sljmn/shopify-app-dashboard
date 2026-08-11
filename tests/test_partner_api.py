@@ -34,6 +34,21 @@ def test_maps_nodes_and_returns_cursor():
     assert events[0]["charge"] is None
 
 
+def test_app_events_passes_occurred_at_min():
+    seen = []
+    payload = {"data": {"app": {"events": {
+        "pageInfo": {"hasNextPage": False}, "edges": [],
+    }}}}
+
+    fetch_app_events(
+        _client(payload, seen=seen),
+        app_id="2",
+        occurred_at_min="2026-08-11T07:00:00+00:00",
+    )
+
+    assert '"occurredAtMin":"2026-08-11T07:00:00+00:00"' in seen[0]
+
+
 def test_maps_inline_charge():
     payload = {"data": {"app": {"events": {
         "pageInfo": {"hasNextPage": False},

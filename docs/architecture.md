@@ -40,8 +40,8 @@ Shopify Partner API
 
 `pipeline.py` runs the whole thing on the configured schedule (`scheduler.py`, on one machine).
 `sync_state` holds the cursor per source. `manual_sync.py` invokes those same pipelines from the
-Overview's **Fetch data** menu. Fresh mode keeps the normal cursors and overlap windows; complete
-mode ignores them for one idempotent replay and writes the terminal state only after successful
+Overview's **Fetch data** menu. Fresh mode keeps each source's normal overlap window; complete mode
+omits the time boundary for one idempotent replay and writes sync progress only after successful
 work. Its process-local coordinator permits one manual job at a time, reports per-source progress,
 and is intentionally not a durable queue: restarting the one application process stops the job,
 but never leaves a partial cursor update or requires cleanup before retrying.
@@ -106,8 +106,10 @@ closed or froze, not merchants who chose to leave, and they were never shown the
 "merchant chose to leave" metric must join `raw_app_events` and filter on
 `RELATIONSHIP_UNINSTALLED`; `stats.store_deaths` counts the other kind separately.
 
-**The events cursor is opaque.** `poll_overlap_minutes` is inert on that source; it only re-windows
-the feeds that take a timestamp.
+**The events cursor is pagination-only.** The connection is newest-first, so every poll must start
+with `after = null` and use `occurredAtMin = last_synced_at - poll_overlap_minutes` as its cross-run
+boundary. Persisting the end cursor resumes toward older pages and permanently skips every event
+added above it. Cursors may move only inside one pagination loop.
 
 **One Fly machine, deliberately.** Two machines means two schedulers, so duplicate polls, duplicate
 Slack alerts, and a duplicate weekly digest. Never `fly scale count 2`. The in-process rate limiter

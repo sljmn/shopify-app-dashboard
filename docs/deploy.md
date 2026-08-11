@@ -36,7 +36,7 @@ Three of these decide whether the numbers are right rather than whether the app 
   carries no billing-interval field, so an unlisted annual price is counted as monthly, at twelve
   times its true MRR. Empty means every plan is monthly, and the app logs a warning at startup.
   Setting it *after* charges are stored does not correct them: a corrected price only reaches a
-  charge on re-ingest, so follow the change with a cursor reset and replay (see below).
+  charge on re-ingest, so follow the change with a full replay (see below).
 - **`TRUSTED_CLIENT_IP_HEADER`** must name the header your proxy sets. Wrong or unset behind a
   proxy, and rate limiting collapses every caller into one bucket.
 - **`GOOGLE_ALLOWED_DOMAINS`** is the entire SSO access gate. The OAuth client is External, so
@@ -82,19 +82,13 @@ point `DATABASE_URL` at the local end.
 
 ## After a change to derivation or a widened query
 
-`sync_state.cursor` persists, so a normal poll only fetches events newer than the cursor. Any change
-that widens the GraphQL query or corrects a stored value needs history replayed, or the deploy will
-appear to do nothing:
+Use **Fetch data → Fetch all data again** for the selected app. A normal poll only asks for an
+overlapping recent event window, so a change that widens the GraphQL query or corrects a stored
+value needs history replayed. The full action omits the time boundary for that run; no cursor reset
+or restart is needed.
 
-```sql
-update sync_state set cursor = null
-where source = 'partner_api'
-  and app_id = (select id from apps where slug = 'example-app');
-```
-
-Restart the app afterwards; the scheduler syncs at boot. Safe and repeatable: `raw_app_events`
-dedupes on its unique key, derivation is idempotent, and Slack does not re-alert because replayed
-events keep their existing `app_events.id`.
+Safe and repeatable: `raw_app_events` dedupes on its unique key, derivation is idempotent, and Slack
+does not re-alert because replayed events keep their existing `app_events.id`.
 
 ## Backfilling country and industry
 

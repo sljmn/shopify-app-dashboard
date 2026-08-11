@@ -77,8 +77,10 @@ node and only per-type fields need inline fragments.
 **There is no `appInstallation` field on AppEvent types.** `shop { id }` is the durable per-merchant
 key; this codebase was re-keyed onto it in migration 002 after assuming otherwise.
 
-**The events cursor is opaque**, so an overlap window is inert on that source. Only the feeds that
-take a timestamp can be re-windowed.
+**The events connection is newest-first and its cursor is pagination-only.** Start every poll with
+`after: null`, constrain incremental runs with an overlapping `occurredAtMin`, and use returned
+cursors only to walk toward older pages inside that run. Reusing an end cursor on the next poll
+starts below newly-added events and silently misses them.
 
 **It 429s readily.** Paging here is throttled to 0.3s per call.
 
