@@ -192,3 +192,29 @@ def test_transactions_graphql_errors_raise():
     payload = {"data": None, "errors": [{"message": "Access denied"}]}
     with pytest.raises(RuntimeError, match="Access denied"):
         fetch_transactions(_client(payload), app_id="2")
+
+
+def test_partner_client_retries_429_and_honours_retry_after():
+    attempts = 0
+    sleeps = []
+    payload = {"data": {"app": {"events": {
+        "pageInfo": {"hasNextPage": False}, "edges": [],
+    }}}}
+
+    def handler(request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(429, headers={"Retry-After": "2"}, request=request)
+        return httpx.Response(200, json=payload, request=request)
+
+    client = PartnerClient(
+        "tok", "retry-org", transport=httpx.MockTransport(handler),
+        sleep=sleeps.append,
+    )
+
+    events, cursor = fetch_app_events(client, app_id="2")
+
+    assert events == [] and cursor is None
+    assert attempts == 2
+    assert sleeps == [2.0]

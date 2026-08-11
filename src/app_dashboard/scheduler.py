@@ -229,7 +229,10 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         lambda: run_transactions_job(conn_factory, current_apps(), settings),
         "interval",
         hours=1,
-        next_run_time=datetime.now(),
+        # Lifecycle also runs at boot. Keeping the Partner jobs apart avoids a
+        # burst against organizations that own many apps.
+        next_run_time=datetime.now() + timedelta(minutes=2),
+        id="transactions",
     )
     # Shopify exposes trial and scheduled-cancellation state only through a
     # per-shop query. Refresh independently so hundreds of calls never delay

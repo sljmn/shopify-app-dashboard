@@ -1,4 +1,7 @@
 import logging
+import time
+from collections.abc import Callable
+from threading import Lock
 
 import httpx
 
@@ -137,12 +140,47 @@ API_VERSION = "2026-07"
 
 
 class PartnerClient:
-    def __init__(self, token: str, org_id: str, transport: httpx.BaseTransport | None = None):
+    _locks_guard = Lock()
+    _organization_locks: dict[str, Lock] = {}
+
+    def __init__(
+        self,
+        token: str,
+        org_id: str,
+        transport: httpx.BaseTransport | None = None,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
+        self.org_id = org_id
+        self._sleep = sleep
         self.http = httpx.Client(
             base_url=f"https://partners.shopify.com/{org_id}/api/{API_VERSION}/graphql.json",
             headers={"X-Shopify-Access-Token": token},
             transport=transport,
         )
+        with self._locks_guard:
+            self._request_lock = self._organization_locks.setdefault(org_id, Lock())
+
+    def post(self, **kwargs) -> httpx.Response:
+        """Serialize one organization's requests and retry Shopify throttles."""
+        with self._request_lock:
+            for attempt in range(5):
+                response = self.http.post("", **kwargs)
+                if response.status_code != 429 or attempt == 4:
+                    return response
+                retry_after = response.headers.get("Retry-After", "")
+                try:
+                    delay = float(retry_after)
+                except ValueError:
+                    delay = float(2**attempt)
+                delay = max(0.0, min(delay, 60.0))
+                logger.warning(
+                    "Partner API throttled organization %s; retrying in %.1fs",
+                    self.org_id,
+                    delay,
+                )
+                self._sleep(delay)
+        raise AssertionError("Partner retry loop returned no response")
 
 
 def _shopify_gid(partner_gid: str) -> str:
@@ -152,8 +190,7 @@ def _shopify_gid(partner_gid: str) -> str:
 def fetch_active_subscription(
     client: PartnerClient, *, app_id: str, shop_id: str
 ) -> dict | None:
-    response = client.http.post(
-        "",
+    response = client.post(
         json={
             "query": _ACTIVE_SUBSCRIPTION_QUERY,
             "variables": {
@@ -190,8 +227,7 @@ def fetch_app_events(
     after_cursor: str | None = None,
     occurred_at_min: str | None = None,
 ) -> tuple[list[dict], str | None]:
-    response = client.http.post(
-        "",
+    response = client.post(
         json={
             "query": _APP_EVENTS_QUERY,
             "variables": {
@@ -256,8 +292,7 @@ def fetch_transactions(
     `created_at_min` is the cross-run time bound. As with app events, the opaque
     cursor exists only to page within one request window.
     """
-    response = client.http.post(
-        "",
+    response = client.post(
         json={
             "query": _TRANSACTIONS_QUERY,
             "variables": {
