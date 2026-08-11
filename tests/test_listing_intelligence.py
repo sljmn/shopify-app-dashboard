@@ -1,0 +1,56 @@
+from datetime import datetime, timezone
+from pathlib import Path
+
+from app_dashboard.listing_intelligence import (
+    parse_autocomplete,
+    parse_listing,
+    store_listing_snapshot,
+    sync_popular_keywords,
+)
+
+FIXTURE = Path(__file__).parent / "fixtures/shopify_listing.html"
+NOW = datetime(2026, 8, 11, tzinfo=timezone.utc)
+
+
+def test_listing_parser_extracts_stable_fields():
+    listing = parse_listing(FIXTURE.read_text())
+    assert listing["name"] == "VAT / TAX Exemption"
+    assert listing["description"].startswith("Validate EU VAT")
+    assert listing["screenshots"] == ["https://cdn.shopify.com/example-1.png"]
+    assert listing["rating_count"] == 40
+
+
+def test_identical_snapshot_is_reused_and_changes_are_field_level(db, test_app):
+    first = store_listing_snapshot(db, test_app.id, "en", {"name": "Old"}, NOW)
+    same = store_listing_snapshot(db, test_app.id, "en", {"name": "Old"}, NOW)
+    changed = store_listing_snapshot(db, test_app.id, "en", {"name": "New"}, NOW)
+    assert same.snapshot_id == first.snapshot_id and not same.created
+    assert changed.changed_fields == ("name",)
+    assert db.execute(
+        "select field,before_value,after_value from aso_listing_changes"
+    ).fetchone() == ("name", "Old", "New")
+
+
+def test_autocomplete_reads_only_search_phrases():
+    payload = {
+        "searches": [{"name": "Email popup"}],
+        "apps": [{"name": "Not a keyword"}],
+    }
+    assert parse_autocomplete(payload) == ["email popup"]
+
+
+class Response:
+    status_code = 200
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"searches": [{"name": "VAT exemption"}]}
+
+
+def test_popular_keyword_sync_is_idempotent(db):
+    get = lambda *args, **kwargs: Response()
+    assert sync_popular_keywords(db, ["vat"], get, NOW, sleep=lambda _: None) == 1
+    assert sync_popular_keywords(db, ["vat"], get, NOW, sleep=lambda _: None) == 1
+    assert db.execute("select count(*) from aso_popular_keywords").fetchone()[0] == 1

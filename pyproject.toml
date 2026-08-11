@@ -26,6 +26,7 @@ dependencies = [
     "pyyaml",
     "google-analytics-data>=0.23.0",
     "itsdangerous>=2.2.0",
+    "beautifulsoup4>=4.15.0",
 ]
 
 [project.urls]

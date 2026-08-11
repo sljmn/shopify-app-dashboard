@@ -58,6 +58,25 @@ class SourceRow:
     device: str
 
 
+@dataclass(frozen=True)
+class ListingChangeRow:
+    changed_at: object
+    locale: str
+    field: str
+    before_value: object
+    after_value: object
+
+
+@dataclass(frozen=True)
+class ResearchRow:
+    keyword: str
+    source: str
+    first_seen_at: object
+    last_seen_at: object
+    in_listing: bool
+    in_traffic: bool
+
+
 def opportunity_score(clicks: int, latest_position: int | None) -> int:
     if not clicks or latest_position is None or latest_position <= 1:
         return 0
@@ -214,3 +233,55 @@ def position_history(conn, app_id: int, keyword: str, period, facets=None):
         """,
         (app_id, keyword, start, end, *params),
     ).fetchall()
+
+
+def listing_history(conn, app_id: int, locale: str | None = None):
+    params = [app_id]
+    extra = ""
+    if locale:
+        extra = " and locale=%s"
+        params.append(locale)
+    rows = conn.execute(
+        f"""select changed_at,locale,field,before_value,after_value
+            from aso_listing_changes where app_id=%s {extra}
+            order by changed_at desc,id desc""",
+        params,
+    ).fetchall()
+    return tuple(ListingChangeRow(*row) for row in rows)
+
+
+def current_listings(conn, app_id: int):
+    return conn.execute(
+        """select distinct on (locale) locale,captured_at,listing
+           from aso_listing_snapshots where app_id=%s
+           order by locale,captured_at desc,id desc""",
+        (app_id,),
+    ).fetchall()
+
+
+def keyword_research(conn, app_id: int, search: str | None = None):
+    params = [app_id, app_id, app_id]
+    extra = ""
+    if search:
+        extra = "where p.keyword ilike %s"
+        params.append(f"%{search}%")
+    rows = conn.execute(
+        f"""
+        with listing as (
+            select string_agg(listing::text,' ') body
+            from aso_listing_snapshots
+            where app_id=%s and id in (
+                select max(id) from aso_listing_snapshots
+                where app_id=%s group by locale
+            )
+        )
+        select p.keyword,p.source,p.first_seen_at,p.last_seen_at,
+               coalesce(listing.body ilike '%%' || p.keyword || '%%',false),
+               exists(select 1 from aso_keyword_daily k
+                      where k.app_id=%s and k.keyword=p.keyword)
+        from aso_popular_keywords p cross join listing {extra}
+        order by 5 desc,6 desc,p.last_seen_at desc,p.keyword
+        """,
+        params,
+    ).fetchall()
+    return tuple(ResearchRow(*row) for row in rows)

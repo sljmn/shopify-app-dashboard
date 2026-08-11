@@ -34,7 +34,14 @@ from app_dashboard.auth import (
     valid_login_csrf,
 )
 from app_dashboard import annotations as anno
-from app_dashboard.aso import install_source_report, keyword_report, portfolio_report
+from app_dashboard.aso import (
+    current_listings,
+    install_source_report,
+    keyword_report,
+    keyword_research,
+    listing_history,
+    portfolio_report,
+)
 from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.config import get_settings
 from app_dashboard.customers import (
@@ -1064,6 +1071,13 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 install_source_report(conn, selected_app.id, selection, facets)
                 if selected_app else ()
             )
+            listings = current_listings(conn, selected_app.id) if selected_app else ()
+            listing_changes = (
+                listing_history(conn, selected_app.id, locale) if selected_app else ()
+            )
+            research = (
+                keyword_research(conn, selected_app.id, keyword) if selected_app else ()
+            )
             capabilities = dict(conn.execute(
                 """select source, status from aso_source_capabilities
                    where app_id=%s""",
@@ -1110,6 +1124,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "period_qs": urlencode(selection.query_items()),
                 "portfolio": portfolio, "keyword_report": keywords,
                 "source_rows": sources, "view": safe_view, "facets": facets,
+                "listings": listings, "listing_changes": listing_changes,
+                "research_rows": research,
                 "facet_options": facet_options, "capabilities": capabilities,
                 "tab_url": lambda tab: href(view=tab),
             },

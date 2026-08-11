@@ -1,7 +1,14 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from app_dashboard.aso import keyword_report, opportunity_score, portfolio_report
+from app_dashboard.aso import (
+    keyword_report,
+    keyword_research,
+    listing_history,
+    opportunity_score,
+    portfolio_report,
+)
+from psycopg.types.json import Jsonb
 from app_dashboard.periods import resolve_period
 
 
@@ -47,3 +54,28 @@ def test_portfolio_keeps_apps_without_ga4_rows(db, test_app, app_factory):
     rows = portfolio_report(db, [test_app, other], _period())
     assert {row.app.slug for row in rows} == {"test-app", "other"}
     assert next(row for row in rows if row.app == other).status == "not_configured"
+
+
+def test_listing_history_and_research_cross_reference_owned_data(db, test_app):
+    snapshot = db.execute(
+        """insert into aso_listing_snapshots
+           (app_id,locale,captured_at,content_hash,listing)
+           values (%s,'en',now(),'hash',%s) returning id""",
+        (test_app.id, Jsonb({"name": "VAT exemption", "description": "EU VAT"})),
+    ).fetchone()[0]
+    db.execute(
+        """insert into aso_listing_changes
+           (app_id,snapshot_id,locale,changed_at,field,before_value,after_value)
+           values (%s,%s,'en',now(),'name',%s,%s)""",
+        (test_app.id, snapshot, Jsonb("Old"), Jsonb("VAT exemption")),
+    )
+    db.execute(
+        """insert into aso_popular_keywords
+           (keyword,source,first_seen_at,last_seen_at)
+           values ('vat exemption','autocomplete',now(),now())"""
+    )
+    _seed(db, test_app.id, "2026-08-01", "vat exemption", 2, 1, 5)
+    assert listing_history(db, test_app.id)[0].field == "name"
+    research = keyword_research(db, test_app.id)
+    assert research[0].in_listing is True
+    assert research[0].in_traffic is True

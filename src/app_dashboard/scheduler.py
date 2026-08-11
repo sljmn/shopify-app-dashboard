@@ -177,6 +177,39 @@ def run_aso_job(conn_factory, apps: list[AppConfig], settings) -> list[dict]:
     return results
 
 
+def run_listing_job(conn_factory, apps: list[AppConfig]) -> list[dict]:
+    from app_dashboard.listing_intelligence import sync_listing
+
+    results = []
+    for app in apps:
+        if not app.listing_url:
+            continue
+        conn = conn_factory()
+        try:
+            result = sync_listing(conn, app)
+            results.append({"app": app.slug, "ok": result["status"] == "ready", **result})
+        except Exception as exc:
+            logger.exception("%s listing sync failed", app.slug)
+            results.append({"app": app.slug, "ok": False, "error": type(exc).__name__})
+        finally:
+            conn.close()
+    return results
+
+
+def run_keyword_research_job(conn_factory) -> dict:
+    from app_dashboard.listing_intelligence import research_seeds, sync_popular_keywords
+
+    conn = conn_factory()
+    try:
+        written = sync_popular_keywords(conn, research_seeds(conn))
+        return {"ok": True, "written": written}
+    except Exception as exc:
+        logger.exception("keyword research sync failed")
+        return {"ok": False, "error": type(exc).__name__}
+    finally:
+        conn.close()
+
+
 def start_scheduler(
     conn_factory, settings, apps: list[AppConfig]
 ) -> BackgroundScheduler:
@@ -223,6 +256,18 @@ def start_scheduler(
         hours=24,
         next_run_time=datetime.now() + timedelta(minutes=10),
         id="aso_intelligence",
+    )
+    scheduler.add_job(
+        lambda: run_listing_job(conn_factory, apps),
+        "interval", hours=24,
+        next_run_time=datetime.now() + timedelta(minutes=20),
+        id="aso_listings",
+    )
+    scheduler.add_job(
+        lambda: run_keyword_research_job(conn_factory),
+        "interval", hours=24,
+        next_run_time=datetime.now() + timedelta(minutes=30),
+        id="aso_keyword_research",
     )
     # Every 15 minutes, but it only posts once per stale episode. Deliberately
     # a separate job from run_sync: a check that lives inside the thing it is

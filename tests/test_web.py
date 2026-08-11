@@ -142,6 +142,8 @@ def test_selected_aso_app_has_views_and_csv(db, test_app):
     csv_response = client.get("/aso.csv?app=test-app&period=30d")
     assert csv_response.status_code == 200
     assert csv_response.text.startswith("keyword,users,install_clicks")
+    assert client.get("/aso?app=test-app&view=listing").status_code == 200
+    assert client.get("/aso?app=test-app&view=research").status_code == 200
 
 
 def test_manual_sync_follows_selected_app_or_all_apps(db, app_factory, monkeypatch):

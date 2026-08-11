@@ -21,6 +21,7 @@ from app_dashboard.aso_ga4 import (
 )
 from app_dashboard.partner_api import PartnerClient
 from app_dashboard.pipeline import run_sync, sync_transactions
+from app_dashboard.listing_intelligence import sync_listing
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,8 @@ class ManualSyncCoordinator:
         sources = ["lifecycle", "transactions", "subscriptions"]
         if app.ga4_property_id and app.ga4_credentials_json:
             sources.extend(("ga4", "aso_keywords", "aso_attribution"))
+        if app.listing_url:
+            sources.append("aso_listing")
         return sources
 
     def start(self, apps: list[AppConfig], *, mode: str) -> dict:
@@ -193,6 +196,8 @@ class ManualSyncCoordinator:
                         conn, client, app, fields=capability.fields,
                         force_full=full_history,
                     )
+            elif source == "aso_listing":
+                sync_listing(conn, app)
             else:
                 raise ValueError(f"Unknown sync source {source}")
         finally:
