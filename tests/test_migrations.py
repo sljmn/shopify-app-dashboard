@@ -13,7 +13,10 @@ def test_core_tables_exist(db):
     assert {"raw_app_events","charges","app_events","subscriptions",
             "shops","tracking_events","sync_state","schema_migrations",
             "organizations","apps","operations_state",
-            "active_subscriptions"} <= names
+            "active_subscriptions", "aso_source_capabilities",
+            "aso_keyword_daily", "aso_install_sources",
+            "aso_listing_snapshots", "aso_listing_changes",
+            "aso_popular_keywords"} <= names
 
 
 def test_every_app_owned_table_has_a_required_app_id(db):
@@ -21,6 +24,8 @@ def test_every_app_owned_table_has_a_required_app_id(db):
         "raw_app_events", "app_events", "charges", "subscriptions", "shops",
         "transactions", "sync_state", "usage_events", "ga4_daily",
         "annotations", "tracking_events", "active_subscriptions",
+        "aso_source_capabilities", "aso_keyword_daily", "aso_install_sources",
+        "aso_listing_snapshots", "aso_listing_changes",
     }
     rows = db.execute(
         """
@@ -30,6 +35,20 @@ def test_every_app_owned_table_has_a_required_app_id(db):
         """
     ).fetchall()
     assert {table for table, nullable in rows if nullable == "NO"} == tables
+
+
+def test_keyword_daily_natural_key_is_unique(db, test_app):
+    values = (
+        test_app.id, "2026-08-11", "vat exemption", "en", "NL", "desktop", "search",
+    )
+    sql = """
+        insert into aso_keyword_daily
+            (app_id, date, keyword, locale, country, device, search_type)
+        values (%s, %s, %s, %s, %s, %s, %s)
+    """
+    db.execute(sql, values)
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        db.execute(sql, values)
 
 
 def test_active_subscription_is_one_current_snapshot_per_app_shop(db, test_app):

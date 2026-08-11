@@ -21,7 +21,7 @@ sync replay every configured app.
 ## App catalog
 
 Each app requires a stable `slug`, display `name`, Partner app GID, and `annual_plan_amounts`.
-Optional fields are its App Store `listing_url`, usage contract, and GA4 property:
+Optional fields are its App Store `listing_url`, localized listings, usage contract, and GA4 property:
 
 ```yaml
 organizations:
@@ -34,6 +34,7 @@ organizations:
         partner_app_id: gid://partners/App/456
         annual_plan_amounts: ["190.00"]
         listing_url: https://apps.shopify.com/example-app
+        listing_locales: [en, de, nl]
         usage:
           token_env: EXAMPLE_USAGE_TOKEN
           event_types: [settings_completed, offer_created, offer_impression]
@@ -41,7 +42,7 @@ organizations:
           live_event: offer_impression
         ga4:
           property_id: "123456789"
-          credentials_env: EXAMPLE_GA4_CREDENTIALS_JSON
+          credentials_env: SHARED_GA4_CREDENTIALS_JSON
 ```
 
 `AppSubscription` has no billing interval. Annual plans are inferred by price per app, so an
@@ -52,8 +53,11 @@ Usage event names are also per app. The activation and live names must appear in
 catalog validation refuses to migrate. Ingest at `POST /ingest/usage/<app-slug>` with that app's
 token.
 
-GA4 is optional and per app. The Traffic report asks for one selected app and never blends listing
-properties. `GA4_EARLIEST_DATA` is the shared lower bound for first backfills.
+GA4 is optional and each app keeps its own property ID. Multiple properties can reuse the same
+read-only service-account environment variable; the credential JSON is never persisted. The
+Traffic report asks for one selected app and never blends listing properties.
+`GA4_EARLIEST_DATA` is the shared lower bound for first backfills. `listing_locales` defaults to
+`[en]` and accepts language codes such as `de` or language-region codes such as `pt-BR`.
 
 ## Scope semantics
 

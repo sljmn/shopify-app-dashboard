@@ -102,6 +102,44 @@ organizations:
         load_catalog(path, {"TOKEN": "secret"})
 
 
+def test_catalog_defaults_listing_locales_to_english(tmp_path):
+    path = tmp_path / "apps.yml"
+    path.write_text(
+        """
+organizations:
+  - partner_org_id: "1"
+    name: Test
+    token_env: TOKEN
+    apps:
+      - slug: one
+        name: One
+        partner_app_id: gid://partners/App/1
+"""
+    )
+    assert load_catalog(path, {"TOKEN": "secret"})[0].listing_locales == ("en",)
+
+
+@pytest.mark.parametrize("locales", [[], ["en", "en"], ["English"], "en"])
+def test_catalog_rejects_invalid_listing_locales(tmp_path, locales):
+    path = tmp_path / "apps.yml"
+    path.write_text(
+        """
+organizations:
+  - partner_org_id: "1"
+    name: Test
+    token_env: TOKEN
+    apps:
+      - slug: one
+        name: One
+        partner_app_id: gid://partners/App/1
+"""
+    )
+    document = path.read_text() + f"        listing_locales: {locales!r}\n"
+    path.write_text(document)
+    with pytest.raises(CatalogError, match="listing_locales"):
+        load_catalog(path, {"TOKEN": "secret"})
+
+
 def test_reconciliation_persists_runtime_app_configuration(db):
     path = Path(__file__).parents[1] / "config/apps.yml"
     configured = load_catalog(path, TOKEN_ENV)

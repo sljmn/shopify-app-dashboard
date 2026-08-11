@@ -15,6 +15,7 @@ import yaml
 from psycopg.types.json import Jsonb
 
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+LOCALE_RE = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
 
 
 class CatalogError(ValueError):
@@ -32,6 +33,7 @@ class AppSpec:
     partner_token: str
     annual_plan_amounts: frozenset[Decimal]
     listing_url: str | None
+    listing_locales: tuple[str, ...]
     usage_token_env: str | None
     usage_token: str | None
     usage_event_types: frozenset[str]
@@ -97,6 +99,19 @@ def _string_set(raw: Any, label: str) -> frozenset[str]:
     if len(values) != len(raw):
         raise CatalogError(f"{label} contains duplicate values")
     return values
+
+
+def _listing_locales(raw: Any, label: str) -> tuple[str, ...]:
+    if raw is None:
+        return ("en",)
+    if not isinstance(raw, list) or not raw:
+        raise CatalogError(f"{label} must be a non-empty list of locale codes")
+    locales = tuple(_required_text(item, label) for item in raw)
+    if len(set(locales)) != len(locales):
+        raise CatalogError(f"{label} contains duplicate values")
+    if any(not LOCALE_RE.fullmatch(locale) for locale in locales):
+        raise CatalogError(f"{label} contains an invalid locale code")
+    return locales
 
 
 def load_catalog(
@@ -212,6 +227,9 @@ def load_catalog(
                     listing_url=_optional_text(
                         raw_app.get("listing_url"), f"{app_prefix}.listing_url"
                     ),
+                    listing_locales=_listing_locales(
+                        raw_app.get("listing_locales"), f"{app_prefix}.listing_locales"
+                    ),
                     usage_token_env=usage_token_env,
                     usage_token=_resolve_env(
                         usage_token_env, environ, f"{app_prefix}.usage.token_env"
@@ -284,16 +302,17 @@ def reconcile_catalog(
                 """
                 insert into apps (
                     organization_id, partner_app_id, slug, name, listing_url,
-                    annual_plan_amounts, usage_token_env, usage_event_types,
+                    listing_locales, annual_plan_amounts, usage_token_env, usage_event_types,
                     usage_activation_event, usage_live_event, ga4_property_id,
                     ga4_credentials_env, active
                 )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 on conflict (partner_app_id) do update set
                     organization_id = excluded.organization_id,
                     slug = excluded.slug,
                     name = excluded.name,
                     listing_url = excluded.listing_url,
+                    listing_locales = excluded.listing_locales,
                     annual_plan_amounts = excluded.annual_plan_amounts,
                     usage_token_env = excluded.usage_token_env,
                     usage_event_types = excluded.usage_event_types,
@@ -310,6 +329,7 @@ def reconcile_catalog(
                     app.slug,
                     app.name,
                     app.listing_url,
+                    Jsonb(list(app.listing_locales)),
                     Jsonb([str(value) for value in sorted(app.annual_plan_amounts)]),
                     app.usage_token_env,
                     Jsonb(sorted(app.usage_event_types)),
@@ -355,7 +375,7 @@ def list_apps(
         select
             a.id, a.organization_id, a.slug, a.name, a.partner_app_id,
             o.partner_org_id, o.name, o.token_env, a.annual_plan_amounts,
-            a.listing_url, a.usage_token_env, a.usage_event_types,
+            a.listing_url, a.listing_locales, a.usage_token_env, a.usage_event_types,
             a.usage_activation_event, a.usage_live_event, a.ga4_property_id,
             a.ga4_credentials_env, a.active
         from apps a
@@ -368,8 +388,8 @@ def list_apps(
     result: list[AppConfig] = []
     for row in rows:
         token_env = row[7]
-        usage_token_env = row[10]
-        ga4_credentials_env = row[15]
+        usage_token_env = row[11]
+        ga4_credentials_env = row[16]
         result.append(
             AppConfig(
                 id=row[0],
@@ -383,17 +403,18 @@ def list_apps(
                 partner_token=_resolve_env(token_env, environ, f"app {row[2]}") or "",
                 annual_plan_amounts=frozenset(Decimal(value) for value in row[8]),
                 listing_url=row[9],
+                listing_locales=tuple(row[10]),
                 usage_token_env=usage_token_env,
                 usage_token=_resolve_env(usage_token_env, environ, f"app {row[2]} usage"),
-                usage_event_types=frozenset(row[11]),
-                usage_activation_event=row[12],
-                usage_live_event=row[13],
-                ga4_property_id=row[14],
+                usage_event_types=frozenset(row[12]),
+                usage_activation_event=row[13],
+                usage_live_event=row[14],
+                ga4_property_id=row[15],
                 ga4_credentials_env=ga4_credentials_env,
                 ga4_credentials_json=_resolve_env(
                     ga4_credentials_env, environ, f"app {row[2]} GA4"
                 ),
-                active=row[16],
+                active=row[17],
             )
         )
     return result

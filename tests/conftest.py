@@ -113,6 +113,7 @@ def app_factory(db):
             partner_token=f"token-{sequence}",
             annual_plan_amounts=annual_plan_amounts,
             listing_url=None,
+            listing_locales=("en",),
             usage_token_env=None,
             usage_token=None,
             usage_event_types=frozenset(),
