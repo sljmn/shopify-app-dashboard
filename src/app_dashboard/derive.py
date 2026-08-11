@@ -236,6 +236,20 @@ def derive_installation(
             charge = _get_charge(conn, app_id, charge_gid)
             if charge is None:
                 continue
+            # A subscription cannot activate unless the app relationship is
+            # live. Some Partner histories omit the separate relationship
+            # event, especially for newly-added apps, so materialize the shop
+            # from this authoritative event instead of leaving orphaned money.
+            upsert_shop_state(
+                conn,
+                app_id,
+                shop_gid,
+                install_state="installed",
+                at=occurred_at,
+                shop_domain=shop_domain,
+                shop_name=shop_name,
+            )
+            relationship_installed = True
             new_monthly = charge["monthly"]
             sub_id = charge["subscription_id"]
             previous_subscription_id = (

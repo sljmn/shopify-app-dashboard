@@ -91,6 +91,35 @@ def test_cancel_sets_churn_and_negative_netchange(db):
     assert churn is not None
 
 
+def test_subscription_activation_creates_shop_when_install_event_is_missing(db):
+    _seed_charge(db, "c1", Decimal("0.00"), "EVERY_30_DAYS")
+    upsert_raw_events(db, APP, [
+        dict(
+            id="r1",
+            type="SUBSCRIPTION_CHARGE_ACTIVATED",
+            occurred_at="2026-06-01T00:00:00Z",
+            shop_gid="ai1",
+            charge_gid="c1",
+            payload={
+                "shop": {
+                    "myshopifyDomain": "missing-install.myshopify.com",
+                    "name": "Missing Install",
+                }
+            },
+        ),
+    ])
+
+    derive_installation(db, APP.id, "ai1")
+
+    assert db.execute(
+        "select install_state, shop_domain, shop_name from shops "
+        "where app_id=%s and shop_gid='ai1'",
+        (APP.id,),
+    ).fetchone() == (
+        "installed", "missing-install.myshopify.com", "Missing Install"
+    )
+
+
 def test_winback_after_churn_emits_resubscribed_not_upgrade_downgrade(db):
     # install -> subscribe (charge A) -> cancel A -> subscribe again (charge B,
     # a new subscription id). This is an ordinary win-back, not an upgrade/
