@@ -117,6 +117,65 @@ def test_healthz_open(db):
     assert c.get("/healthz").status_code == 200
 
 
+def test_integration_management_is_authenticated_and_never_renders_secrets(db):
+    app = create_app(conn_factory=lambda: keep_open(db))
+    signed_out = dashboard_client(app, authenticated=False)
+    assert signed_out.get(
+        "/management/integrations", headers={"accept": "text/html"},
+        follow_redirects=False,
+    ).status_code == 307
+
+    page = dashboard_client(app).get("/management/integrations")
+    assert page.status_code == 200
+    assert "Test App" in page.text
+    assert "TOKEN_1" in page.text
+    assert "test-partner-token" not in page.text
+    assert "Token present" in page.text
+    assert "Management" in page.text
+
+
+def test_management_can_create_a_draft_and_runbook_is_available(db):
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+    created = client.post(
+        "/management/apps/save",
+        data={
+            "organization_id": "1",
+            "partner_app_id": "gid://partners/App/987",
+            "slug": "new-managed-app",
+            "name": "New Managed App",
+            "listing_url": "",
+            "listing_locales": "nl",
+            "annual_plan_amounts": "120.00",
+            "ga4_property_id": "",
+            "ga4_credentials_env": "",
+            "lifecycle_status": "draft",
+            "listing_status": "submitted",
+            "tracking_status": "blocked",
+            "listing_status_reason": "Locked during review",
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    assert created.headers["location"].endswith("?saved=1")
+    listing = client.get("/management/integrations")
+    assert "New Managed App" in listing.text
+
+    runbook = client.get("/management/runbook")
+    assert runbook.status_code == 200
+    assert "Measurement Protocol" in runbook.text
+    assert "SHOPIFY_PARTNER_TOKEN_ORGID" in runbook.text
+
+
+def test_management_write_refuses_cross_origin_requests(db):
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+    response = client.post(
+        "/management/apps/save",
+        data={},
+        headers={"origin": "https://attacker.test"},
+    )
+    assert response.status_code == 403
+
+
 def test_aso_requires_login_and_portfolio_lists_every_app(db):
     app = create_app(conn_factory=lambda: keep_open(db))
     assert dashboard_client(app, authenticated=False).get(

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Organization' if kind == 'organization' else 'App' }} management{% endblock %}
+{% block content %}
+<div class="manage-head">
+    <div><a class="back-link" href="/management/integrations">Back to integrations</a><h1>{{ 'Organization' if kind == 'organization' else 'App' }}</h1></div>
+    <a class="button secondary" href="/management/runbook">Open runbook</a>
+</div>
+{% if request.query_params.get('saved') %}<div class="notice success">Saved. Runtime and scheduled syncs now read this configuration.</div>{% endif %}
+{% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+
+<form class="card manage-form" action="/management/{{ 'organizations' if kind == 'organization' else 'apps' }}/save" method="post">
+    {% if values.id %}<input type="hidden" name="id" value="{{ values.id }}">{% endif %}
+    {% if kind == 'organization' %}
+    <label><span>Name</span><input name="name" required value="{{ values.name or '' }}"></label>
+    <label><span>Partner organization ID</span><input name="partner_org_id" required value="{{ values.partner_org_id or '' }}" inputmode="numeric"></label>
+    <label><span>Partner token ENV name</span><input name="token_env" required value="{{ values.token_env or '' }}" autocomplete="off"><small>Example: SHOPIFY_PARTNER_TOKEN_4975891. The secret value stays in Dokku.</small></label>
+    <label><span>Status</span><select name="lifecycle_status">{% for item in lifecycle_statuses %}<option value="{{ item }}" {% if values.lifecycle_status == item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select></label>
+    {% else %}
+    <div class="form-grid">
+        <label><span>Name</span><input name="name" required value="{{ values.name or '' }}"></label>
+        <label><span>Slug</span><input name="slug" required value="{{ values.slug or '' }}" pattern="[a-z0-9]+(?:-[a-z0-9]+)*"></label>
+        <label><span>Organization</span><select name="organization_id" required><option value="">Choose organization</option>{% for org in organizations %}<option value="{{ org.id }}" {% if values.organization_id|string == org.id|string %}selected{% endif %}>{{ org.name }}</option>{% endfor %}</select></label>
+        <label><span>Partner app GID</span><input name="partner_app_id" required value="{{ values.partner_app_id or '' }}" placeholder="gid://partners/App/..."></label>
+        <label><span>Listing URL</span><input name="listing_url" type="url" value="{{ values.listing_url or '' }}" placeholder="https://apps.shopify.com/..."></label>
+        <label><span>Listing locales</span><input name="listing_locales" required value="{{ values.listing_locales|join(', ') if values.listing_locales is not string else values.listing_locales }}" placeholder="en, nl-NL"><small>First locale is primary.</small></label>
+        <label><span>GA4 property ID</span><input name="ga4_property_id" value="{{ values.ga4_property_id or '' }}" inputmode="numeric"></label>
+        <label><span>GA4 credentials ENV</span><input name="ga4_credentials_env" value="{{ values.ga4_credentials_env or '' }}" autocomplete="off"></label>
+        <label><span>Annual plan amounts</span><input name="annual_plan_amounts" value="{{ values.annual_plan_amounts|join(', ') if values.annual_plan_amounts is not string else values.annual_plan_amounts }}" placeholder="60.00, 190.00"><small>Full yearly charge amounts, not monthly equivalents.</small></label>
+        <label><span>App status</span><select name="lifecycle_status">{% for item in lifecycle_statuses %}<option value="{{ item }}" {% if values.lifecycle_status == item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select></label>
+        <label><span>Shopify listing status</span><select name="listing_status">{% for item in listing_statuses %}<option value="{{ item }}" {% if values.listing_status == item %}selected{% endif %}>{{ item|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
+        <label><span>Measurement Protocol</span><select name="tracking_status">{% for item in tracking_statuses %}<option value="{{ item }}" {% if values.tracking_status == item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select></label>
+    </div>
+    <label><span>Listing status note</span><textarea name="listing_status_reason" rows="3">{{ values.listing_status_reason or '' }}</textarea></label>
+    {% endif %}
+    <div class="form-actions"><button type="submit">Save</button></div>
+</form>
+
+{% if values.id and not values.archived_at and not values.archived %}
+<details class="danger-zone card"><summary>Archive {{ kind }}</summary><p>Historical analytics remain available. The {{ kind }} stops syncing and disappears from active selectors.</p><form action="/management/{{ 'organizations' if kind == 'organization' else 'apps' }}/{{ values.id }}/archive" method="post"><button class="danger" type="submit">Archive {{ kind }}</button></form></details>
+{% endif %}
+{% endblock %}

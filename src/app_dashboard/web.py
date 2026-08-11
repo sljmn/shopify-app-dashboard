@@ -44,6 +44,19 @@ from app_dashboard.aso import (
     portfolio_report,
 )
 from app_dashboard.catalog import AppConfig, list_apps
+from app_dashboard.integrations import (
+    IntegrationError,
+    LIFECYCLE_STATUSES,
+    LISTING_STATUSES,
+    TRACKING_STATUSES,
+    archive_app,
+    archive_organization,
+    get_app,
+    integration_rows,
+    list_organizations,
+    save_app,
+    save_organization,
+)
 from app_dashboard.config import get_settings
 from app_dashboard.customers import (
     PLAN_INTERVALS,
@@ -233,13 +246,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     login_limiter = RateLimiter(LOGIN_LIMIT, LOGIN_WINDOW)
     ingest_limiter = RateLimiter(INGEST_LIMIT, INGEST_WINDOW)
 
-    active_apps_cache: list[AppConfig] | None = None
-
     def active_apps(conn) -> list[AppConfig]:
-        nonlocal active_apps_cache
-        if active_apps_cache is None:
-            active_apps_cache = list_apps(conn)
-        return active_apps_cache
+        return list_apps(conn)
 
     def resolve_scope(
         request: Request, conn
@@ -312,11 +320,13 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     async def lifespan(app: FastAPI):
         scheduler = None
         if not os.environ.get("NO_SCHEDULER"):
-            catalog_conn = conn_factory()
-            try:
-                scheduler_apps = active_apps(catalog_conn)
-            finally:
-                catalog_conn.close()
+            def scheduler_apps():
+                catalog_conn = conn_factory()
+                try:
+                    return active_apps(catalog_conn)
+                finally:
+                    catalog_conn.close()
+
             scheduler = start_scheduler(conn_factory, settings, scheduler_apps)
         yield
         if scheduler is not None:
@@ -670,11 +680,10 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
              "note_error": request.query_params.get("note_error")},
         )
 
-    async def _annotation_form(request: Request) -> tuple[str, dict]:
-        """The gate and the body parse both annotation writes share.
+    async def _browser_form(request: Request) -> tuple[str, dict]:
+        """The session, origin gate, and body parser for browser writes.
 
-        These are the only routes in the app that change something a person
-        typed, so they require the interactive session and an origin check.
+        Every route that changes operator-owned state uses this boundary.
 
         SameSite=lax on the cookie blocks a cross-*site* form post, but "site"
         is the registrable domain, not the origin. A page on any sibling host
@@ -690,8 +699,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         if not email:
             raise HTTPException(
                 status_code=403,
-                detail="Changing a note needs a browser session. Sign in with "
-                       "Google rather than a username and password.",
+                detail="Changing dashboard data needs a browser session. Sign in first.",
             )
         # Same-origin only. A browser always sends Origin on a cross-origin
         # POST; its absence means a same-origin form or a non-browser client.
@@ -707,6 +715,194 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             raise HTTPException(status_code=415, detail="Send a form body")
         body = await _read_capped(request)
         return email, parse_qs(body.decode("utf-8", "replace"))
+
+    async def _annotation_form(request: Request) -> tuple[str, dict]:
+        return await _browser_form(request)
+
+    def _flat_form(form: dict) -> dict[str, str]:
+        return {key: (values[0] if values else "") for key, values in form.items()}
+
+    def _management_context(request: Request, user: str, **extra) -> dict:
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+        finally:
+            conn.close()
+        return {
+            **page_context(request, user, "management", None, apps),
+            **extra,
+        }
+
+    @app.get("/management/integrations")
+    def manage_integrations(
+        request: Request, user: str = Depends(verify_creds)
+    ):
+        status = request.query_params.get("status", "")
+        conn = conn_factory()
+        try:
+            rows = integration_rows(conn)
+            organizations = list_organizations(conn)
+        finally:
+            conn.close()
+        if status:
+            rows = [row for row in rows if row["lifecycle_status"] == status]
+        return templates.TemplateResponse(
+            request,
+            "integrations.html",
+            _management_context(
+                request, user, rows=rows, organizations=organizations,
+                status=status, lifecycle_statuses=LIFECYCLE_STATUSES,
+            ),
+        )
+
+    def _organization_form_response(
+        request: Request, user: str, values: dict, *, error: str | None = None
+    ):
+        return templates.TemplateResponse(
+            request,
+            "integration_form.html",
+            _management_context(
+                request, user, kind="organization", values=values, error=error,
+                lifecycle_statuses=LIFECYCLE_STATUSES,
+            ),
+            status_code=422 if error else 200,
+        )
+
+    @app.get("/management/organizations/new")
+    def new_organization(request: Request, user: str = Depends(verify_creds)):
+        return _organization_form_response(
+            request, user, {"lifecycle_status": "draft"}
+        )
+
+    @app.get("/management/organizations/{org_id}/edit")
+    def edit_organization(
+        request: Request, org_id: int, user: str = Depends(verify_creds)
+    ):
+        conn = conn_factory()
+        try:
+            record = next((r for r in list_organizations(conn) if r.id == org_id), None)
+        finally:
+            conn.close()
+        if record is None:
+            raise HTTPException(status_code=404, detail="Unknown organization")
+        return _organization_form_response(request, user, record.__dict__)
+
+    @app.post("/management/organizations/save")
+    async def store_organization(request: Request, user: str = Depends(verify_creds)):
+        _, raw = await _browser_form(request)
+        values = _flat_form(raw)
+        org_id = int(values["id"]) if values.get("id", "").isdigit() else None
+        conn = conn_factory()
+        try:
+            saved_id = save_organization(conn, values, org_id)
+        except IntegrationError as exc:
+            return _organization_form_response(request, user, values, error=str(exc))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown organization") from None
+        finally:
+            conn.close()
+        return RedirectResponse(
+            f"/management/organizations/{saved_id}/edit?saved=1", status_code=303
+        )
+
+    @app.post("/management/organizations/{org_id}/archive")
+    async def remove_organization(
+        request: Request, org_id: int, user: str = Depends(verify_creds)
+    ):
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            archive_organization(conn, org_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown organization") from None
+        finally:
+            conn.close()
+        return RedirectResponse("/management/integrations", status_code=303)
+
+    def _app_form_response(
+        request: Request, user: str, values: dict, *, error: str | None = None
+    ):
+        conn = conn_factory()
+        try:
+            organizations = [org for org in list_organizations(conn) if not org.archived]
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request,
+            "integration_form.html",
+            _management_context(
+                request, user, kind="app", values=values, organizations=organizations,
+                error=error, lifecycle_statuses=LIFECYCLE_STATUSES,
+                listing_statuses=LISTING_STATUSES,
+                tracking_statuses=TRACKING_STATUSES,
+            ),
+            status_code=422 if error else 200,
+        )
+
+    @app.get("/management/apps/new")
+    def new_managed_app(request: Request, user: str = Depends(verify_creds)):
+        return _app_form_response(request, user, {
+            "lifecycle_status": "draft", "listing_status": "unknown",
+            "tracking_status": "unknown", "listing_locales": ["en"],
+            "annual_plan_amounts": [],
+        })
+
+    @app.get("/management/apps/{app_id}/edit")
+    def edit_managed_app(
+        request: Request, app_id: int, user: str = Depends(verify_creds)
+    ):
+        conn = conn_factory()
+        try:
+            values = get_app(conn, app_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown app") from None
+        finally:
+            conn.close()
+        return _app_form_response(request, user, values)
+
+    @app.post("/management/apps/save")
+    async def store_managed_app(request: Request, user: str = Depends(verify_creds)):
+        _, raw = await _browser_form(request)
+        values = _flat_form(raw)
+        app_id = int(values["id"]) if values.get("id", "").isdigit() else None
+        conn = conn_factory()
+        try:
+            saved_id = save_app(conn, values, app_id)
+        except IntegrationError as exc:
+            return _app_form_response(request, user, values, error=str(exc))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown app") from None
+        finally:
+            conn.close()
+        return RedirectResponse(
+            f"/management/apps/{saved_id}/edit?saved=1", status_code=303
+        )
+
+    @app.post("/management/apps/{app_id}/archive")
+    async def remove_managed_app(
+        request: Request, app_id: int, user: str = Depends(verify_creds)
+    ):
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            archive_app(conn, app_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown app") from None
+        finally:
+            conn.close()
+        return RedirectResponse("/management/integrations", status_code=303)
+
+    @app.get("/management/runbook")
+    def management_runbook(request: Request, user: str = Depends(verify_creds)):
+        conn = conn_factory()
+        try:
+            rows = integration_rows(conn)
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request, "runbook.html",
+            _management_context(request, user, rows=rows),
+        )
 
     def _back_to_notes(
         selected_app: AppConfig, error: str | None = None

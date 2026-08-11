@@ -369,7 +369,11 @@ def list_apps(
     *,
     active_only: bool = True,
 ) -> list[AppConfig]:
-    where = "where a.active and o.active" if active_only else ""
+    where = (
+        "where a.active and o.active and a.lifecycle_status = 'active' "
+        "and a.archived_at is null and o.archived_at is null"
+        if active_only else ""
+    )
     rows = conn.execute(
         f"""
         select
@@ -390,6 +394,10 @@ def list_apps(
         token_env = row[7]
         usage_token_env = row[11]
         ga4_credentials_env = row[16]
+        # An active row whose Partner secret disappeared is operationally
+        # blocked. Keep it visible in management, but never hand it to a sync.
+        if active_only and not bool(environ.get(token_env, "").strip()):
+            continue
         result.append(
             AppConfig(
                 id=row[0],
@@ -400,19 +408,25 @@ def list_apps(
                 partner_org_id=row[5],
                 organization_name=row[6],
                 partner_token_env=token_env,
-                partner_token=_resolve_env(token_env, environ, f"app {row[2]}") or "",
+                partner_token=(environ.get(token_env, "").strip() if token_env else ""),
                 annual_plan_amounts=frozenset(Decimal(value) for value in row[8]),
                 listing_url=row[9],
                 listing_locales=tuple(row[10]),
                 usage_token_env=usage_token_env,
-                usage_token=_resolve_env(usage_token_env, environ, f"app {row[2]} usage"),
+                usage_token=(
+                    environ.get(usage_token_env, "").strip()
+                    if usage_token_env and environ.get(usage_token_env, "").strip()
+                    else None
+                ),
                 usage_event_types=frozenset(row[12]),
                 usage_activation_event=row[13],
                 usage_live_event=row[14],
                 ga4_property_id=row[15],
                 ga4_credentials_env=ga4_credentials_env,
-                ga4_credentials_json=_resolve_env(
-                    ga4_credentials_env, environ, f"app {row[2]} GA4"
+                ga4_credentials_json=(
+                    environ.get(ga4_credentials_env, "").strip()
+                    if ga4_credentials_env and environ.get(ga4_credentials_env, "").strip()
+                    else None
                 ),
                 active=row[17],
             )

@@ -210,13 +210,12 @@ def run_keyword_research_job(conn_factory) -> dict:
         conn.close()
 
 
-def start_scheduler(
-    conn_factory, settings, apps: list[AppConfig]
-) -> BackgroundScheduler:
+def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
     """Poll the Partner API on an interval via run_sync. Caller owns shutdown()."""
     scheduler = BackgroundScheduler()
+    current_apps = apps if callable(apps) else lambda: apps
     scheduler.add_job(
-        lambda: run_sync_job(conn_factory, apps, settings),
+        lambda: run_sync_job(conn_factory, current_apps(), settings),
         "interval",
         minutes=settings.poll_interval_minutes,
         # First run at boot, not boot+interval: a fresh deploy should sync
@@ -227,7 +226,7 @@ def start_scheduler(
     # collected some hours later. Hourly is well inside that, and it keeps the
     # tight pagination loop away from the 15-minute lifecycle poll.
     scheduler.add_job(
-        lambda: run_transactions_job(conn_factory, apps, settings),
+        lambda: run_transactions_job(conn_factory, current_apps(), settings),
         "interval",
         hours=1,
         next_run_time=datetime.now(),
@@ -236,7 +235,7 @@ def start_scheduler(
     # per-shop query. Refresh independently so hundreds of calls never delay
     # the 15-minute lifecycle feed.
     scheduler.add_job(
-        lambda: run_active_subscriptions_job(conn_factory, apps, settings),
+        lambda: run_active_subscriptions_job(conn_factory, current_apps(), settings),
         "interval",
         hours=6,
         next_run_time=datetime.now() + timedelta(minutes=5),
@@ -245,20 +244,20 @@ def start_scheduler(
     # GA4 aggregates move slowly and the API has a daily token quota, so hourly
     # is plenty; the first run still happens at boot.
     scheduler.add_job(
-        lambda: run_ga4_job(conn_factory, apps, settings),
+        lambda: run_ga4_job(conn_factory, current_apps(), settings),
         "interval",
         hours=1,
         next_run_time=datetime.now(),
     )
     scheduler.add_job(
-        lambda: run_aso_job(conn_factory, apps, settings),
+        lambda: run_aso_job(conn_factory, current_apps(), settings),
         "interval",
         hours=24,
         next_run_time=datetime.now() + timedelta(minutes=10),
         id="aso_intelligence",
     )
     scheduler.add_job(
-        lambda: run_listing_job(conn_factory, apps),
+        lambda: run_listing_job(conn_factory, current_apps()),
         "interval", hours=24,
         next_run_time=datetime.now() + timedelta(minutes=20),
         id="aso_listings",
@@ -273,7 +272,7 @@ def start_scheduler(
     # a separate job from run_sync: a check that lives inside the thing it is
     # watching never runs when that thing is the failure.
     scheduler.add_job(
-        lambda: run_stale_check_job(conn_factory, apps, settings),
+        lambda: run_stale_check_job(conn_factory, current_apps(), settings),
         "interval",
         minutes=15,
     )
@@ -282,7 +281,7 @@ def start_scheduler(
     # send_weekly_digest itself refuses to post twice in one week, which is what
     # makes a machine restart on digest morning harmless.
     scheduler.add_job(
-        lambda: run_digest_job(conn_factory, apps, settings),
+        lambda: run_digest_job(conn_factory, current_apps(), settings),
         "cron",
         day_of_week=settings.digest_day_of_week,
         hour=settings.digest_hour,

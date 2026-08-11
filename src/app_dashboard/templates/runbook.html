@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Integration runbook{% endblock %}
+{% block content %}
+<div class="manage-head"><div><a class="back-link" href="/management/integrations">Back to integrations</a><h1>New app runbook</h1><p>The source-of-truth workflow for Partner data, GA4, and Shopify listing attribution.</p></div></div>
+
+<div class="runbook-layout">
+<nav class="runbook-index card"><strong>Steps</strong><a href="#draft">1. Create draft</a><a href="#partner">2. Partner API</a><a href="#ga4">3. GA4</a><a href="#listing">4. Shopify listing</a><a href="#activate">5. Activate</a><a href="#verify">6. Verify</a><a href="#rotate">7. Rotate secrets</a></nav>
+<article class="runbook">
+<section id="draft"><h2>1. Create the draft</h2><p>Create the Partner organization first if it is new, then add the app in <a href="/management/apps/new">App management</a>. Keep its status <strong>Draft</strong> until all checks below pass. Use the real primary listing locale; do not assume English.</p></section>
+<section id="partner"><h2>2. Partner API</h2><p>Create or locate the Partner API client for the organization. Put the token in Dokku under the ENV name stored on the organization.</p><pre><code>dokku config:set mantle SHOPIFY_PARTNER_TOKEN_ORGID='&lt;partner-token&gt;'</code></pre><p>Success signal: Integrations shows <strong>Token present</strong>. Never paste the token into this form, Git, logs, screenshots, or documentation.</p></section>
+<section id="ga4"><h2>3. GA4 property and stream</h2><ol><li>Create one GA4 property and web stream for the app listing.</li><li>Grant the shared Mantle service account Viewer access.</li><li>Record the numeric property ID and the shared credentials ENV name.</li><li>In the web stream, acknowledge the user-data collection terms and create one Measurement Protocol API secret.</li></ol><p>Success signal: the app shows a property ID and <strong>Credentials present</strong>.</p></section>
+<section id="listing"><h2>4. Connect the Shopify listing</h2><p>Open the listing editor for its actual primary locale and enter the GA4 Measurement ID and API secret. If Shopify shows <strong>Submitted</strong> or <strong>In review</strong>, those fields can be locked: record that listing status, set tracking to Blocked, and explain it in the status note. Finish after review approval.</p></section>
+<section id="activate"><h2>5. Activate</h2><p>Set listing and tracking states explicitly, enter every full annual charge amount, then change the app to <strong>Active</strong>. Activation refuses missing Partner credentials, GA4 configuration, locales, or unknown states.</p></section>
+<section id="verify"><h2>6. Refresh and verify</h2><p>Use <strong>Fetch data</strong> on Overview. Confirm the app appears in the selector, lifecycle events arrive, annual charges are divided by twelve for MRR, Traffic gets GA4 data, and the sync health stays green.</p><pre><code>dokku logs mantle -t
+curl -fsS https://mantle.newcraft.dev/healthz</code></pre></section>
+<section id="rotate"><h2>7. Rotate credentials</h2><p>Create the replacement secret, update the same Dokku ENV key, restart the app, verify sync, and only then revoke the old secret. Rollback means restoring the prior ENV value; database metadata does not need to change.</p></section>
+<section><h2>Current inventory</h2><p>{{ rows|length }} apps are recorded. Operational state and credential presence are maintained on <a href="/management/integrations">Integrations</a>; secret values are intentionally never rendered here.</p></section>
+</article>
+</div>
+{% endblock %}
