@@ -19,6 +19,7 @@ TOKEN_ENV = {
     "SHOPIFY_PARTNER_TOKEN_4742901": "token-4742901",
     "SHOPIFY_PARTNER_TOKEN_4821379": "token-4821379",
     "SHOPIFY_PARTNER_TOKEN_4975891": "token-4975891",
+    "SHARED_GA4_CREDENTIALS_JSON": "{}",
 }
 
 
@@ -29,6 +30,8 @@ def test_repository_catalog_contains_all_configured_apps():
     assert len(apps) == 25
     assert len({app.slug for app in apps}) == 25
     assert len({app.partner_app_id for app in apps}) == 25
+    assert all(app.ga4_property_id for app in apps)
+    assert all(app.ga4_credentials_env == "SHARED_GA4_CREDENTIALS_JSON" for app in apps)
     tax = next(app for app in apps if app.slug == "eu-tax-exemption-easy")
     assert tax.partner_org_id == "3508770"
     assert tax.annual_plan_amounts == {
