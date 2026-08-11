@@ -207,6 +207,13 @@ def test_selector_lists_every_app_and_unknown_slugs_404(
     assert combined.status_code == 200
     assert "All apps" in combined.text
     assert "Test App" in combined.text and other.name in combined.text
+    assert 'data-app-picker' in combined.text
+    assert 'data-app-picker-search' in combined.text
+    assert 'data-app-value="other-app"' in combined.text
+    assert 'data-app-search-text="other app other-app"' in combined.text
+    assert 'class="app-selector-fallback"' in combined.text
+    assert ".app-picker-option[hidden] { display: none; }" in combined.text
+    assert "max-width: none;" in combined.text
     assert "new FormData(form)" in combined.text
     assert c.get(
         "/?app=other-app"
@@ -214,6 +221,21 @@ def test_selector_lists_every_app_and_unknown_slugs_404(
     assert c.get(
         "/?app=does-not-exist"
     ).status_code == 404
+
+
+def test_form_control_assets_and_date_hooks_are_local(db):
+    c = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    activity = c.get("/activity")
+    overview = c.get("/?app=test-app")
+
+    assert '/static/vendor/flatpickr/flatpickr.min.css' in activity.text
+    assert '/static/vendor/flatpickr/flatpickr.min.js' in activity.text
+    assert 'name="on"' in activity.text and "data-datepicker" in activity.text
+    assert 'name="on_date"' in overview.text and "data-datepicker" in overview.text
+    assert '.date-control input:not([type="hidden"])' in activity.text
+    assert c.get("/static/vendor/flatpickr/flatpickr.min.css").status_code == 200
+    assert c.get("/static/vendor/flatpickr/flatpickr.min.js").status_code == 200
 
 
 @pytest.mark.parametrize("path", ["/", "/customers", "/trials", "/reports/funnel",
@@ -938,6 +960,7 @@ def test_activity_page_filters_and_links_to_the_merchant_and_store(db):
         "/activity?app=test-app&on=2026-08-10&event_type=subscribed",
     )
     assert page.status_code == 200
+    assert 'name="on"' in page.text and "data-datepicker" in page.text
     assert "Activity Shop" in page.text
     assert "Subscribed" in page.text
     assert "+$19.00" in page.text

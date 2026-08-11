@@ -18,6 +18,8 @@
     <script src="https://unpkg.com/htmx.org@1.9.12"
             integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2"
             crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="/static/vendor/flatpickr/flatpickr.min.css">
+    <script src="/static/vendor/flatpickr/flatpickr.min.js" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
@@ -42,6 +44,12 @@
             --nav: #211A2E;
             --row-hover: #F7F5FC;
             --brand-hover: #5B3CE0;
+            --control-bg: #FFFFFF;
+            --control-border: #DCD8E7;
+            --control-border-hover: #BEB7D0;
+            --control-inset: #FAF9FC;
+            --control-shadow: 0 1px 2px rgba(33, 26, 46, .05);
+            --overlay-shadow: 0 20px 60px rgba(33, 26, 46, .22);
             --heat-rgb: 108 75 244;   /* retention cells, alpha carries the value */
             --heat-ink: #FFFFFF;      /* text once a cell is dark enough to need it */
             --on-brand: #FFFFFF;      /* text on a brand-filled button */
@@ -84,6 +92,12 @@
                 --nav: #0D0A14;
                 --row-hover: #241E33;
                 --brand-hover: #AD9BFF;
+                --control-bg: #211B2D;
+                --control-border: #3B334D;
+                --control-border-hover: #5B506F;
+                --control-inset: #191521;
+                --control-shadow: 0 1px 2px rgba(0, 0, 0, .18);
+                --overlay-shadow: 0 20px 60px rgba(0, 0, 0, .48);
                 --heat-rgb: 155 133 255;
                 --heat-ink: #14111C;
                 --on-brand: #14111C;
@@ -98,6 +112,10 @@
             }
         }
         * { box-sizing: border-box; }
+        .sr-only {
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+        }
         body {
             margin: 0; background: var(--surface); color: var(--ink);
             font: 15px/1.5 var(--body);
@@ -178,10 +196,82 @@
         .side-top { display: flex; align-items: flex-start; gap: 8px; }
         .side-top .wordmark { flex: 1; min-width: 0; }
         .app-selector { padding: 0 10px; }
-        .app-selector select {
+        .app-selector-fallback {
             width: 100%; min-width: 0; height: 34px; border-radius: 6px;
             border: 1px solid #3A334D; background: #171221; color: #fff;
             padding: 0 28px 0 9px; font: 500 12.5px var(--body);
+        }
+        .js .app-selector-fallback.app-selector-enhanced { display: none; }
+        .app-picker-trigger {
+            width: 100%; min-width: 0; height: 40px; justify-content: space-between;
+            padding: 0 11px 0 12px; border: 1px solid #4A405E;
+            border-radius: 9px; background: #171221; color: #FFFFFF;
+            box-shadow: 0 1px 0 rgba(255, 255, 255, .04), 0 8px 20px rgba(0, 0, 0, .12);
+            font: 600 13px var(--body); text-align: left;
+        }
+        .app-picker-trigger:hover { background: #1C1628; border-color: #665A7D; }
+        .app-picker-trigger[aria-expanded="true"] {
+            border-color: var(--brand); box-shadow: 0 0 0 3px rgba(108, 75, 244, .24);
+        }
+        .app-picker-trigger-label {
+            min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .app-picker-trigger svg { flex: none; color: #BDB6CE; }
+        .app-picker-dialog {
+            position: fixed; inset: auto; width: min(360px, calc(100vw - 24px));
+            max-height: min(520px, calc(100dvh - 32px)); margin: 0;
+            padding: 0; overflow: hidden; color: var(--ink); background: var(--card);
+            border: 1px solid var(--control-border); border-radius: 12px;
+            box-shadow: var(--overlay-shadow);
+        }
+        .app-picker-dialog::backdrop {
+            background: rgba(18, 13, 27, .28);
+            backdrop-filter: blur(2px);
+        }
+        .app-picker-head {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 14px 14px 8px;
+        }
+        .app-picker-title { font: 600 13px var(--body); color: var(--ink-2); }
+        .app-picker-close {
+            width: 30px; height: 30px; padding: 0; justify-content: center;
+            background: transparent; color: var(--muted); border-radius: 7px;
+        }
+        .app-picker-close:hover { background: var(--row-hover); color: var(--ink); }
+        .app-picker-search-wrap { position: relative; margin: 0 12px 10px; }
+        .app-picker-search-wrap svg {
+            position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+            color: var(--muted); pointer-events: none;
+        }
+        .app-picker-search {
+            width: 100%; height: 42px; min-width: 0 !important;
+            padding: 0 12px 0 36px !important; background: var(--control-inset) !important;
+        }
+        .app-picker-options {
+            display: grid; gap: 2px; max-height: 360px; overflow-y: auto;
+            padding: 2px 8px 10px; overscroll-behavior: contain;
+        }
+        .app-picker-option {
+            width: 100%; min-height: 42px; padding: 8px 10px;
+            justify-content: flex-start; gap: 10px; color: var(--ink);
+            background: transparent; border-radius: 8px; text-align: left;
+            font: 500 13.5px var(--body);
+        }
+        .app-picker-option[hidden] { display: none; }
+        .app-picker-option:hover, .app-picker-option.is-active { background: var(--row-hover); }
+        .app-picker-option[aria-selected="true"] {
+            color: var(--brand); background: var(--brand-soft); font-weight: 600;
+        }
+        .app-picker-check {
+            width: 18px; height: 18px; flex: none; display: grid; place-items: center;
+            border-radius: 50%; color: transparent;
+        }
+        .app-picker-option[aria-selected="true"] .app-picker-check {
+            color: var(--on-brand); background: var(--brand);
+        }
+        .app-picker-empty {
+            margin: 0; padding: 18px 12px 22px; color: var(--muted);
+            font-size: 13px; text-align: center;
         }
         /* Only ever visible in the collapsed layout, and only once the script
            has confirmed it can hide the nav it toggles. */
@@ -332,6 +422,20 @@
             .js .sidebar nav.open a[aria-current="page"] {
                 background: var(--brand-soft); color: var(--brand); box-shadow: none;
             }
+            .app-selector { order: 3; flex: 1 0 100%; padding: 2px 0 0; }
+            .app-picker-trigger { max-width: none; }
+            .app-picker-dialog {
+                inset: auto 0 0; width: 100%; max-width: none;
+                max-height: min(78dvh, 640px);
+                border-width: 1px 0 0; border-radius: 16px 16px 0 0;
+            }
+            .app-picker-dialog::backdrop {
+                background: rgba(18, 13, 27, .5); backdrop-filter: blur(3px);
+            }
+            .app-picker-head { padding: 16px 18px 10px; }
+            .app-picker-search-wrap { margin: 0 16px 10px; }
+            .app-picker-options { max-height: calc(78dvh - 122px); padding: 2px 12px 16px; }
+            .app-picker-option { min-height: 48px; font-size: 15px; }
         }
         main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 48px; }
         /* One vertical rhythm for the whole page: every direct child of main
@@ -507,13 +611,85 @@
             color: var(--ink-2); font-size: 13px;
         }
 
-        form.filters { display: flex; gap: 10px; flex-wrap: wrap; }
-        select, input[type="search"] {
-            font: 14px var(--body); color: var(--ink);
-            border: 1px solid var(--border); border-radius: 8px;
-            padding: 8px 10px; background: var(--card);
+        form.filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        select:not(.app-selector-fallback), input[type="search"],
+        input[data-datepicker], .flatpickr-input,
+        .date-control input:not([type="hidden"]) {
+            min-height: 42px; font: 500 14px var(--body); color: var(--ink);
+            border: 1px solid var(--control-border); border-radius: 9px;
+            padding: 9px 12px; background-color: var(--control-bg);
+            box-shadow: var(--control-shadow); transition: border-color .15s, box-shadow .15s,
+                background-color .15s;
+        }
+        select:not(.app-selector-fallback) {
+            appearance: none; padding-right: 36px;
+            background-image:
+                linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+            background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+            background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+        }
+        select:not(.app-selector-fallback):hover, input[type="search"]:hover,
+        input[data-datepicker]:hover, .flatpickr-input:hover,
+        .date-control input:not([type="hidden"]):hover {
+            border-color: var(--control-border-hover);
+        }
+        select:not(.app-selector-fallback):focus, input[type="search"]:focus,
+        input[data-datepicker]:focus, .flatpickr-input:focus,
+        .date-control input:not([type="hidden"]):focus {
+            border-color: var(--brand); outline: 0;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent);
+        }
+        select:not(.app-selector-fallback):disabled {
+            opacity: .58; cursor: not-allowed; background-color: var(--control-inset);
         }
         input[type="search"] { min-width: 260px; }
+        .date-control { position: relative; display: inline-flex; min-width: 170px; }
+        .date-control input { width: 100%; padding-right: 38px; }
+        .date-control > svg {
+            position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+            pointer-events: none; color: var(--muted); z-index: 1;
+        }
+        @media (max-width: 620px) {
+            form.filters { display: grid; grid-template-columns: minmax(0, 1fr); }
+            form.filters > select, form.filters > input, form.filters > .date-control {
+                width: 100%; min-width: 0;
+            }
+            form.filters > button { min-height: 42px; justify-content: center; }
+        }
+        .flatpickr-calendar {
+            width: 320px; padding: 8px; font: 13px var(--body); color: var(--ink);
+            background: var(--card); border: 1px solid var(--control-border);
+            border-radius: 11px; box-shadow: var(--overlay-shadow);
+        }
+        .flatpickr-calendar.arrowTop::before,
+        .flatpickr-calendar.arrowTop::after { border-bottom-color: var(--control-border); }
+        .flatpickr-calendar.arrowBottom::before,
+        .flatpickr-calendar.arrowBottom::after { border-top-color: var(--control-border); }
+        .flatpickr-months .flatpickr-month, .flatpickr-current-month,
+        .flatpickr-current-month .flatpickr-monthDropdown-months,
+        .flatpickr-current-month input.cur-year {
+            color: var(--ink); background: transparent; font-family: var(--body);
+        }
+        .flatpickr-current-month .flatpickr-monthDropdown-months:hover,
+        .numInputWrapper:hover { background: var(--row-hover); }
+        .flatpickr-months .flatpickr-prev-month,
+        .flatpickr-months .flatpickr-next-month { color: var(--muted); fill: currentColor; }
+        .flatpickr-months .flatpickr-prev-month:hover,
+        .flatpickr-months .flatpickr-next-month:hover { color: var(--brand); }
+        span.flatpickr-weekday { color: var(--muted); font-weight: 600; }
+        .flatpickr-day { color: var(--ink-2); border-radius: 7px; }
+        .flatpickr-day:hover, .flatpickr-day:focus {
+            color: var(--ink); background: var(--row-hover); border-color: var(--row-hover);
+        }
+        .flatpickr-day.today { border-color: var(--brand); }
+        .flatpickr-day.today:hover { color: var(--ink); background: var(--brand-soft); }
+        .flatpickr-day.selected, .flatpickr-day.selected:hover,
+        .flatpickr-day.startRange, .flatpickr-day.endRange {
+            color: var(--on-brand); background: var(--brand); border-color: var(--brand);
+        }
+        .flatpickr-day.flatpickr-disabled, .flatpickr-day.prevMonthDay,
+        .flatpickr-day.nextMonthDay { color: var(--muted); opacity: .55; }
         .customer-table { min-width: 860px; }
         .customer-domain, .customer-event-at { display: block; margin-top: 2px; }
         /* Read-only block for lists meant to be selected and pasted elsewhere. */
@@ -898,12 +1074,61 @@
         </div>
         <form class="app-selector" action="{{ request.url.path }}" method="get">
             {% for key, value in selector_params %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
-            <select id="app-selector" name="app" aria-label="App">
+            <select id="app-selector" class="app-selector-fallback" name="app" aria-label="App">
                 <option value="">All apps</option>
                 {% for app in active_apps %}
                 <option value="{{ app.slug }}" {% if selected_app and selected_app.id == app.id %}selected{% endif %}>{{ app.name }}</option>
                 {% endfor %}
             </select>
+            <div data-app-picker hidden>
+                <button type="button" class="app-picker-trigger" data-app-picker-trigger
+                        aria-haspopup="dialog" aria-expanded="false"
+                        aria-controls="app-picker-dialog">
+                    <span class="app-picker-trigger-label">{{ selected_app.name if selected_app else "All apps" }}</span>
+                    <svg viewBox="0 0 20 20" width="16" height="16" fill="none"
+                         stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                         stroke-linejoin="round" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
+                </button>
+                <dialog class="app-picker-dialog" id="app-picker-dialog"
+                        aria-labelledby="app-picker-title">
+                    <div class="app-picker-head">
+                        <span class="app-picker-title" id="app-picker-title">Choose an app</span>
+                        <button type="button" class="app-picker-close" data-app-picker-close
+                                aria-label="Close app picker">
+                            <svg viewBox="0 0 20 20" width="17" height="17" fill="none"
+                                 stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                                 aria-hidden="true"><path d="M5 5l10 10M15 5 5 15"/></svg>
+                        </button>
+                    </div>
+                    <div class="app-picker-search-wrap">
+                        <svg viewBox="0 0 20 20" width="16" height="16" fill="none"
+                             stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                             aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
+                        <label class="sr-only" for="app-picker-search">Search apps</label>
+                        <input class="app-picker-search" id="app-picker-search" type="search"
+                               placeholder="Search apps" autocomplete="off" data-app-picker-search>
+                    </div>
+                    <div class="app-picker-options" role="listbox" aria-label="Apps"
+                         data-app-picker-options>
+                        <button type="button" class="app-picker-option" role="option"
+                                aria-selected="{{ 'true' if not selected_app else 'false' }}"
+                                data-app-value="" data-app-search-text="all apps">
+                            <span class="app-picker-check" aria-hidden="true">&#10003;</span>
+                            <span>All apps</span>
+                        </button>
+                        {% for app in active_apps %}
+                        <button type="button" class="app-picker-option" role="option"
+                                aria-selected="{{ 'true' if selected_app and selected_app.id == app.id else 'false' }}"
+                                data-app-value="{{ app.slug }}"
+                                data-app-search-text="{{ app.name|lower }} {{ app.slug|lower }}">
+                            <span class="app-picker-check" aria-hidden="true">&#10003;</span>
+                            <span>{{ app.name }}</span>
+                        </button>
+                        {% endfor %}
+                    </div>
+                    <p class="app-picker-empty" data-app-picker-empty hidden>No apps found</p>
+                </dialog>
+            </div>
         </form>
         <nav id="sidenav">
             {% for href, key, label, icon, subs in NAV %}
@@ -958,13 +1183,137 @@
             event.currentTarget.setAttribute("aria-expanded", String(open));
         });
 
-        document.getElementById("app-selector")?.addEventListener("change", (event) => {
-            const form = event.currentTarget.form;
+        function navigateAppForm(form) {
             const target = new URL(form.action);
             new FormData(form).forEach((value, key) => {
                 if (value) target.searchParams.append(key, value);
             });
             location.assign(target);
+        }
+
+        const appSelect = document.getElementById("app-selector");
+        appSelect?.addEventListener("change", (event) => {
+            navigateAppForm(event.currentTarget.form);
+        });
+
+        (function initAppPicker() {
+            const root = document.querySelector("[data-app-picker]");
+            if (!root || !appSelect || typeof HTMLDialogElement === "undefined") return;
+
+            const form = appSelect.form;
+            const trigger = root.querySelector("[data-app-picker-trigger]");
+            const dialog = root.querySelector("dialog");
+            const search = root.querySelector("[data-app-picker-search]");
+            const empty = root.querySelector("[data-app-picker-empty]");
+            const options = [...root.querySelectorAll("[data-app-value]")];
+            if (typeof dialog.showModal !== "function") return;
+            let visible = options;
+
+            const filterOptions = () => {
+                const query = search.value.trim().toLowerCase();
+                visible = options.filter((option) => {
+                    const match = !query || option.dataset.appSearchText.includes(query);
+                    option.hidden = !match;
+                    option.classList.remove("is-active");
+                    return match;
+                });
+                empty.hidden = visible.length !== 0;
+                if (visible[0]) visible[0].classList.add("is-active");
+            };
+
+            const selectOption = (option) => {
+                appSelect.value = option.dataset.appValue;
+                dialog.close();
+                navigateAppForm(form);
+            };
+
+            const openPicker = () => {
+                const mobile = matchMedia("(max-width: 900px)").matches;
+                if (mobile) {
+                    dialog.style.removeProperty("left");
+                    dialog.style.removeProperty("top");
+                } else {
+                    const anchor = trigger.getBoundingClientRect();
+                    dialog.style.left = `${Math.max(12, anchor.left)}px`;
+                    dialog.style.top = `${anchor.bottom + 8}px`;
+                }
+                search.value = "";
+                filterOptions();
+                dialog.showModal();
+                trigger.setAttribute("aria-expanded", "true");
+                if (!mobile) {
+                    const anchor = trigger.getBoundingClientRect();
+                    const panel = dialog.getBoundingClientRect();
+                    dialog.style.left = `${Math.min(
+                        Math.max(12, anchor.left), innerWidth - panel.width - 12)}px`;
+                    dialog.style.top = `${Math.min(
+                        anchor.bottom + 8, innerHeight - panel.height - 12)}px`;
+                }
+                search.focus();
+            };
+
+            trigger.addEventListener("click", openPicker);
+            root.querySelector("[data-app-picker-close]").addEventListener(
+                "click", () => dialog.close());
+            options.forEach((option) => {
+                option.addEventListener("click", () => selectOption(option));
+                option.addEventListener("keydown", (event) => {
+                    if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+                    event.preventDefault();
+                    const step = event.key === "ArrowDown" ? 1 : -1;
+                    const current = visible.indexOf(option);
+                    visible[(current + step + visible.length) % visible.length]?.focus();
+                });
+            });
+            search.addEventListener("input", filterOptions);
+            search.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" && visible[0]) {
+                    event.preventDefault();
+                    selectOption(visible[0]);
+                } else if (event.key === "ArrowDown" && visible[0]) {
+                    event.preventDefault();
+                    visible[0].focus();
+                }
+            });
+            dialog.addEventListener("click", (event) => {
+                if (event.target !== dialog) return;
+                const box = dialog.getBoundingClientRect();
+                if (event.clientX < box.left || event.clientX > box.right ||
+                    event.clientY < box.top || event.clientY > box.bottom) dialog.close();
+            });
+            dialog.addEventListener("close", () => {
+                trigger.setAttribute("aria-expanded", "false");
+                trigger.focus();
+            });
+
+            root.hidden = false;
+            appSelect.classList.add("app-selector-enhanced");
+        })();
+
+        function initDatePickers(root = document) {
+            if (typeof flatpickr !== "function") return;
+            root.querySelectorAll("[data-datepicker]").forEach((input) => {
+                if (input._flatpickr) return;
+                flatpickr(input, {
+                    altInput: true,
+                    altFormat: "j M Y",
+                    dateFormat: "Y-m-d",
+                    disableMobile: false,
+                    maxDate: input.max || null,
+                    minDate: input.min || null,
+                    onReady: (_dates, _value, instance) => {
+                        if (!instance.altInput) return;
+                        instance.altInput.required = input.required;
+                        instance.altInput.setAttribute(
+                            "aria-label", input.getAttribute("aria-label") || "Date");
+                    },
+                });
+            });
+        }
+
+        document.addEventListener("DOMContentLoaded", () => initDatePickers());
+        document.body.addEventListener("htmx:afterSwap", (event) => {
+            initDatePickers(event.target);
         });
 
         document.querySelector("[data-confirm-full]")?.addEventListener(
