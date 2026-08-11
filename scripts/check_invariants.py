@@ -144,14 +144,38 @@ def main() -> int:
     # charge ANNUAL; leave it empty and there are no annual rows to disagree
     # with, so this passes over nothing while MRR reads twelve times high.
     annual_scope = len(rows(conn, """select sub.id from subscriptions sub
-                                     join charges c on c.app_id = sub.app_id and c.gid = sub.id
-                                     where c.plan_interval = 'ANNUAL'"""))
+                                     left join charges c
+                                       on c.app_id = sub.app_id and c.gid = sub.id
+                                     where coalesce(sub.billing_type,
+                                                    c.plan_interval) = 'ANNUAL'"""))
     check("Every annual subscription counts at one twelfth of its price",
-          not rows(conn, """select sub.id from subscriptions sub
-                            join charges c on c.app_id = sub.app_id and c.gid = sub.id
-                            where c.plan_interval = 'ANNUAL'
-                              and sub.monthly_amount
-                                  <> round(coalesce(c.plan_amount, c.amount) / 12, 2)"""),
+          not rows(conn, """
+            select sub.id
+            from subscriptions sub
+            left join charges c
+              on c.app_id = sub.app_id and c.gid = sub.id
+            left join active_subscriptions snapshot
+              on snapshot.app_id = sub.app_id and snapshot.shop_gid = sub.shop_gid
+             and sub.churned_at is null
+            left join lateral (
+                select t.gross_amount
+                from transactions t
+                where t.app_id = sub.app_id
+                  and t.shop_gid = sub.shop_gid
+                  and t.charge_gid = coalesce(
+                      case when snapshot.billing_period = 'ANNUAL'
+                           then snapshot.legacy_subscription_id end,
+                      sub.id
+                  )
+                  and t.type = 'AppSubscriptionSale'
+                  and t.gross_amount > 0
+                order by t.created_at desc, t.id desc limit 1
+            ) latest_payment on true
+            where coalesce(sub.billing_type, c.plan_interval) = 'ANNUAL'
+              and sub.monthly_amount <> round(
+                  coalesce(latest_payment.gross_amount,
+                           c.plan_amount, c.amount) / 12, 2)
+          """),
           detail="", scope=annual_scope)
 
     money = stats.collected_revenue(conn)
