@@ -1,5 +1,6 @@
 {% extends "gate.html" %}
 {% block gate %}
+{% if signed_in %}<p class="error-code">Error {{ error_code }}</p>{% endif %}
 <h1>{{ title }}</h1>
 <p>{{ body }}</p>
 <p><a class="btn" href="{{ link_href }}">{{ link_text }}</a></p>

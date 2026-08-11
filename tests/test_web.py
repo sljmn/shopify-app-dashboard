@@ -676,11 +676,29 @@ def test_a_signed_in_reader_keeps_the_sidebar_on_an_error(db):
     assert signed_in.status_code == 404
     assert 'class="sidebar"' in signed_in.text
     assert "Back to Overview" in signed_in.text
+    assert 'class="gate error-page"' in signed_in.text
+    assert 'class="cover"' not in signed_in.text
+    assert "/static/error-404.webp" not in signed_in.text
 
     c.cookies.clear()
     signed_out = c.get("/nope", headers={"Accept": "text/html"})
     assert 'class="sidebar"' not in signed_out.text
     assert "Go to sign-in" in signed_out.text
+
+
+def test_retired_dutch_activity_route_redirects_with_filters(db):
+    app = create_app(conn_factory=lambda: db)
+    c = dashboard_client(app)
+
+    response = c.get(
+        "/activiteit?on=2026-08-12&event_type=installed",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 308
+    assert response.headers["location"] == (
+        "/activity?on=2026-08-12&event_type=installed"
+    )
 
 
 def test_long_app_name_can_wrap_inside_sidebar(db, test_app):

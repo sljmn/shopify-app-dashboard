@@ -400,7 +400,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             {"user": display_name(settings.session_secret,
                                   request.cookies.get(SESSION_COOKIE), ""),
              "active": None, "signed_in": signed_in,
-             "art": f"/static/error-{exc.status_code}.webp",
+             "art": None if signed_in else f"/static/error-{exc.status_code}.webp",
+             "error_code": exc.status_code,
              "title": title, "body": body,
              "link_href": href, "link_text": text},
             status_code=exc.status_code,
@@ -1082,6 +1083,14 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "all_results_url": "/customers?" + urlencode(query_values),
             },
         )
+
+    @app.get("/activiteit", include_in_schema=False)
+    def legacy_activity(request: Request, user: str = Depends(verify_creds)):
+        del user
+        target = "/activity"
+        if request.url.query:
+            target += f"?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
 
     @app.get("/activity")
     def activity(

@@ -164,6 +164,20 @@
             padding: 11px 18px; border-radius: 9px;
         }
         .gate .btn:hover { background: var(--brand-hover); }
+        .gate.error-page {
+            max-width: 620px; margin: 11vh 0 0; padding: 0;
+            text-align: left;
+        }
+        .gate.error-page .error-code {
+            margin: 0 0 8px; color: var(--brand); font: 600 12px var(--mono);
+            text-transform: uppercase;
+        }
+        .gate.error-page h1 { font-size: 32px; margin-bottom: 8px; }
+        .gate.error-page > p:not(.error-code) { max-width: 520px; }
+        @media (max-width: 620px) {
+            .gate.error-page { margin-top: 7vh; }
+            .gate.error-page h1 { font-size: 28px; }
+        }
         .login-form { display: grid; gap: 8px; text-align: left; margin-top: 22px; }
         .login-form label { font-size: 13px; font-weight: 600; }
         .login-form input[type="email"], .login-form input[type="password"] {
