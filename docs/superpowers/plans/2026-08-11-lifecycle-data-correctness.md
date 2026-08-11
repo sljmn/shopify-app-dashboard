@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Correct lifecycle derivation and make current and historical MRR detectably agree with Shopify state.
+**Goal:** Correct lifecycle derivation and make current MRR detectably agree across derived state, the clean event ledger, and Shopify snapshots.
 
-**Architecture:** Rebuild a canonical clean movement ledger from immutable raw events while retaining `subscriptions` as current materialized state. Historical reports consume clean movement deltas; validators compare that independent path with current state and Shopify snapshots.
+**Architecture:** Rebuild a canonical clean movement ledger from immutable raw events while retaining `subscriptions` as current materialized state. Validators compare the independent ledger with current state and Shopify snapshots. Historical reports remain subscription-state based until trial outcomes are persisted; otherwise old trial windows cannot be excluded correctly.
 
 **Tech Stack:** Python 3.13, PostgreSQL, psycopg 3, pytest, FastAPI/Jinja.
 
@@ -40,7 +40,7 @@ Run: `pytest tests/test_derive.py tests/test_pipeline.py tests/test_invariants.p
 
 Expected: all selected tests pass.
 
-### Task 2: Reconstruct historical MRR from the clean ledger
+### Task 2: Reconcile current MRR with the clean ledger
 
 **Files:**
 - Modify: `src/app_dashboard/stats.py`
@@ -51,15 +51,15 @@ Expected: all selected tests pass.
 
 - [ ] **Step 1: Add failing historical reconstruction tests**
 
-Cover a freeze/unfreeze gap, a net upgrade, real churn, resubscription, and equality between the final event-ledger value and current subscription MRR.
+Cover a freeze/unfreeze cycle, a net upgrade, real churn, resubscription, and equality between the final event-ledger value and current subscription MRR.
 
 - [ ] **Step 2: Run focused report tests and confirm failure**
 
 Run: `pytest tests/test_stats.py tests/test_metrics.py -q`
 
-- [ ] **Step 3: Change historical MRR queries to cumulative clean deltas**
+- [ ] **Step 3: Add an independent current event-ledger calculation**
 
-Build the month-end series from all clean events before each boundary. Keep current overview MRR on the live-subscription query so the two paths remain independent.
+Sum all signed clean movements per installed shop, excluding shops in a current Shopify trial. Keep Overview MRR on the live-subscription query so the two paths remain independent. Do not change the historical chart until trial outcomes are persisted.
 
 - [ ] **Step 4: Base churn and LTV on genuine lifecycle movement**
 

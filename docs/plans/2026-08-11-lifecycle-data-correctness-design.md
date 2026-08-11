@@ -12,7 +12,7 @@ This increment fixes lifecycle and MRR correctness. Historical trial outcomes an
 
 Keep the two existing representations, but give each one a precise job:
 
-- `app_events` is the canonical historical movement ledger. Its signed `net_change` values reconstruct MRR at any past instant.
+- `app_events` is the canonical lifecycle movement ledger. Its signed `net_change` values independently reconstruct current MRR and will become the historical source after trial outcomes are persisted.
 - `subscriptions` is the current materialized subscription state used for fast current-MRR and merchant-detail queries.
 - `active_subscriptions` is Shopify's current source snapshot and validates, rather than independently defines, derived state.
 
@@ -39,7 +39,7 @@ Subscription rows are rebuilt deterministically for the installation. Reusing a 
 
 ## Reporting And Validation
 
-Historical MRR uses the cumulative clean-event ledger after the full replay. Current MRR continues to use live `subscriptions`. The live invariant command adds:
+Historical MRR stays subscription-state based in this increment because the replaceable current trial snapshot cannot exclude past trial windows honestly. Current MRR continues to use live `subscriptions`, while the cumulative clean-event ledger provides an independent current-state total. The live invariant command adds:
 
 - current state MRR versus cumulative event-ledger MRR;
 - installed Shopify `active_subscriptions` versus derived live subscriptions;

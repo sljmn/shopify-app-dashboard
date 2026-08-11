@@ -130,7 +130,7 @@ METRICS: dict[str, Metric] = {
         rule="ARPU divided by the monthly subscription churn rate, measured over "
              "90 days and scaled to a month. Null when nobody churned in the "
              "window, because no departures is not evidence of no churn.",
-        source="subscriptions",
+        source="app_events for churn; subscriptions for current ARPU",
         unit="usd", better="up",
     ),
 

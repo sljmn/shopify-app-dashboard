@@ -572,6 +572,11 @@ def test_ltv_is_arpu_over_churn(db):
     # 90 days, so 11.1% a month, so LTV = 20 / 0.111 = 180.
     _sub(db, "c3", "s3", Decimal("20.00"), now - timedelta(days=300),
          churned_at=now - timedelta(days=10))
+    db.execute(
+        """insert into app_events(platform_event_id, type, occurred_at, shop_gid, net_change)
+           values ('churn-c3', 'unsubscribed', %s, 's3', -20)""",
+        (now - timedelta(days=10),),
+    )
     db.commit()
 
     out = unit_economics(db)
@@ -579,6 +584,24 @@ def test_ltv_is_arpu_over_churn(db):
     assert out["churned_in_window"] == 1
     assert out["monthly_churn_pct"] == 11.1
     assert round(out["ltv"]) == 180
+
+
+def test_ltv_does_not_count_a_zero_mrr_plan_replacement_as_churn(db):
+    now = datetime.now(timezone.utc)
+    _shop(db, "s1")
+    _sub(db, "old", "s1", Decimal("20.00"), now - timedelta(days=300),
+         churned_at=now - timedelta(days=10))
+    _sub(db, "new", "s1", Decimal("30.00"), now - timedelta(days=10))
+    db.execute(
+        """insert into app_events(platform_event_id, type, occurred_at, shop_gid, net_change)
+           values ('late-plan-cancel', 'unsubscribed', %s, 's1', 0)""",
+        (now - timedelta(days=10),),
+    )
+    db.commit()
+
+    out = unit_economics(db)
+    assert out["churned_in_window"] == 0
+    assert out["ltv"] is None
 
 
 def test_ltv_is_none_rather_than_infinite_when_nobody_churned(db):

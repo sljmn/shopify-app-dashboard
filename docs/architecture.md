@@ -115,14 +115,16 @@ added above it. Cursors may move only inside one pagination loop.
 Slack alerts, and a duplicate weekly digest. Never `fly scale count 2`. The in-process rate limiter
 in `security.py` assumes this too.
 
-**`SUBSCRIPTION_CHARGE_FROZEN` is treated as churn and there is no unfreeze handler.** Correct for
-the data observed so far: frozen charges arrived the same day Shopify deactivated the store, and
-those shops did not return. An unfreeze would silently understate MRR, so `tests/test_derive.py`
-asserts the current behaviour rather than assuming it.
+**Frozen subscriptions leave current MRR and unfreezes restore them without requiring a second
+activation.** Both movements remain explicit in `app_events`, so the independent event ledger can
+detect current-state drift. Declined and expired charges become zero-MRR `charge_abandoned` events
+for funnel analysis rather than fake subscription rows.
 
-**`SUBSCRIPTION_CHARGE_DECLINED` is ignored entirely.** Also correct for the data observed so far: the
-declines seen had no prior activation, so there was nothing to remove. An activation later declined
-would leave MRR overstated.
+**Historical MRR remains subscription-state based until trial outcomes are historical.** The
+current `active_subscriptions` table is a replaceable snapshot: it can exclude today's trials but
+cannot say which churned subscriptions were trialing in an old month. `app_events.net_change` is
+therefore an independent current-state validator, not yet the chart source. Switching the chart to
+event sums before persisting trial start/end outcomes would count old trial days as paid MRR.
 
 ## The invariants
 

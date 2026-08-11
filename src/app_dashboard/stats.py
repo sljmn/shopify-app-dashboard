@@ -18,7 +18,8 @@ from app_dashboard.uninstall_reasons import (
 PAYING_THRESHOLD = Decimal("0.01")
 ACTIVITY_TYPES = (
     "installed", "reinstalled", "subscribed", "upgraded", "downgraded",
-    "unsubscribed", "uninstalled",
+    "resubscribed", "unsubscribed", "subscription_frozen",
+    "subscription_unfrozen", "charge_abandoned", "uninstalled",
 )
 
 
@@ -96,6 +97,39 @@ def overview_stats(conn: psycopg.Connection, scope: Scope = Scope.all()) -> dict
         "uninstalls_30d": uninstalls_30d,
         "churn_30d": round(100 * uninstalls_30d / exposed, 1) if exposed else 0.0,
     }
+
+
+def current_event_mrr(
+    conn: psycopg.Connection, scope: Scope = Scope.all()
+) -> Decimal:
+    """Current MRR reconstructed independently from signed clean movements.
+
+    This is a validator, not the historical chart source yet: only the current
+    active-subscription snapshot identifies trials, so older trial windows cannot
+    be excluded honestly until trial outcomes are stored as history.
+    """
+    predicate, params = scope.predicate("e")
+    return conn.execute(
+        f"""
+        with ledger as (
+            select e.app_id, e.shop_gid, coalesce(sum(e.net_change), 0) as mrr
+            from app_events e
+            where {predicate}
+            group by e.app_id, e.shop_gid
+        )
+        select coalesce(sum(ledger.mrr), 0)
+        from ledger
+        join shops s on s.app_id = ledger.app_id and s.shop_gid = ledger.shop_gid
+        where s.install_state = 'installed'
+          and not exists (
+              select 1 from active_subscriptions current_sub
+              where current_sub.app_id = ledger.app_id
+                and current_sub.shop_gid = ledger.shop_gid
+                and current_sub.trial_ends_at > now()
+          )
+        """,
+        params,
+    ).fetchone()[0]
 
 
 COMPARED = ("installed", "active_mrr", "paying", "installs_30d",
@@ -208,14 +242,23 @@ def unit_economics(
     """
     start = datetime.now(timezone.utc) - timedelta(days=days)
     at_start = paying_at(conn, start, scope)
-    sub_predicate, sub_params = scope.predicate("subscriptions")
-    billable, billable_params = _billable("subscriptions")
-    (churned,) = conn.execute(
-        f"""select count(*) from subscriptions
-           where churned_at >= %s and converted_at < %s
-             and {sub_predicate} and {billable}""",
-        (start, start, *sub_params, *billable_params),
+    event_predicate, event_params = scope.predicate("app_events")
+    lost, returned = conn.execute(
+        f"""
+        select count(*) filter (
+                   where type in ('unsubscribed', 'subscription_frozen', 'uninstalled')
+                     and net_change < 0
+               ),
+               count(*) filter (
+                   where type in ('resubscribed', 'subscription_unfrozen')
+                     and net_change > 0
+               )
+        from app_events
+        where occurred_at >= %s and {event_predicate}
+        """,
+        (start, *event_params),
     ).fetchone()
+    churned = max(lost - returned, 0)
 
     active_sql, active_params = _active_paying(scope)
     active_mrr = conn.execute(

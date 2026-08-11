@@ -159,6 +159,10 @@ def test_active_mrr_tile_matches_the_mrr_chart_and_the_plan_mix(world):
     assert tile == mix, "Active MRR tile disagrees with the plan mix"
 
 
+def test_current_subscription_mrr_matches_the_independent_event_ledger(world):
+    assert stats.current_event_mrr(world) == stats.overview_stats(world)["active_mrr"]
+
+
 def test_mrr_movement_buckets_sum_to_the_step_in_the_trend_line(world):
     """The waterfall claims to decompose the line above it. Assert that, rather
     than captioning it."""
@@ -227,17 +231,8 @@ def test_a_subscription_never_churns_before_it_converts(world):
     assert rows == []
 
 
-def test_a_subscription_without_a_converted_at_is_an_inert_tombstone(world):
-    """A subscription with a null converted_at is invisible to mrr_trend,
-    mrr_movements, retention_cohorts and paying_at while still counting toward
-    the Active MRR tile -- exactly the gap that made the chart read below the
-    tile. But the null itself is legitimate for one shape: an expiry whose
-    activation predates the Partner API's retention window, so there is no
-    conversion to record, so such rows legitimately exist.
-
-    So the rule is not "never null", it is that such a row must be inert: no
-    amount, and already churned. A *live* subscription without a converted_at is
-    the bug."""
+def test_every_subscription_has_a_conversion_event(world):
+    """Abandoned charges are events, not inert subscription tombstones."""
     bad = world.execute(
         """select id, monthly_amount, churned_at from subscriptions
            where converted_at is null
@@ -245,11 +240,9 @@ def test_a_subscription_without_a_converted_at_is_an_inert_tombstone(world):
     ).fetchall()
     assert bad == [], "a subscription with no converted_at is carrying money or is live"
 
-    # And the fixture really does contain one, so the check above is exercised
-    # rather than passing on an empty table.
     assert world.execute(
         "select count(*) from subscriptions where converted_at is null"
-    ).fetchone()[0] == 1
+    ).fetchone()[0] == 0
 
 
 def test_replaying_the_whole_history_changes_nothing(world):

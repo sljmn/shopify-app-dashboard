@@ -181,9 +181,13 @@ EVENT_LABELS = {
     "reinstalled": "Reinstalled",
     "uninstalled": "Uninstalled",
     "subscribed": "Subscribed",
+    "resubscribed": "Resubscribed",
     "upgraded": "Upgraded",
     "downgraded": "Downgraded",
     "unsubscribed": "Subscription ended",
+    "subscription_frozen": "Subscription frozen",
+    "subscription_unfrozen": "Subscription unfrozen",
+    "charge_abandoned": "Charge abandoned",
 }
 
 

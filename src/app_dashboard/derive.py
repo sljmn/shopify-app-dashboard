@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 import psycopg
@@ -14,11 +15,10 @@ INSTALL_TYPES = {
 }
 UNINSTALL_TYPES = {"RELATIONSHIP_DEACTIVATED", "RELATIONSHIP_UNINSTALLED"}
 ACTIVATION_TYPES = {"SUBSCRIPTION_CHARGE_ACTIVATED", "SUBSCRIPTION_CHARGE_ACCEPTED"}
-CHURN_TYPES = {
-    "SUBSCRIPTION_CHARGE_CANCELED",
-    "SUBSCRIPTION_CHARGE_EXPIRED",
-    "SUBSCRIPTION_CHARGE_FROZEN",
-}
+CANCEL_TYPE = "SUBSCRIPTION_CHARGE_CANCELED"
+FREEZE_TYPE = "SUBSCRIPTION_CHARGE_FROZEN"
+UNFREEZE_TYPE = "SUBSCRIPTION_CHARGE_UNFROZEN"
+ABANDONED_TYPES = {"SUBSCRIPTION_CHARGE_DECLINED", "SUBSCRIPTION_CHARGE_EXPIRED"}
 
 
 def _get_charge(conn: psycopg.Connection, app_id: int, charge_gid: str) -> dict | None:
@@ -64,13 +64,17 @@ def _insert_event(conn, app_id, shop_gid, platform_event_id, clean_type, occurre
              uninstall_reason, uninstall_description)
         values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         on conflict (app_id, platform_event_id) do update set
-            -- Only the churn-feedback columns refresh on replay, so a widened
-            -- query backfills history. Everything else stays immutable, and the
-            -- row keeps its id, which derive_all_dirty's high-water mark needs.
-            uninstall_reason = coalesce(excluded.uninstall_reason,
-                                        app_events.uninstall_reason),
-            uninstall_description = coalesce(excluded.uninstall_description,
-                                             app_events.uninstall_description)
+            type = excluded.type,
+            occurred_at = excluded.occurred_at,
+            net_change = excluded.net_change,
+            plan_amount = excluded.plan_amount,
+            plan_interval = excluded.plan_interval,
+            plan_currency_code = excluded.plan_currency_code,
+            previous_subscription_id = excluded.previous_subscription_id,
+            shop_gid = excluded.shop_gid,
+            uninstall_reason = excluded.uninstall_reason,
+            uninstall_description = excluded.uninstall_description,
+            deleted_at = null
         """,
         (
             app_id, platform_event_id, clean_type, occurred_at, net_change,
@@ -134,6 +138,33 @@ def derive_installation(
         (app_id, shop_gid),
     ).fetchall()
 
+    correlated_cancellations: set[str] = set()
+    for cancel in rows:
+        cancel_id, raw_type, cancel_at, cancel_charge = cancel[:4]
+        if raw_type != CANCEL_TYPE:
+            continue
+        for candidate in rows:
+            _, candidate_type, activated_at, activated_charge = candidate[:4]
+            if candidate_type not in ACTIVATION_TYPES:
+                continue
+            after = activated_at - cancel_at
+            before = cancel_at - activated_at
+            if timedelta(0) <= after < timedelta(seconds=60):
+                correlated_cancellations.add(cancel_id)
+                break
+            if (activated_charge == cancel_charge
+                    and timedelta(0) <= before < timedelta(seconds=5)):
+                correlated_cancellations.add(cancel_id)
+                break
+
+    # `subscriptions` is a materialized result of this complete replay, not a
+    # second source of truth. Rebuild this installation's rows so a charge that
+    # became test/invalid cannot leave stale live state behind.
+    conn.execute(
+        "delete from subscriptions where app_id = %s and shop_gid = %s",
+        (app_id, shop_gid),
+    )
+
     # What this shop is paying, per subscription id, not as one running total.
     #
     # A scalar was wrong in both directions on a plan change, because Shopify
@@ -148,8 +179,12 @@ def derive_installation(
     # once, on a subscription's first activation; a later activation of the same
     # id must not push its conversion date forward.
     converted: set[str] = set()
+    ever_paid = False
+    relationship_installed = False
     most_recent_subscription = None
     emitted: list[str] = []
+    emitted_raw_ids: set[str] = set()
+    first_interaction = rows[0][2] if rows else None
 
     def total() -> Decimal:
         return sum(live.values(), Decimal("0"))
@@ -162,6 +197,8 @@ def derive_installation(
             upsert_shop_state(conn, app_id, shop_gid, install_state="installed", at=occurred_at,
                               shop_domain=shop_domain, shop_name=shop_name)
             emitted.append(clean_type)
+            emitted_raw_ids.add(raw_id)
+            relationship_installed = True
 
         elif raw_type in UNINSTALL_TYPES:
             net_change = -total()
@@ -173,6 +210,8 @@ def derive_installation(
                               uninstall_reason=uninstall_reason,
                               uninstall_description=uninstall_description)
             emitted.append("uninstalled")
+            emitted_raw_ids.add(raw_id)
+            relationship_installed = False
             # An uninstall ends every subscription the shop still had. Shopify
             # usually sends a cancel or expiry alongside, but does not promise
             # one, and dropping the subscription from `live` without recording
@@ -195,8 +234,14 @@ def derive_installation(
                 most_recent_subscription if most_recent_subscription != sub_id else None
             )
 
-            was_paying = bool(live)
             before = total()
+            was_paying = before > 0
+            for old_sub_id in tuple(live):
+                if old_sub_id != sub_id:
+                    _upsert_subscription(
+                        conn, app_id, old_sub_id, shop_gid, churned_at=occurred_at
+                    )
+                    live.pop(old_sub_id)
             live[sub_id] = new_monthly
             net_change = total() - before
 
@@ -204,7 +249,7 @@ def derive_installation(
             # rows are immutable once written, so relabelling here would only
             # affect new rows and leave the history disagreeing with itself.
             if not was_paying:
-                clean_type = "subscribed"
+                clean_type = "resubscribed" if ever_paid else "subscribed"
             elif net_change >= 0:
                 clean_type = "upgraded"
             else:
@@ -220,13 +265,17 @@ def derive_installation(
                 clear_churn=True,
             )
             converted.add(sub_id)
+            ever_paid = True
 
             _insert_event(conn, app_id, shop_gid, raw_id, clean_type, occurred_at, net_change,
                           charge=charge, previous_subscription_id=previous_subscription_id)
             emitted.append(clean_type)
+            emitted_raw_ids.add(raw_id)
             most_recent_subscription = sub_id
 
-        elif raw_type in CHURN_TYPES:
+        elif raw_type == CANCEL_TYPE:
+            if raw_id in correlated_cancellations:
+                continue
             charge = _get_charge(conn, app_id, charge_gid)
             if charge is None:
                 continue
@@ -238,7 +287,69 @@ def derive_installation(
             _upsert_subscription(conn, app_id, charge["subscription_id"], shop_gid,
                                   churned_at=occurred_at)
             emitted.append("unsubscribed")
+            emitted_raw_ids.add(raw_id)
 
+        elif raw_type == FREEZE_TYPE:
+            charge = _get_charge(conn, app_id, charge_gid)
+            if charge is None:
+                continue
+            net_change = -live.pop(charge["subscription_id"], Decimal("0"))
+            _insert_event(
+                conn, app_id, shop_gid, raw_id, "subscription_frozen", occurred_at,
+                net_change, charge=charge,
+            )
+            _upsert_subscription(
+                conn, app_id, charge["subscription_id"], shop_gid, churned_at=occurred_at
+            )
+            emitted.append("subscription_frozen")
+            emitted_raw_ids.add(raw_id)
+
+        elif raw_type == UNFREEZE_TYPE:
+            charge = _get_charge(conn, app_id, charge_gid)
+            if charge is None:
+                continue
+            before = total()
+            if relationship_installed:
+                live[charge["subscription_id"]] = charge["monthly"]
+            net_change = total() - before
+            _insert_event(
+                conn, app_id, shop_gid, raw_id, "subscription_unfrozen", occurred_at,
+                net_change, charge=charge,
+            )
+            if relationship_installed:
+                _upsert_subscription(
+                    conn, app_id, charge["subscription_id"], shop_gid,
+                    monthly_amount=charge["monthly"], clear_churn=True,
+                )
+            ever_paid = ever_paid or charge["monthly"] > 0
+            most_recent_subscription = charge["subscription_id"]
+            emitted.append("subscription_unfrozen")
+            emitted_raw_ids.add(raw_id)
+
+        elif raw_type in ABANDONED_TYPES:
+            charge = _get_charge(conn, app_id, charge_gid)
+            if charge is None:
+                continue
+            clean_at = occurred_at
+            if raw_type.endswith("_EXPIRED"):
+                clean_at = max(occurred_at - timedelta(hours=60), first_interaction)
+            _insert_event(
+                conn, app_id, shop_gid, raw_id, "charge_abandoned", clean_at,
+                Decimal("0"), charge=charge,
+            )
+            emitted.append("charge_abandoned")
+            emitted_raw_ids.add(raw_id)
+
+    conn.execute(
+        """
+        delete from app_events e using raw_app_events r
+        where e.app_id = %s and e.shop_gid = %s
+          and r.app_id = e.app_id and r.id = e.platform_event_id
+          and r.shop_gid = e.shop_gid
+          and not (e.platform_event_id = any(%s))
+        """,
+        (app_id, shop_gid, list(emitted_raw_ids)),
+    )
     conn.commit()
     return emitted
 

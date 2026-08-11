@@ -91,7 +91,7 @@ def test_cancel_sets_churn_and_negative_netchange(db):
     assert churn is not None
 
 
-def test_winback_after_churn_emits_subscribed_not_upgrade_downgrade(db):
+def test_winback_after_churn_emits_resubscribed_not_upgrade_downgrade(db):
     # install -> subscribe (charge A) -> cancel A -> subscribe again (charge B,
     # a new subscription id). This is an ordinary win-back, not an upgrade/
     # downgrade off a churned subscription's stale current_amount.
@@ -108,7 +108,7 @@ def test_winback_after_churn_emits_subscribed_not_upgrade_downgrade(db):
              shop_gid="ai1", charge_gid="cB", payload={"subscriptionId": "cB"}),
     ])
     emitted = derive_installation(db, APP.id, "ai1")
-    assert emitted[-1] == "subscribed"
+    assert emitted[-1] == "resubscribed"
     converted_at = db.execute(
         "select converted_at from subscriptions where id='cB'"
     ).fetchone()[0]
@@ -250,15 +250,12 @@ def test_cancelling_a_superseded_subscription_does_not_zero_the_shop(db):
         "select type, net_change from app_events where shop_gid='ai1' "
         "and type in ('subscribed','upgraded','unsubscribed')").fetchall())
     assert changes["subscribed"] == Decimal("9.00")
-    # Shopify leaves both subscriptions active for the hour between activating
-    # the replacement and cancelling the original, and the feed says so, so the
-    # replacement arriving is +19 and the original leaving is -9 rather than one
-    # netted +10. Only the subscription that actually ended comes off, which is
-    # the fix: the scalar version took the whole shop off here (-19), so the pair
-    # summed to -9 and a plan change read as a partial cancellation.
-    assert changes["upgraded"] == Decimal("19.00")
-    assert changes["unsubscribed"] == Decimal("-9.00")
-    assert sum(changes.values()) == Decimal("19.00")     # 9 -> 19, net +10 on top of the 9
+    # A replacement activation is a commercial state change from 9 to 19, not a
+    # temporary period at 28. The late cancellation concerns the already-replaced
+    # subscription and therefore moves no money.
+    assert changes["upgraded"] == Decimal("10.00")
+    assert changes["unsubscribed"] == Decimal("0.00")
+    assert sum(changes.values()) == Decimal("19.00")
 
 
 def test_a_real_full_cancellation_still_zeroes_the_shop(db):
@@ -396,11 +393,7 @@ def test_a_cancel_arriving_before_its_activation_does_not_go_negative(db):
 
 
 def test_a_frozen_charge_leaves_mrr_and_stays_out(db):
-    """SUBSCRIPTION_CHARGE_FROZEN is in CHURN_TYPES and there is no unfreeze
-    handler, so a freeze is permanent. Every frozen charge observed so far arrived
-    the same day Shopify deactivated the store, and neither shop came back, so
-    this matches reality -- but it is asserted rather than assumed, because an
-    unfreeze would silently understate MRR. See docs/architecture.md."""
+    """A frozen subscription stops contributing until Shopify unfreezes it."""
     _seed_charge(db, "c1", Decimal("19.00"), "EVERY_30_DAYS")
     upsert_raw_events(db, APP, [
         dict(id="r1", type="RELATIONSHIP_INSTALLED", occurred_at="2026-06-01T00:00:00Z",
@@ -410,16 +403,59 @@ def test_a_frozen_charge_leaves_mrr_and_stays_out(db):
         dict(id="r3", type="SUBSCRIPTION_CHARGE_FROZEN", occurred_at="2026-06-20T00:00:00Z",
              shop_gid="ai1", charge_gid="c1", payload={}),
     ])
-    assert derive_installation(db, APP.id, "ai1") == ["installed", "subscribed", "unsubscribed"]
+    assert derive_installation(db, APP.id, "ai1") == [
+        "installed", "subscribed", "subscription_frozen"
+    ]
     from app_dashboard.stats import mrr_at
     assert mrr_at(db, "2026-07-01Z") == Decimal("0")
 
 
-def test_a_declined_charge_never_enters_mrr(db):
-    """SUBSCRIPTION_CHARGE_DECLINED is in neither ACTIVATION_TYPES nor
-    CHURN_TYPES, so it is ignored. That is correct for the declines observed:
-    both are charges the merchant never approved, with no activation before
-    them, so there is nothing to take away."""
+def test_an_unfrozen_charge_restores_mrr_without_a_new_activation(db):
+    _seed_charge(db, "c1", Decimal("19.00"), "EVERY_30_DAYS")
+    upsert_raw_events(db, APP, [
+        dict(id="r1", type="RELATIONSHIP_INSTALLED", occurred_at="2026-06-01T00:00:00Z",
+             shop_gid="ai1", charge_gid=None, payload={}),
+        dict(id="r2", type="SUBSCRIPTION_CHARGE_ACTIVATED", occurred_at="2026-06-02T00:00:00Z",
+             shop_gid="ai1", charge_gid="c1", payload={}),
+        dict(id="r3", type="SUBSCRIPTION_CHARGE_FROZEN", occurred_at="2026-06-20T00:00:00Z",
+             shop_gid="ai1", charge_gid="c1", payload={}),
+        dict(id="r4", type="SUBSCRIPTION_CHARGE_UNFROZEN", occurred_at="2026-07-01T00:00:00Z",
+             shop_gid="ai1", charge_gid="c1", payload={}),
+    ])
+
+    assert derive_installation(db, APP.id, "ai1") == [
+        "installed", "subscribed", "subscription_frozen", "subscription_unfrozen"
+    ]
+    row = db.execute(
+        "select monthly_amount, churned_at from subscriptions where id='c1'"
+    ).fetchone()
+    assert row == (Decimal("19.00"), None)
+    assert db.execute(
+        "select sum(net_change) from app_events where shop_gid='ai1'"
+    ).fetchone()[0] == Decimal("19.00")
+
+
+def test_unfreeze_does_not_reopen_an_app_that_is_still_deactivated(db):
+    _seed_charge(db, "c1", Decimal("19.00"), "EVERY_30_DAYS")
+    upsert_raw_events(db, APP, [
+        dict(id="r1", type="RELATIONSHIP_INSTALLED", occurred_at="2026-06-01T00:00:00Z",
+             shop_gid="ai1", charge_gid=None, payload={}),
+        dict(id="r2", type="SUBSCRIPTION_CHARGE_ACTIVATED", occurred_at="2026-06-02T00:00:00Z",
+             shop_gid="ai1", charge_gid="c1", payload={}),
+        dict(id="r3", type="RELATIONSHIP_DEACTIVATED", occurred_at="2026-06-20T00:00:00Z",
+             shop_gid="ai1", charge_gid=None, payload={}),
+        dict(id="r4", type="SUBSCRIPTION_CHARGE_FROZEN", occurred_at="2026-06-20T00:00:01Z",
+             shop_gid="ai1", charge_gid="c1", payload={}),
+        dict(id="r5", type="SUBSCRIPTION_CHARGE_UNFROZEN", occurred_at="2026-07-01T00:00:00Z",
+             shop_gid="ai1", charge_gid="c1", payload={}),
+    ])
+
+    derive_installation(db, APP.id, "ai1")
+    assert db.execute("select churned_at from subscriptions where id='c1'").fetchone()[0] is not None
+    assert db.execute("select net_change from app_events where platform_event_id='r5'").fetchone()[0] == 0
+
+
+def test_a_declined_charge_is_visible_as_abandoned_but_never_enters_mrr(db):
     _seed_charge(db, "c1", Decimal("19.00"), "EVERY_30_DAYS")
     upsert_raw_events(db, APP, [
         dict(id="r1", type="RELATIONSHIP_INSTALLED", occurred_at="2026-06-01T00:00:00Z",
@@ -427,8 +463,49 @@ def test_a_declined_charge_never_enters_mrr(db):
         dict(id="r2", type="SUBSCRIPTION_CHARGE_DECLINED", occurred_at="2026-06-02T00:00:00Z",
              shop_gid="ai1", charge_gid="c1", payload={}),
     ])
-    assert derive_installation(db, APP.id, "ai1") == ["installed"]
+    assert derive_installation(db, APP.id, "ai1") == ["installed", "charge_abandoned"]
     assert db.execute("select count(*) from subscriptions").fetchone()[0] == 0
+    assert db.execute(
+        "select net_change from app_events where type='charge_abandoned'"
+    ).fetchone()[0] == Decimal("0")
+
+
+def test_expired_charge_is_backdated_but_not_before_install(db):
+    _seed_charge(db, "c1", Decimal("19.00"), "EVERY_30_DAYS")
+    upsert_raw_events(db, APP, [
+        dict(id="r1", type="RELATIONSHIP_INSTALLED", occurred_at="2026-06-01T00:00:00Z",
+             shop_gid="ai1", charge_gid=None, payload={}),
+        dict(id="r2", type="SUBSCRIPTION_CHARGE_EXPIRED", occurred_at="2026-06-02T00:00:00Z",
+             shop_gid="ai1", charge_gid="c1", payload={}),
+    ])
+    derive_installation(db, APP.id, "ai1")
+    occurred_at = db.execute(
+        "select occurred_at from app_events where type='charge_abandoned'"
+    ).fetchone()[0]
+    assert occurred_at == datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+
+def test_cancel_correlated_with_replacement_is_removed_on_replay(db):
+    _seed_charge(db, "old", Decimal("9.00"), "EVERY_30_DAYS")
+    _seed_charge(db, "new", Decimal("19.00"), "EVERY_30_DAYS")
+    upsert_raw_events(db, APP, [
+        dict(id="r1", type="SUBSCRIPTION_CHARGE_ACTIVATED",
+             occurred_at="2026-06-01T00:00:00Z", shop_gid="ai1", charge_gid="old", payload={}),
+        dict(id="r2", type="SUBSCRIPTION_CHARGE_CANCELED",
+             occurred_at="2026-06-02T00:00:00Z", shop_gid="ai1", charge_gid="old", payload={}),
+    ])
+    derive_installation(db, APP.id, "ai1")
+    assert db.execute("select count(*) from app_events where platform_event_id='r2'").fetchone()[0] == 1
+
+    upsert_raw_events(db, APP, [
+        dict(id="r3", type="SUBSCRIPTION_CHARGE_ACTIVATED",
+             occurred_at="2026-06-02T00:00:30Z", shop_gid="ai1", charge_gid="new", payload={}),
+    ])
+    emitted = derive_installation(db, APP.id, "ai1")
+
+    assert emitted == ["subscribed", "upgraded"]
+    assert db.execute("select count(*) from app_events where platform_event_id='r2'").fetchone()[0] == 0
+    assert db.execute("select net_change from app_events where platform_event_id='r3'").fetchone()[0] == Decimal("10.00")
 
 
 def test_a_duplicate_platform_event_id_is_recorded_once(db):

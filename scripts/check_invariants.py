@@ -62,6 +62,9 @@ def check_app_metrics(conn, app_id: int, slug: str) -> None:
           f"tile {tile}, chart {chart}")
     check(prefix + "Active MRR tile == sum of plan mix", tile == mix,
           f"tile {tile}, mix {mix}")
+    ledger = stats.current_event_mrr(conn, scope)
+    check(prefix + "Active MRR state == clean event ledger", tile == ledger,
+          f"state {tile}, ledger {ledger}")
 
     trend = stats.mrr_trend(conn, scope=scope)
     movements = stats.mrr_movements(conn, scope=scope)
@@ -116,15 +119,8 @@ def main() -> int:
           not rows(conn, """select id from subscriptions
                             where churned_at is not null and churned_at < converted_at"""))
 
-    # Not "never null": an expiry whose activation predates the Partner API's
-    # retention window has no conversion to record, so such rows legitimately
-    # exist. The rule is that they must be inert -- no amount, already churned.
-    # A *live*
-    # subscription without a converted_at is the bug, because it counts toward
-    # the Active MRR tile while being invisible to the chart.
-    check("A subscription without a converted_at is inert (no amount, churned)",
-          not rows(conn, """select id from subscriptions where converted_at is null
-                            and (churned_at is null or coalesce(monthly_amount, 0) <> 0)"""))
+    check("Every subscription has a conversion event",
+          not rows(conn, "select id from subscriptions where converted_at is null"))
 
     check("install_state matches each shop's last lifecycle event",
           not rows(conn, """
@@ -176,6 +172,80 @@ def main() -> int:
           not rows(conn, """select e.id from app_events e where not exists
                             (select 1 from raw_app_events r
                              where r.app_id = e.app_id and r.id = e.platform_event_id)"""))
+
+    snapshot_mismatches = rows(conn, """
+        select a.slug, coalesce(s.shop_name, s.shop_domain, s.shop_gid),
+               sub.id, current_sub.legacy_subscription_id
+        from subscriptions sub
+        join apps a on a.id = sub.app_id
+        join shops s on s.app_id = sub.app_id and s.shop_gid = sub.shop_gid
+        left join active_subscriptions current_sub
+          on current_sub.app_id = sub.app_id and current_sub.shop_gid = sub.shop_gid
+        where sub.churned_at is null and sub.monthly_amount > 0.01
+          and s.install_state = 'installed'
+          and not exists (
+              select 1 from active_subscriptions trial
+              where trial.app_id = sub.app_id and trial.shop_gid = sub.shop_gid
+                and trial.trial_ends_at > now()
+          )
+          and (current_sub.legacy_subscription_id is null
+               or current_sub.legacy_subscription_id <> sub.id)
+          and exists (
+              select 1 from sync_state state
+              where state.app_id = sub.app_id
+                and state.source = 'partner_active_subscriptions'
+          )
+    """)
+    check("Shopify active subscriptions match derived live subscriptions",
+          not snapshot_mismatches,
+          f"{len(snapshot_mismatches)} paid subscription(s) disagree")
+
+    missing_clean = rows(conn, """
+        select r.type, count(*)
+        from raw_app_events r
+        join charges c on c.app_id = r.app_id and c.gid = r.charge_gid and not c.test
+        left join app_events e on e.app_id = r.app_id and e.platform_event_id = r.id
+        where (r.type = 'SUBSCRIPTION_CHARGE_UNFROZEN'
+               and e.type is distinct from 'subscription_unfrozen')
+           or (r.type = 'SUBSCRIPTION_CHARGE_FROZEN'
+               and e.type is distinct from 'subscription_frozen')
+           or (r.type in ('SUBSCRIPTION_CHARGE_DECLINED', 'SUBSCRIPTION_CHARGE_EXPIRED')
+               and e.type is distinct from 'charge_abandoned')
+        group by r.type
+    """)
+    check("Supported raw lifecycle events have clean events", not missing_clean,
+          ", ".join(f"{kind}: {count}" for kind, count in missing_clean))
+
+    correlated_cancels = rows(conn, """
+        select r.id
+        from raw_app_events r
+        join app_events e on e.app_id = r.app_id and e.platform_event_id = r.id
+        where r.type = 'SUBSCRIPTION_CHARGE_CANCELED'
+          and e.type = 'unsubscribed'
+          and (
+              exists (
+                  select 1 from raw_app_events activation
+                  where activation.app_id = r.app_id
+                    and activation.shop_gid = r.shop_gid
+                    and activation.type in ('SUBSCRIPTION_CHARGE_ACTIVATED',
+                                            'SUBSCRIPTION_CHARGE_ACCEPTED')
+                    and activation.occurred_at >= r.occurred_at
+                    and activation.occurred_at < r.occurred_at + interval '60 seconds'
+              )
+              or exists (
+                  select 1 from raw_app_events activation
+                  where activation.app_id = r.app_id
+                    and activation.shop_gid = r.shop_gid
+                    and activation.charge_gid = r.charge_gid
+                    and activation.type in ('SUBSCRIPTION_CHARGE_ACTIVATED',
+                                            'SUBSCRIPTION_CHARGE_ACCEPTED')
+                    and activation.occurred_at > r.occurred_at - interval '5 seconds'
+                    and activation.occurred_at <= r.occurred_at
+              )
+          )
+    """)
+    check("Plan-change cancellations are suppressed", not correlated_cancels,
+          f"{len(correlated_cancels)} correlated cancellation(s) remain")
 
     print()
     if FAILURES:
