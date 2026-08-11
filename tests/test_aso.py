@@ -42,6 +42,17 @@ def test_keyword_report_compares_previous_position(db, test_app):
     assert report.totals.users == 20
 
 
+def test_keyword_report_ignores_previously_stored_blank_terms(db, test_app):
+    _seed(db, test_app.id, "2026-08-01", "", 493, 37, None)
+
+    report = keyword_report(db, test_app.id, _period())
+
+    assert report.rows == ()
+    assert report.totals.users == 0
+    assert report.totals.install_clicks == 0
+    assert report.totals.keywords == 0
+
+
 def test_opportunity_score_is_bounded_and_transparent():
     assert opportunity_score(0, 20) == 0
     assert opportunity_score(5, 1) == 0

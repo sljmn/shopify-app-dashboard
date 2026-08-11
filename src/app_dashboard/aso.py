@@ -121,6 +121,7 @@ def _keyword_period(conn, app_id, start, end, facets=None):
                     filter (where latest_position is not null))[1]
         from aso_keyword_daily k
         where k.app_id = %s and k.date >= %s and k.date <= %s {extra}
+          and btrim(k.keyword) <> ''
         group by keyword
         """,
         (app_id, start, end, *params),
@@ -166,6 +167,7 @@ def portfolio_report(conn, apps: list[AppConfig], period) -> tuple[PortfolioRow,
                        filter (where latest_position is not null))[1] latest
             from aso_keyword_daily
             where date >= %s and date <= %s
+              and btrim(keyword) <> ''
             group by app_id, keyword
         ), ranked as (
             select *, row_number() over (partition by app_id order by users desc, keyword) rank

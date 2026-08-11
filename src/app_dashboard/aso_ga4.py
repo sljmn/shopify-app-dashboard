@@ -240,6 +240,8 @@ def fetch_keyword_rows(
     position_totals: dict[tuple, Decimal] = defaultdict(Decimal)
     for row in traffic:
         raw = read_dimensions(row)
+        if not raw.get("keyword", "").strip():
+            continue
         key, output = key_and_slot(raw)
         users = int(row.metric_values[0].value or 0)
         output["users"] += users
@@ -254,6 +256,8 @@ def fetch_keyword_rows(
             output["latest_position"] = round(position)
     for row in clicks:
         raw = read_dimensions(row)
+        if not raw.get("keyword", "").strip():
+            continue
         _, output = key_and_slot(raw)
         output["install_clicks"] += int(row.metric_values[0].value or 0)
     for key, output in merged.items():
@@ -305,6 +309,19 @@ def sync_aso_keywords(
             (app.id, start, today),
         )
         written = upsert_keyword_rows(conn, app.id, rows)
+        keyword_fields = {
+            key: value
+            for key, value in fields.items()
+            if key in {"keyword", "position", "locale", "country", "device", "search_type"}
+        }
+        _store_capability(
+            conn,
+            app.id,
+            "aso_keywords",
+            ("ready" if "position" in fields else "partial") if rows else "unsupported",
+            keyword_fields,
+            None if rows else "NoKeywordValues",
+        )
     return written
 
 

@@ -205,6 +205,29 @@ def test_selected_aso_app_has_views_and_csv(db, test_app):
     assert client.get("/aso?app=test-app&view=research").status_code == 200
 
 
+def test_selected_aso_app_explains_when_ga4_has_no_keyword_values(db, test_app):
+    db.execute(
+        """insert into aso_keyword_daily
+           (app_id,date,keyword,search_type,users,install_clicks)
+           values (%s,current_date,'','Organic Search',493,37)""",
+        (test_app.id,),
+    )
+    db.execute(
+        """insert into aso_source_capabilities
+           (app_id,source,status,fields,checked_at,error_code)
+           values (%s,'aso_keywords','unsupported','{}',now(),'NoKeywordValues')""",
+        (test_app.id,),
+    )
+
+    page = dashboard_client(create_app(conn_factory=lambda: keep_open(db))).get(
+        "/aso?app=test-app&period=30d&view=keywords"
+    )
+
+    assert "GA4 did not provide search terms" in page.text
+    assert "493" not in page.text
+    assert '<option value="Organic Search">' not in page.text
+
+
 def test_manual_sync_follows_selected_app_or_all_apps(db, app_factory, monkeypatch):
     other = app_factory(slug="other-app", name="Other App")
     monkeypatch.setenv("TOKEN_2", "second-partner-token")

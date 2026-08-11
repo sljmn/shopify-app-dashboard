@@ -8,6 +8,7 @@ from app_dashboard.aso_ga4 import (
     discover_capabilities,
     fetch_keyword_rows,
     normalize_install_source,
+    sync_aso_keywords,
     sync_capabilities,
     sync_install_sources,
 )
@@ -88,6 +89,49 @@ def test_keyword_fetch_merges_traffic_and_clicks():
     assert rows[0]["users"] == 12
     assert rows[0]["install_clicks"] == 3
     assert rows[0]["average_position"] == 4
+
+
+class EmptyKeywordClient:
+    def run_report(self, request):
+        metric = request.metrics[0].name
+        row = _row(
+            ["20260810", "   ", "Organic Search"],
+            12 if metric == "totalUsers" else 3,
+        )
+        return SimpleNamespace(rows=[row], row_count=1)
+
+
+def test_keyword_fetch_discards_rows_without_a_search_term():
+    rows = fetch_keyword_rows(
+        EmptyKeywordClient(),
+        "123",
+        {"keyword": "searchTerm", "search_type": "sessionDefaultChannelGroup"},
+        date(2026, 8, 10),
+        date(2026, 8, 10),
+    )
+
+    assert rows == []
+
+
+def test_empty_keyword_import_marks_the_source_unavailable(db, test_app):
+    app = test_app.__class__(
+        **{**test_app.__dict__, "ga4_property_id": "123"}
+    )
+    sync_capabilities(db, FakeMetadataClient({"searchTerm"}), app)
+
+    assert sync_aso_keywords(
+        db,
+        EmptyKeywordClient(),
+        app,
+        fields={"keyword": "searchTerm", "search_type": "sessionDefaultChannelGroup"},
+        today=date(2026, 8, 10),
+        earliest=date(2026, 8, 10),
+    ) == 0
+    assert db.execute(
+        """select status, error_code from aso_source_capabilities
+           where app_id=%s and source='aso_keywords'""",
+        (app.id,),
+    ).fetchone() == ("unsupported", "NoKeywordValues")
 
 
 class RetryClient(KeywordClient):

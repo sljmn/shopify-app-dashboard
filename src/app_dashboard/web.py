@@ -1299,7 +1299,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             }
             facet_rows = conn.execute(
                 """select distinct locale, country, device, search_type
-                   from aso_keyword_daily where app_id=%s""",
+                   from aso_keyword_daily
+                   where app_id=%s and btrim(keyword) <> ''""",
                 (selected_app.id,),
             ).fetchall() if selected_app else []
         finally:
