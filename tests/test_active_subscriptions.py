@@ -163,8 +163,10 @@ def test_snapshot_id_mismatch_reconciles_current_mrr_from_latest_payment(
     ).fetchone()
     assert current == ("new-monthly", Decimal("8.33"), "ANNUAL")
     movement = db.execute(
-        "select type, net_change from app_events "
+        "select type, net_change, plan_amount, plan_interval from app_events "
         "where app_id=%s and platform_event_id='plan-change'",
         (test_app.id,),
     ).fetchone()
-    assert movement == ("subscription_reconciled", Decimal("0.00"))
+    assert movement == (
+        "subscription_reconciled", Decimal("0.00"), Decimal("99.90"), "ANNUAL"
+    )

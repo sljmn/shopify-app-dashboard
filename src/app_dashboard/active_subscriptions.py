@@ -75,7 +75,7 @@ def _reconcile_paid_state(
         """,
         (target, payment[1], app_id, live_id),
     )
-    if difference and converted_at is not None:
+    if converted_at is not None:
         movement = conn.execute(
             """
             select id, type, net_change
@@ -98,8 +98,11 @@ def _reconcile_paid_state(
                 else:
                     event_type = "subscription_reconciled"
             conn.execute(
-                "update app_events set net_change = %s, type = %s where id = %s",
-                (corrected, event_type, event_id),
+                """update app_events
+                   set net_change = %s, type = %s, plan_amount = %s,
+                       plan_interval = %s
+                   where id = %s""",
+                (corrected, event_type, payment[0], payment[1], event_id),
             )
     return bool(difference or live_id != snapshot_id)
 

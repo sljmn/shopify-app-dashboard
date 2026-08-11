@@ -276,7 +276,7 @@ def customer_detail(
         subscription = conn.execute(
             """
             select sub.monthly_amount, sub.converted_at, sub.churned_at,
-                   coalesce(c.plan_interval, (
+                   coalesce(sub.billing_type, c.plan_interval, (
                        select t.billing_interval from transactions t
                        where t.app_id = sub.app_id
                          and t.shop_gid = sub.shop_gid
