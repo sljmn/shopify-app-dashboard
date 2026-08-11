@@ -1,7 +1,7 @@
 from datetime import date
 from types import SimpleNamespace
 
-from google.api_core.exceptions import ServiceUnavailable
+from google.api_core.exceptions import DeadlineExceeded, ServiceUnavailable
 
 from app_dashboard.aso_ga4 import (
     attribution_key,
@@ -202,6 +202,25 @@ class RetryClient(KeywordClient):
 
 def test_keyword_fetch_retries_transient_errors():
     client = RetryClient()
+    fetch_keyword_rows(
+        client, "123", {"keyword": "searchTerm"},
+        date(2026, 8, 10), date(2026, 8, 10), sleep=lambda _: None,
+    )
+    assert client.calls == 4
+
+
+class DeadlineRetryClient(KeywordClient):
+    def run_report(self, request):
+        self.calls += 1
+        if self.calls <= 2:
+            raise DeadlineExceeded("later")
+        metric = request.metrics[0].name
+        row = _row(["20260810", "tax"], 1 if metric == "totalUsers" else 0)
+        return SimpleNamespace(rows=[row], row_count=1)
+
+
+def test_keyword_fetch_retries_deadline_exceeded():
+    client = DeadlineRetryClient()
     fetch_keyword_rows(
         client, "123", {"keyword": "searchTerm"},
         date(2026, 8, 10), date(2026, 8, 10), sleep=lambda _: None,

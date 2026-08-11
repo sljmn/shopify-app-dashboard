@@ -161,7 +161,7 @@ def run_aso_job(conn_factory, apps: list[AppConfig], settings) -> list[dict]:
                 written["keywords"] = sync_aso_keywords(
                     conn, client, app, fields=capability.fields
                 )
-            if capability.statuses["aso_attribution"] in {"ready", "partial"}:
+            if "shop_domain" in capability.fields:
                 written["attribution"] = sync_install_sources(
                     conn, client, app, fields=capability.fields
                 )

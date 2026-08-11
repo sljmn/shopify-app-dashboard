@@ -22,6 +22,7 @@ from google.analytics.data_v1beta.types import (
     RunReportRequest,
 )
 from google.api_core.exceptions import (
+    DeadlineExceeded,
     GoogleAPICallError,
     ResourceExhausted,
     ServiceUnavailable,
@@ -49,7 +50,7 @@ FIELD_CANDIDATES = {
     "device": ("deviceCategory",),
     "search_type": ("customEvent:search_type", "sessionDefaultChannelGroup"),
 }
-TRANSIENT_ERRORS = (ResourceExhausted, ServiceUnavailable)
+TRANSIENT_ERRORS = (DeadlineExceeded, ResourceExhausted, ServiceUnavailable)
 
 
 class UnsupportedAsoSource(RuntimeError):

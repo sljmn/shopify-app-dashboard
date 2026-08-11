@@ -70,6 +70,33 @@ def test_aso_job_skips_unconfigured_apps_and_closes_connections(
     assert conn.closed_count == 1
 
 
+def test_aso_job_skips_attribution_without_shop_domain(monkeypatch, test_app):
+    configured = replace(
+        test_app, ga4_property_id="123", ga4_credentials_json="{}"
+    )
+    conn = FakeConn()
+    capability = type("Capability", (), {
+        "statuses": {"aso_keywords": "ready", "aso_attribution": "partial"},
+        "fields": {"page_location": "pageLocation", "source": "sessionSource"},
+    })()
+    monkeypatch.setattr("app_dashboard.ga4.build_client", lambda value: object())
+    monkeypatch.setattr("app_dashboard.aso_ga4.sync_capabilities", lambda *a: capability)
+    monkeypatch.setattr("app_dashboard.aso_ga4.sync_aso_keywords", lambda *a, **k: 4)
+
+    def unexpected_attribution(*args, **kwargs):
+        raise AssertionError("attribution requires a shop_domain dimension")
+
+    monkeypatch.setattr(
+        "app_dashboard.aso_ga4.sync_install_sources", unexpected_attribution
+    )
+
+    result = run_aso_job(lambda: conn, [configured], object())
+
+    assert result[0]["ok"] is True
+    assert result[0]["written"] == {"keywords": 4, "attribution": 0}
+    assert conn.closed_count == 1
+
+
 def test_all_apps_continue_after_failure_and_share_org_clients(
     monkeypatch, app_factory
 ):
