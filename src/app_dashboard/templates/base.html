@@ -349,6 +349,8 @@
            212px sidebar wants a ~1430px window. Narrower than that they wrap,
            which is why the tile is sized by a minimum rather than a count. */
         .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+        .app-installation > .cards + .card,
+        .app-installation > .card + .card { margin-top: 16px; }
         .card {
             background: var(--card); border: 1px solid var(--border);
             border-radius: 10px; padding: 18px 20px;
