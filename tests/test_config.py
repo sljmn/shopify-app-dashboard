@@ -68,3 +68,8 @@ def test_watchlist_storage_and_concurrency_are_validated(monkeypatch):
         _settings(monkeypatch, WATCHLIST_MEDIA_PATH="relative/path")
     with pytest.raises(ValidationError):
         _settings(monkeypatch, WATCHLIST_CONCURRENCY="5")
+
+
+def test_backblaze_configuration_must_be_complete(monkeypatch):
+    with pytest.raises(ValidationError, match="must be set together"):
+        _settings(monkeypatch, B2_BUCKET="only-a-bucket")

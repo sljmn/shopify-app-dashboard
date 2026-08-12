@@ -2,7 +2,7 @@ from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Credentials that appear in this public repository are never valid deployment
@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # Public competitor media is content-addressed on a persistent volume.
     watchlist_media_path: Path = Path("/data/mantle-watchlist")
     watchlist_concurrency: int = 2
+    b2_key_id: str | None = None
+    b2_application_key: str | None = None
+    b2_region: str | None = None
+    b2_bucket: str | None = None
+    b2_endpoint: str | None = None
+    research_upload_max_bytes: int = 15 * 1024 * 1024
 
     # --- validation ---------------------------------------------------------
     # These run at construction, which for this app means at import, because
@@ -103,6 +109,27 @@ class Settings(BaseSettings):
         if not 1 <= value <= 4:
             raise ValueError("WATCHLIST_CONCURRENCY must be between 1 and 4")
         return value
+
+    @field_validator("research_upload_max_bytes")
+    @classmethod
+    def _research_upload_size_is_bounded(cls, value: int) -> int:
+        if not 1 <= value <= 50 * 1024 * 1024:
+            raise ValueError("RESEARCH_UPLOAD_MAX_BYTES must be between 1 byte and 50 MB")
+        return value
+
+    @model_validator(mode="after")
+    def _b2_configuration_is_complete(self):
+        values = (
+            self.b2_key_id, self.b2_application_key, self.b2_region,
+            self.b2_bucket, self.b2_endpoint,
+        )
+        if any(values) and not all(values):
+            raise ValueError("B2_KEY_ID, B2_APPLICATION_KEY, B2_REGION, B2_BUCKET and B2_ENDPOINT must be set together")
+        return self
+
+    @property
+    def b2_configured(self) -> bool:
+        return bool(self.b2_key_id)
 
     @property
     def dashboard_name(self) -> str:
