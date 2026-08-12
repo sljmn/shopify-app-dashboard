@@ -13,7 +13,7 @@
     <div class="card stat"><div class="label">With review data</div><div class="num">{{ category_report.measured_apps }}</div></div>
     <div class="card stat"><div class="label">Built for Shopify</div><div class="num">{{ category_report.bfs_apps }}</div></div>
     <div class="card stat"><div class="label">New in 30 days</div><div class="num">{{ category_report.new_30d }}</div></div>
-    <div class="card stat"><div class="label">Gaining reviews</div><div class="num">{{ category_report.review_gainers_30d }}</div><div class="sub">last 30 days</div></div>
+    <div class="card stat"><div class="label">Gaining reviews</div><div class="num">{{ category_report.review_gainers }}</div><div class="sub">since previous scan</div></div>
 </div>
 
 <form class="filters discover-filters category-filters" method="get" action="/discover">
@@ -39,13 +39,14 @@
 
 <div class="table-card category-results">
     <table class="catalog-table category-inventory-table">
-        <thead><tr><th>Rank</th><th>App</th><th>Reviews</th><th>7 days</th><th>30 days</th><th>Rating</th><th>BFS</th><th>Pricing</th><th>Developer</th><th>Listing</th></tr></thead>
+        <thead><tr><th>Rank</th><th>App</th><th>Reviews</th><th>Latest</th><th>7 days</th><th>30 days</th><th>Rating</th><th>BFS</th><th>Pricing</th><th>Developer</th><th>Listing</th></tr></thead>
         <tbody>
         {% for row in category_report.rows %}
         <tr>
             <td data-label="Rank">{% if row.rank %}#{{ row.rank }}{% else %}—{% endif %}</td>
             <td data-label="App"><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><span class="sub">/{{ row.handle }}</span></td>
             <td data-label="Reviews">{{ row.reviews if row.reviews is not none else "—" }}</td>
+            <td data-label="Latest" class="{% if row.latest_delta and row.latest_delta > 0 %}money-up{% elif row.latest_delta and row.latest_delta < 0 %}money-down{% endif %}">{% if row.latest_delta is not none %}{{ signed(row.latest_delta) }}{% else %}—{% endif %}</td>
             <td data-label="7 days" class="{% if row.delta7 and row.delta7 > 0 %}money-up{% elif row.delta7 and row.delta7 < 0 %}money-down{% endif %}">{% if row.delta7 is not none %}{{ signed(row.delta7) }}{% else %}—{% endif %}</td>
             <td data-label="30 days" class="{% if row.delta30 and row.delta30 > 0 %}money-up{% elif row.delta30 and row.delta30 < 0 %}money-down{% endif %}">{% if row.delta30 is not none %}{{ signed(row.delta30) }}{% else %}—{% endif %}</td>
             <td data-label="Rating">{{ row.rating if row.rating is not none else "—" }}</td>
@@ -54,7 +55,7 @@
             <td data-label="Developer">{{ row.developer or "—" }}</td>
             <td data-label="Listing"><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
         </tr>
-        {% else %}<tr><td colspan="10">No apps match these filters.</td></tr>{% endfor %}
+        {% else %}<tr><td colspan="11">No apps match these filters.</td></tr>{% endfor %}
         </tbody>
     </table>
 </div>

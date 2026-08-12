@@ -385,6 +385,7 @@ def test_category_dashboard_starts_with_inventory_and_filters_signals(db):
     ]
     assert report["rows"][0]["delta7"] == 3
     assert report["rows"][0]["delta30"] == 8
+    assert report["rows"][0]["latest_delta"] == 3
     assert report["rows"][0]["developer"] == "Ranked Labs"
     assert report["rows"][0]["pricing"]["monthly"] == [Decimal("12")]
     assert report["rows"][1]["reviews"] is None

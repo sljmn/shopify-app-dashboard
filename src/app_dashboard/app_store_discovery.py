@@ -699,8 +699,8 @@ def category_dashboard(
         params.append(current - timedelta(days=30))
     elif signal in {"reviews", "fastest"}:
         where.append(
-            "latest.review_count is not null and prior30.review_count is not null "
-            "and latest.review_count > prior30.review_count"
+            "latest.review_count is not null and previous.review_count is not null "
+            "and latest.review_count > previous.review_count"
         )
     elif signal == "listing":
         where.append("verified.changed_at >= %s")
@@ -729,6 +729,11 @@ def category_dashboard(
         ) latest on true
         left join lateral (
           select review_count from discovery_app_observations
+          where discovered_app_id=app.id and observed_on < latest.observed_on
+          order by observed_on desc limit 1
+        ) previous on true
+        left join lateral (
+          select review_count from discovery_app_observations
           where discovered_app_id=app.id and observed_on <= %s
           order by observed_on desc limit 1
         ) prior7 on true
@@ -755,13 +760,17 @@ def category_dashboard(
     pages = max(1, (total + per_page - 1) // per_page)
     page = max(1, min(page, pages))
     order = (
-        "(latest.review_count-prior30.review_count) desc nulls last, "
+        "(latest.review_count-previous.review_count) desc nulls last, "
         if signal == "fastest" else
         "category_rank.position asc nulls last, "
     )
     raw_rows = conn.execute(
         f"""select app.handle,app.display_name,category_rank.position,
                    latest.review_count,latest.rating,
+                   case when latest.review_count is not null
+                          and previous.review_count is not null
+                        then latest.review_count-previous.review_count end
+                     latest_delta,
                    case when latest.review_count is not null
                           and prior7.review_count is not null
                         then latest.review_count-prior7.review_count end delta7,
@@ -776,7 +785,8 @@ def category_dashboard(
         [*params, per_page, (page - 1) * per_page],
     ).fetchall()
     keys = (
-        "handle", "name", "rank", "reviews", "rating", "delta7", "delta30",
+        "handle", "name", "rank", "reviews", "rating", "latest_delta",
+        "delta7", "delta30",
         "built_for_shopify", "bfs_checked_at", "listing", "listing_changed_at",
         "first_seen_at", "delisted_at",
     )
@@ -804,28 +814,28 @@ def category_dashboard(
              )) new_30d,
              count(*) filter (where app.delisted_at is null
                               and latest.review_count is not null
-                              and prior.review_count is not null
-                              and latest.review_count > prior.review_count)
-               review_gainers_30d
+                              and previous.review_count is not null
+                              and latest.review_count > previous.review_count)
+               review_gainers
            from discovered_app_categories member
            join discovered_apps app on app.id=member.discovered_app_id
            left join lateral (
-             select review_count from discovery_app_observations
+             select review_count,observed_on from discovery_app_observations
              where discovered_app_id=app.id order by observed_on desc limit 1
            ) latest on true
            left join lateral (
              select review_count from discovery_app_observations
-             where discovered_app_id=app.id and observed_on <= %s
+             where discovered_app_id=app.id and observed_on < latest.observed_on
              order by observed_on desc limit 1
-           ) prior on true
+           ) previous on true
            where member.category_id=%s""",
-        (current - timedelta(days=30), cutoff30, category_id),
+        (current - timedelta(days=30), category_id),
     ).fetchone()
     return {
         "category_name": category_name, "last_scan": observed_at,
         "total_apps": summary[0], "measured_apps": summary[1],
         "bfs_apps": summary[2], "new_30d": summary[3],
-        "review_gainers_30d": summary[4], "rows": rows, "total": total,
+        "review_gainers": summary[4], "rows": rows, "total": total,
         "page": page, "pages": pages, "signal": signal,
     }
 
