@@ -394,11 +394,15 @@ def fetch_earnings(
     after_cursor: str | None = None,
 ) -> tuple[list[dict], str | None]:
     """Fetch one page of Shopify earning events for one bounded time window."""
+    # The app-scoped Partner endpoints use gid://partners/App/*, while the
+    # historical events filter validates subject IDs in Shopify's canonical
+    # namespace. Both carry the same numeric app ID.
+    subject_id = app_id.replace("gid://partners/App/", "gid://shopify/App/", 1)
     response = client.post(
         json={
             "query": _EARNINGS_QUERY,
             "variables": {
-                "appId": app_id,
+                "appId": subject_id,
                 "after": after_cursor,
                 "occurredAtMin": occurred_at_min,
                 "occurredAtMax": occurred_at_max,

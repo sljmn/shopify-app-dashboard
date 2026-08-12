@@ -228,6 +228,7 @@ def test_maps_earning_settlement_and_bounded_window():
     )
 
     assert cursor == "earning-0"
+    assert '"appId":"gid://shopify/App/2"' in seen[0]
     assert rows[0]["settlement_date"] == "2026-08-12"
     assert rows[0]["net_amount"] == "18.45"
     assert rows[0]["currency_code"] == "USD"
