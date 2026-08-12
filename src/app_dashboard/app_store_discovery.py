@@ -103,13 +103,17 @@ def parse_category_page(html: str, slug: str) -> tuple[str, list[CategoryApp]]:
     return name, list({app.handle: app for app in apps}.values())
 
 
-def request_with_retries(http_get, url: str, *, sleep=time.sleep):
+def request_with_retries(
+    http_get, url: str, *, sleep=time.sleep, allow_not_found: bool = False
+):
     response = None
     for attempt in range(3):
         response = http_get(
             url, headers={"User-Agent": USER_AGENT}, timeout=30,
             follow_redirects=True,
         )
+        if response.status_code == 404 and allow_not_found:
+            return response
         if response.status_code not in {429, 502, 503, 504}:
             response.raise_for_status()
             return response
@@ -137,8 +141,11 @@ def collect_categories(
         name = slug.replace("-", " ").title()
         for page in range(1, max_pages + 1):
             response = request_with_retries(
-                http_get, CATEGORY_URL.format(slug=slug, page=page), sleep=sleep
+                http_get, CATEGORY_URL.format(slug=slug, page=page), sleep=sleep,
+                allow_not_found=True,
             )
+            if response.status_code == 404:
+                break
             parsed_name, apps = parse_category_page(response.text, slug)
             name = parsed_name or name
             fresh = [app for app in apps if app.handle not in found]

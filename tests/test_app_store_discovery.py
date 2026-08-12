@@ -56,10 +56,9 @@ def test_category_cards_supply_names_and_are_deduplicated():
 
 def test_category_collection_uses_every_sitemap_category_and_stops_on_empty_page():
     class Response:
-        status_code = 200
-
-        def __init__(self, text):
+        def __init__(self, text, status_code=200):
             self.text = text
+            self.status_code = status_code
 
         def raise_for_status(self):
             pass
@@ -67,6 +66,7 @@ def test_category_collection_uses_every_sitemap_category_and_stops_on_empty_page
     category_xml = sitemap(
         "https://apps.shopify.com/categories/design",
         "https://apps.shopify.com/categories/marketing",
+        "https://apps.shopify.com/categories/sales-channels",
     )
     card = ('<title>Best {name} Apps For 2026</title>'
             '<div data-controller="app-card" data-app-card-handle-value="{handle}" '
@@ -81,11 +81,13 @@ def test_category_collection_uses_every_sitemap_category_and_stops_on_empty_page
             return Response(card.format(name="Design", handle="design-app"))
         if "page=1" in url and "/marketing/" in url:
             return Response(card.format(name="Marketing", handle="marketing-app"))
+        if "/sales-channels/" in url:
+            return Response("not found", 404)
         return Response("<title>Empty</title>")
 
     result = collect_categories(get, sleep=lambda *_: None, max_pages=5, page_delay=0)
     assert [category.slug for category in result] == ["design", "marketing"]
-    assert len(calls) == 5  # sitemap + two populated pages + two empty terminators
+    assert len(calls) == 6  # two leaf categories paginate; the umbrella stops at 404
 
 
 def test_initial_import_is_baseline_and_later_handle_is_new(db):
