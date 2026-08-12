@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app_dashboard.research import (
+    add_developer_to_list,
     add_app_to_list,
     attach_object,
     create_list,
@@ -9,7 +10,9 @@ from app_dashboard.research import (
     get_list,
     research_index,
     remove_app_from_list,
+    remove_developer_from_list,
     search_apps,
+    search_developers,
     target_research,
     update_note,
 )
@@ -52,6 +55,51 @@ def test_app_search_is_bounded_and_marks_existing_list_members(db):
     assert rows[0]["in_list"] is True
     assert all(set(row) == {"handle", "name", "categories", "in_list"} for row in rows)
     assert search_apps(db, "  ", list_id=research_list["id"]) == []
+
+
+def test_developer_can_join_list_and_follow_its_portfolio(db):
+    app_ids = [
+        discovered(db, "partner-one", "Partner One"),
+        discovered(db, "partner-two", "Partner Two"),
+    ]
+    developer_id = db.execute(
+        """insert into discovered_developers (name,shopify_url)
+           values ('Partner Labs','https://apps.shopify.com/partners/partner-labs')
+           returning id"""
+    ).fetchone()[0]
+    db.cursor().executemany(
+        """insert into discovered_app_developers
+             (discovered_app_id,discovered_developer_id) values (%s,%s)""",
+        [(app_id, developer_id) for app_id in app_ids],
+    )
+    research_list = create_list(db, "Partners")
+
+    assert add_developer_to_list(db, research_list["id"], developer_id) is True
+    assert add_developer_to_list(db, research_list["id"], developer_id) is False
+    detail = get_list(db, research_list["id"])
+    assert detail["developer_count"] == 1
+    assert detail["developers"][0]["app_count"] == 2
+    assert db.execute(
+        "select count(*) from discovery_watchlist where active"
+    ).fetchone()[0] == 2
+    assert remove_developer_from_list(db, research_list["id"], developer_id) is True
+    assert get_list(db, research_list["id"])["developer_count"] == 0
+
+
+def test_developer_search_marks_membership(db):
+    developer_id = db.execute(
+        """insert into discovered_developers (name,shopify_url)
+           values ('HulkApps','https://apps.shopify.com/partners/hulk-code')
+           returning id"""
+    ).fetchone()[0]
+    research_list = create_list(db, "Competitors")
+    add_developer_to_list(db, research_list["id"], developer_id)
+
+    assert search_developers(db, "hulk", list_id=research_list["id"]) == [{
+        "id": developer_id, "name": "HulkApps",
+        "shopify_url": "https://apps.shopify.com/partners/hulk-code",
+        "app_count": 0, "in_list": True,
+    }]
 
 
 def test_targeted_notes_and_index_search_include_context_and_filename(db):

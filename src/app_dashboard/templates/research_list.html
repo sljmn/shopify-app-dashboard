@@ -11,11 +11,13 @@
         </div>
         <div class="research-dossier-actions">
             <a class="button" href="#add-research-app">Add app</a>
+            <a class="ghost" href="#add-research-developer">Add partner</a>
             <a class="ghost" href="/research/notes/new?target=list&amp;target_id={{ record.id }}">New note</a>
         </div>
     </header>
     <dl class="research-dossier-stats" aria-label="List totals">
         <div><dt>Apps</dt><dd>{{ record.app_count }}</dd></div>
+        <div><dt>Partners</dt><dd>{{ record.developer_count }}</dd></div>
         <div><dt>Notes</dt><dd>{{ record.note_count }}</dd></div>
         <div><dt>Files</dt><dd>{{ record.attachment_count }}</dd></div>
     </dl>
@@ -45,6 +47,22 @@
         <p class="field-help" data-research-app-help>Search the indexed Shopify App Store catalog.</p>
     </form>
     <div class="table-card"><table><thead><tr><th>App</th><th>Added</th><th>Tracking</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>{% for app in record.apps %}<tr><td><a href="/discover/apps/{{ app.handle|urlencode }}"><strong>{{ app.name or app.handle }}</strong></a><br><span class="sub">/{{ app.handle }}</span></td><td>{{ app.added_at|local_time("%-d %b %Y") }}</td><td><span class="status-badge {{ 'installed' if app.followed else 'uninstalled' }}">{{ "Active" if app.followed else "Pending" }}</span></td><td class="row-action"><form class="inline-form" method="post" action="/research/lists/{{ record.id }}/apps/{{ app.handle|urlencode }}/remove"><button class="ghost" type="submit">Remove</button></form></td></tr>{% else %}<tr><td colspan="4"><div class="empty-state"><strong>No apps in this list yet.</strong><span>Search above to start tracking one.</span></div></td></tr>{% endfor %}</tbody></table></div>
+</section>
+
+<section id="add-research-developer" class="research-work-section">
+    <div class="section-heading"><div><h2>Partners</h2><p class="sub">Adding a partner follows its complete current and future app portfolio.</p></div><span class="section-count">{{ record.developer_count }}</span></div>
+    <form class="research-app-search" method="post" action="/research/lists/{{ record.id }}/developers" data-research-picker data-search-url="/research/developers/search" data-list-id="{{ record.id }}" data-kind="partner">
+        <label for="research-developer-query">Find a Shopify partner</label>
+        <div class="research-app-search-control">
+            <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
+            <input id="research-developer-query" type="search" autocomplete="off" placeholder="Search by partner name or Shopify URL" aria-autocomplete="list" aria-controls="research-developer-results" aria-expanded="false" data-picker-query>
+            <input type="hidden" name="developer_id" data-picker-value>
+            <button type="submit" disabled data-picker-submit>Add partner</button>
+        </div>
+        <div id="research-developer-results" class="research-app-results" role="listbox" hidden data-picker-results></div>
+        <p class="field-help" data-picker-help>Search partners already found in the App Store catalog.</p>
+    </form>
+    <div class="table-card"><table><thead><tr><th>Partner</th><th>Apps</th><th>Added</th><th>Portfolio scan</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>{% for developer in record.developers %}<tr><td><a href="/research/developers/{{ developer.id }}"><strong>{{ developer.name }}</strong></a><br><a class="sub" href="{{ developer.shopify_url }}" target="_blank" rel="noopener">Shopify developer page</a></td><td>{{ developer.app_count }}</td><td>{{ developer.added_at|local_time("%-d %b %Y") }}</td><td>{% if developer.last_scan_error %}<span class="money-down">{{ developer.last_scan_error }}</span>{% elif developer.last_scanned_at %}{{ developer.last_scanned_at|local_time("%-d %b %Y %H:%M") }}{% else %}Not scanned yet{% endif %}</td><td class="row-action"><form class="inline-form" method="post" action="/research/lists/{{ record.id }}/developers/{{ developer.id }}/remove"><button class="ghost" type="submit">Remove</button></form></td></tr>{% else %}<tr><td colspan="5"><div class="empty-state"><strong>No partners in this list yet.</strong><span>Search above to follow a complete portfolio.</span></div></td></tr>{% endfor %}</tbody></table></div>
 </section>
 
 <section class="research-work-section">
@@ -150,5 +168,65 @@
         if (!form.contains(event.target)) closeResults();
     });
 })();
+
+document.querySelectorAll("[data-research-picker]").forEach((form) => {
+    const query = form.querySelector("[data-picker-query]");
+    const value = form.querySelector("[data-picker-value]");
+    const submit = form.querySelector("[data-picker-submit]");
+    const results = form.querySelector("[data-picker-results]");
+    const help = form.querySelector("[data-picker-help]");
+    let timer;
+    let request;
+    const close = () => { results.hidden = true; query.setAttribute("aria-expanded", "false"); };
+    const choose = (row) => {
+        query.value = row.name;
+        value.value = row.id;
+        submit.disabled = false;
+        help.textContent = `Ready to add ${row.name}`;
+        close();
+    };
+    const search = async () => {
+        const term = query.value.trim();
+        if (term.length < 2) { close(); help.textContent = "Type at least two characters."; return; }
+        request?.abort();
+        request = new AbortController();
+        help.textContent = "Searching partners…";
+        try {
+            const params = new URLSearchParams({q: term, list_id: form.dataset.listId});
+            const response = await fetch(`${form.dataset.searchUrl}?${params}`, {signal: request.signal});
+            if (!response.ok) throw new Error("search-failed");
+            const rows = await response.json();
+            results.replaceChildren();
+            rows.forEach((row) => {
+                const option = document.createElement("button");
+                option.type = "button";
+                option.className = "research-app-result";
+                option.disabled = row.in_list;
+                const copy = document.createElement("span");
+                const title = document.createElement("strong");
+                title.textContent = row.name;
+                const meta = document.createElement("small");
+                meta.textContent = `${row.app_count} indexed app${row.app_count === 1 ? "" : "s"}`;
+                copy.append(title, meta);
+                const state = document.createElement("span");
+                state.className = "research-app-result-state";
+                state.textContent = row.in_list ? "Already added" : "Select";
+                option.append(copy, state);
+                option.addEventListener("click", () => choose(row));
+                results.append(option);
+            });
+            if (!rows.length) { const empty = document.createElement("p"); empty.className = "research-app-result-empty"; empty.textContent = "No matching partners found."; results.append(empty); }
+            results.hidden = false;
+            query.setAttribute("aria-expanded", "true");
+            help.textContent = rows.length ? `${rows.length} matches` : "Try another partner name.";
+        } catch (error) {
+            if (error.name === "AbortError") return;
+            close(); help.textContent = "Search is temporarily unavailable.";
+        }
+    };
+    query.addEventListener("input", () => { value.value = ""; submit.disabled = true; clearTimeout(timer); timer = setTimeout(search, 180); });
+    query.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+    document.addEventListener("click", (event) => { if (!form.contains(event.target)) close(); });
+});
 </script>
 {% endblock %}

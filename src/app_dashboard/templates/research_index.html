@@ -34,9 +34,9 @@
 {% if not selected_type or selected_type == "list" %}
 <section>
     <div class="section-heading"><div><h2>Lists</h2><p class="sub">Named workspaces for apps you want to keep researching.</p></div></div>
-    <div class="table-card"><table class="research-table"><thead><tr><th>Updated</th><th>Title</th><th>Status</th><th>Apps</th><th>Notes</th><th>Files</th></tr></thead><tbody>
-    {% for list in lists %}<tr><td>{{ list.updated_at|local_time("%-d %b %Y %H:%M") }}</td><td><a href="/research/lists/{{ list.id }}"><strong>{{ list.title }}</strong></a><br><span class="sub">{{ list.description|truncate(100) }}</span></td><td><span class="status-badge {{ 'installed' if list.status == 'active' else 'uninstalled' }}">{{ list.status|title }}</span></td><td>{{ list.app_count }}</td><td>{{ list.note_count }}</td><td>{{ list.attachment_count }}</td></tr>
-    {% else %}<tr><td colspan="6">No research lists yet.</td></tr>{% endfor %}
+    <div class="table-card"><table class="research-table"><thead><tr><th>Updated</th><th>Title</th><th>Status</th><th>Apps</th><th>Partners</th><th>Notes</th><th>Files</th></tr></thead><tbody>
+    {% for list in lists %}<tr><td>{{ list.updated_at|local_time("%-d %b %Y %H:%M") }}</td><td><a href="/research/lists/{{ list.id }}"><strong>{{ list.title }}</strong></a><br><span class="sub">{{ list.description|truncate(100) }}</span></td><td><span class="status-badge {{ 'installed' if list.status == 'active' else 'uninstalled' }}">{{ list.status|title }}</span></td><td>{{ list.app_count }}</td><td>{{ list.developer_count }}</td><td>{{ list.note_count }}</td><td>{{ list.attachment_count }}</td></tr>
+    {% else %}<tr><td colspan="7">No research lists yet.</td></tr>{% endfor %}
     </tbody></table></div>
 </section>
 {% endif %}

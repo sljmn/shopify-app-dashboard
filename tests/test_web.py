@@ -185,6 +185,38 @@ def test_research_app_search_returns_catalog_matches_and_membership(db):
     }]
 
 
+def test_research_list_can_search_add_and_remove_partner(db):
+    developer_id = db.execute(
+        """insert into discovered_developers (name,shopify_url)
+           values ('HulkApps','https://apps.shopify.com/partners/hulk-code')
+           returning id"""
+    ).fetchone()[0]
+    list_id = db.execute(
+        "insert into research_lists (title) values ('Partner list') returning id"
+    ).fetchone()[0]
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    search = client.get(f"/research/developers/search?q=hulk&list_id={list_id}")
+    assert search.status_code == 200
+    assert search.json()[0]["id"] == developer_id
+    added = client.post(
+        f"/research/lists/{list_id}/developers",
+        data={"developer_id": str(developer_id)}, follow_redirects=False,
+    )
+    assert added.status_code == 303
+    page = client.get(f"/research/lists/{list_id}")
+    assert "HulkApps" in page.text
+    assert "data-research-picker" in page.text
+    assert "Partners" in page.text
+    removed = client.post(
+        f"/research/lists/{list_id}/developers/{developer_id}/remove",
+        data={"confirm": "1"},
+        follow_redirects=False,
+    )
+    assert removed.status_code == 303
+    assert db.execute("select count(*) from research_list_developers").fetchone()[0] == 0
+
+
 def test_discover_app_can_join_a_research_list_and_opens_research_tab(db):
     app_id = db.execute(
         """insert into discovered_apps

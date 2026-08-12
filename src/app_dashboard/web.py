@@ -72,6 +72,7 @@ from app_dashboard.object_storage import (
 )
 from app_dashboard.research import (
     add_app_to_list,
+    add_developer_to_list,
     attach_object,
     attachment_detail,
     create_list as create_research_list,
@@ -81,8 +82,10 @@ from app_dashboard.research import (
     get_list as get_research_list,
     list_lists as list_research_lists,
     remove_app_from_list,
+    remove_developer_from_list,
     research_index,
     search_apps as search_research_apps,
+    search_developers as search_research_developers,
     target_research,
     update_note as update_research_note,
     update_list as update_research_list,
@@ -858,6 +861,18 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         finally:
             conn.close()
 
+    @app.get("/research/developers/search")
+    def research_developer_search(
+        q: str = "", list_id: int | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        del user
+        conn = conn_factory()
+        try:
+            return search_research_developers(conn, q, list_id=list_id, limit=8)
+        finally:
+            conn.close()
+
     @app.post("/research/lists")
     async def store_research_list(request: Request, user: str = Depends(verify_creds)):
         del user
@@ -940,6 +955,39 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         conn = conn_factory()
         try:
             remove_app_from_list(conn, list_id, handle)
+        finally:
+            conn.close()
+        return RedirectResponse(f"/research/lists/{list_id}", status_code=303)
+
+    @app.post("/research/lists/{list_id}/developers")
+    async def add_research_list_developer(
+        request: Request, list_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        _, raw = await _browser_form(request)
+        try:
+            developer_id = int(_flat_form(raw).get("developer_id", ""))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Select a partner") from None
+        conn = conn_factory()
+        try:
+            add_developer_to_list(conn, list_id, developer_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown partner or research list") from None
+        finally:
+            conn.close()
+        return RedirectResponse(f"/research/lists/{list_id}", status_code=303)
+
+    @app.post("/research/lists/{list_id}/developers/{developer_id}/remove")
+    async def remove_research_list_developer(
+        request: Request, list_id: int, developer_id: int,
+        user: str = Depends(verify_creds),
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            remove_developer_from_list(conn, list_id, developer_id)
         finally:
             conn.close()
         return RedirectResponse(f"/research/lists/{list_id}", status_code=303)

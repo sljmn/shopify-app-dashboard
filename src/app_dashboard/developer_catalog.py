@@ -138,6 +138,15 @@ def sync_developer_catalog(conn, developer_id: int, http_get=httpx.get, *, now=N
                      last_scanned_at=%s,last_scan_error=null,updated_at=%s where id=%s""",
                 (attempted_at, attempted_at, attempted_at, developer_id),
             )
+            active_list = conn.execute(
+                """select 1 from research_list_developers member
+                   join research_lists list on list.id=member.research_list_id
+                   where member.discovered_developer_id=%s and list.status='active'
+                   limit 1""", (developer_id,),
+            ).fetchone()
+            if active_list:
+                from app_dashboard.research import follow_developer_apps
+                follow_developer_apps(conn, developer_id, now=attempted_at)
         return {"developer_id": developer_id, "apps": len(apps), "status": "ready"}
     except (httpx.HTTPError, ValueError) as exc:
         conn.execute(

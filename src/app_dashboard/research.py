@@ -72,10 +72,13 @@ def list_lists(conn, *, query: str | None = None, status: str | None = None) -> 
         """select list.id,list.title,list.description,list.status,
                   list.created_at,list.updated_at,
                   count(distinct member.discovered_app_id) app_count,
+                  count(distinct developer_member.discovered_developer_id) developer_count,
                   count(distinct note.id) note_count,
                   count(distinct attachment.id) attachment_count
            from research_lists list
            left join research_list_apps member on member.research_list_id=list.id
+           left join research_list_developers developer_member
+             on developer_member.research_list_id=list.id
            left join research_notes note on note.research_list_id=list.id
            left join research_note_attachments attachment
              on attachment.research_note_id=note.id
@@ -87,7 +90,7 @@ def list_lists(conn, *, query: str | None = None, status: str | None = None) -> 
     ).fetchall()
     keys = (
         "id", "title", "description", "status", "created_at", "updated_at",
-        "app_count", "note_count", "attachment_count",
+        "app_count", "developer_count", "note_count", "attachment_count",
     )
     return [dict(zip(keys, row, strict=True)) for row in rows]
 
@@ -115,8 +118,29 @@ def get_list(conn, list_id: int) -> dict | None:
             (list_id,),
         ).fetchall()
     ]
+    result["developers"] = [
+        {"id": developer_id, "name": name, "shopify_url": shopify_url,
+         "added_at": added_at, "last_scanned_at": last_scanned_at,
+         "last_scan_error": last_scan_error, "app_count": app_count}
+        for developer_id, name, shopify_url, added_at, last_scanned_at,
+            last_scan_error, app_count in conn.execute(
+            """select developer.id,developer.name,developer.shopify_url,
+                      member.added_at,developer.last_scanned_at,
+                      developer.last_scan_error,count(app_member.discovered_app_id)
+               from research_list_developers member
+               join discovered_developers developer
+                 on developer.id=member.discovered_developer_id
+               left join discovered_app_developers app_member
+                 on app_member.discovered_developer_id=developer.id
+               where member.research_list_id=%s
+               group by developer.id,member.added_at
+               order by developer.name,developer.id""",
+            (list_id,),
+        ).fetchall()
+    ]
     result["notes"] = list_notes(conn, target_kind="list", target_id=list_id)
     result["app_count"] = len(result["apps"])
+    result["developer_count"] = len(result["developers"])
     result["note_count"] = len(result["notes"])
     result["attachment_count"] = sum(
         note["attachment_count"] for note in result["notes"]
@@ -162,6 +186,74 @@ def search_apps(
     ).fetchall()
     keys = ("handle", "name", "categories", "in_list")
     return [dict(zip(keys, row, strict=True)) for row in rows]
+
+
+def search_developers(
+    conn, query: str, *, list_id: int | None = None, limit: int = 8,
+) -> list[dict]:
+    query = query.strip()
+    if not query:
+        return []
+    rows = conn.execute(
+        """select developer.id,developer.name,developer.shopify_url,
+                  count(app_member.discovered_app_id),
+                  exists(select 1 from research_list_developers member
+                         where member.research_list_id=%s
+                           and member.discovered_developer_id=developer.id)
+           from discovered_developers developer
+           left join discovered_app_developers app_member
+             on app_member.discovered_developer_id=developer.id
+           where developer.name ilike '%%' || %s || '%%'
+              or developer.shopify_url ilike '%%' || %s || '%%'
+           group by developer.id
+           order by case when lower(developer.name)=lower(%s) then 0
+                         when developer.name ilike %s || '%%' then 1 else 2 end,
+                    developer.name,developer.id limit %s""",
+        (list_id, query, query, query, query, max(1, min(limit, 8))),
+    ).fetchall()
+    keys = ("id", "name", "shopify_url", "app_count", "in_list")
+    return [dict(zip(keys, row, strict=True)) for row in rows]
+
+
+def follow_developer_apps(conn, developer_id: int, *, now=None) -> int:
+    handles = [row[0] for row in conn.execute(
+        """select app.handle from discovered_app_developers member
+           join discovered_apps app on app.id=member.discovered_app_id
+           where member.discovered_developer_id=%s""", (developer_id,),
+    ).fetchall()]
+    for handle in handles:
+        status = watch_status(conn, handle)
+        if status is None or not status.active:
+            follow_app(conn, handle, source="manual", now=_now(now))
+    return len(handles)
+
+
+def add_developer_to_list(conn, list_id: int, developer_id: int, *, now=None) -> bool:
+    added_at = _now(now)
+    if not conn.execute("select 1 from research_lists where id=%s", (list_id,)).fetchone():
+        raise LookupError("unknown-research-list")
+    if not conn.execute("select 1 from discovered_developers where id=%s", (developer_id,)).fetchone():
+        raise LookupError("unknown-developer")
+    inserted = conn.execute(
+        """insert into research_list_developers
+             (research_list_id,discovered_developer_id,added_at)
+           values (%s,%s,%s) on conflict do nothing returning discovered_developer_id""",
+        (list_id, developer_id, added_at),
+    ).fetchone()
+    conn.execute("update research_lists set updated_at=%s where id=%s", (added_at, list_id))
+    follow_developer_apps(conn, developer_id, now=added_at)
+    return inserted is not None
+
+
+def remove_developer_from_list(conn, list_id: int, developer_id: int, *, now=None) -> bool:
+    deleted = conn.execute(
+        """delete from research_list_developers
+           where research_list_id=%s and discovered_developer_id=%s
+           returning discovered_developer_id""", (list_id, developer_id),
+    ).fetchone()
+    if deleted:
+        conn.execute("update research_lists set updated_at=%s where id=%s", (_now(now), list_id))
+    return deleted is not None
 
 
 def add_app_to_list(conn, list_id: int, handle: str, *, now=None) -> bool:

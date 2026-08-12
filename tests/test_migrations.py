@@ -25,7 +25,7 @@ def test_core_tables_exist(db):
         "discovery_snapshot_media",
     } <= names
     assert {
-        "research_lists", "research_list_apps", "discovered_developers",
+        "research_lists", "research_list_apps", "research_list_developers", "discovered_developers",
         "discovered_app_developers", "research_notes",
         "research_attachment_objects", "research_note_attachments",
     } <= names
