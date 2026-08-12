@@ -51,9 +51,10 @@
 </section>
 
 <div class="cards discovery-metrics">
-    <div class="card stat"><div class="label">Apps indexed</div><div class="num">{{ indexed }}</div></div>
-    <div class="card stat"><div class="label">New this week</div><div class="num">{{ new_this_week }}</div></div>
+    <div class="card stat"><div class="label">Active apps indexed</div><div class="num">{{ active_indexed }}</div><div class="sub">{{ indexed }} observed in total</div></div>
     <div class="card stat"><div class="label">New in 7 days</div><div class="num">{{ new_last_7_days }}</div></div>
+    <div class="card stat"><div class="label">Listings updated in 7 days</div><div class="num">{{ updated_last_7_days }}</div></div>
+    <div class="card stat"><div class="label">Delisted in 7 days</div><div class="num">{{ delisted_last_7_days }}</div></div>
     <div class="card stat"><div class="label">Last app scan</div><div class="num"><small>{{ last_scan|local_time("%-d %b %H:%M") if last_scan else "Not run yet" }}</small></div></div>
 </div>
 
@@ -62,14 +63,15 @@
 </p>
 
 <section class="card discovery-chart-card" aria-labelledby="weekly-discovery-title">
-    <h2 id="weekly-discovery-title">New apps per week</h2>
-    <div class="discovery-chart">
+    <div class="section-heading"><h2 id="weekly-discovery-title">App Store activity per week</h2><div class="chart-legend"><span><i class="new"></i>New</span><span><i class="updated"></i>Updated</span><span><i class="delisted"></i>Delisted</span></div></div>
+    <div class="discovery-chart" style="--week-count: {{ weeks|length }}">
         {% for week in weeks %}
         <div class="discovery-week">
-            <strong>{{ week.count }}</strong>
-            <span class="discovery-bar-slot">
-                <span class="discovery-bar" style="height: {{ (100 * week.count / max_week) if max_week else 0 }}%"
-                      title="{{ week.count }} new apps"></span>
+            <strong>{{ week.new + week.updated + week.delisted }}</strong>
+            <span class="discovery-bar-group">
+                <span class="discovery-bar new" style="height: {{ (100 * week.new / max_week) if max_week else 0 }}%" title="{{ week.new }} new apps"></span>
+                <span class="discovery-bar updated" style="height: {{ (100 * week.updated / max_week) if max_week else 0 }}%" title="{{ week.updated }} listing updates"></span>
+                <span class="discovery-bar delisted" style="height: {{ (100 * week.delisted / max_week) if max_week else 0 }}%" title="{{ week.delisted }} delisted apps"></span>
             </span>
             <time datetime="{{ week.start.isoformat() }}">{{ week.start.strftime("%-d %b") }}</time>
         </div>
@@ -80,12 +82,19 @@
 <section class="newest-apps" aria-labelledby="newest-apps-title">
     <div class="section-heading">
         <div>
-            <h2 id="newest-apps-title">Newest apps found</h2>
-            <p class="sub">All apps found after the initial baseline, newest first. First observed is when Mantle detected the app.</p>
+            <h2 id="newest-apps-title">App Store activity</h2>
+            <p class="sub">First appearance, Shopify sitemap updates and confirmed removals are separate signals. Verified change means Mantle captured an actual listing diff.</p>
         </div>
+        <nav class="aso-tabs growth-tabs" aria-label="App Store activity type">
+            <a href="/discover?activity=new{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if activity == "new" %} aria-current="page"{% endif %}>New apps</a>
+            <a href="/discover?activity=updated{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if activity == "updated" %} aria-current="page"{% endif %}>Listing updates</a>
+            <a href="/discover?activity=delisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if activity == "delisted" %} aria-current="page"{% endif %}>Delisted</a>
+            <a href="/discover?activity=relisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if activity == "relisted" %} aria-current="page"{% endif %}>Relisted</a>
+        </nav>
     </div>
     <form class="filters discover-filters" method="get" action="/discover">
         <input type="hidden" name="growth" value="{{ selected_growth }}">
+        <input type="hidden" name="activity" value="{{ activity }}">
         <input type="search" name="q" value="{{ query }}" placeholder="Search app name or handle" aria-label="Search app name or handle">
         <select name="category" aria-label="Category">
             <option value="">All categories</option>
@@ -94,20 +103,24 @@
             {% endfor %}
         </select>
         <button type="submit">Filter</button>
-        {% if query or selected_category %}<a class="ghost" href="/discover?growth={{ selected_growth }}">Clear</a>{% endif %}
+        {% if query or selected_category %}<a class="ghost" href="/discover?growth={{ selected_growth }}&amp;activity={{ activity }}">Clear</a>{% endif %}
     </form>
 
     <div class="table-card">
-        <table class="discover-table">
-            <thead><tr><th>App</th><th>Categories</th><th>First observed</th><th>Listing updated</th><th></th></tr></thead>
+        <table class="discover-table activity-table">
+            <thead><tr><th>App</th><th>Signal</th><th>Categories</th><th>Pricing</th><th>Developer</th><th>Reviews</th><th>Observed</th><th>Verified change</th><th></th></tr></thead>
             <tbody>
-            {% for handle, name, first_seen, updated_on, category_names in rows %}
+            {% for row in rows %}
             <tr>
-                <td><a href="/discover/apps/{{ handle|urlencode }}"><strong>{{ name or handle|replace("-", " ")|title }}</strong></a><br><span class="sub">/{{ handle }}</span></td>
-                <td class="category-list">{{ category_names or "Not categorized yet" }}</td>
-                <td>{{ first_seen|local_time("%-d %b %Y %H:%M") }}</td>
-                <td>{{ updated_on.strftime("%-d %b %Y") if updated_on else "—" }}</td>
-                <td><a href="https://apps.shopify.com/{{ handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
+                <td><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><span class="sub">/{{ row.handle }}</span></td>
+                <td>{% if row.event_type == "discovered" %}<span class="status-badge installed">New</span>{% elif row.event_type == "listing_updated" %}<strong>Shopify lastmod</strong><br><span class="sub">{{ row.previous_updated_on or "—" }} → {{ row.event_updated_on or "—" }}</span>{% elif row.event_type == "delisted" %}<span class="status-badge uninstalled">Delisted</span>{% else %}<strong>Relisted</strong>{% endif %}</td>
+                <td class="category-list">{{ row.categories or "Not categorized yet" }}</td>
+                <td><strong>{{ row.pricing.label }}</strong>{% if row.pricing.monthly %}<br><span class="sub">from ${{ row.pricing.monthly[0] }}/mo</span>{% elif row.pricing.annual %}<br><span class="sub">from ${{ row.pricing.annual[0] }}/yr</span>{% endif %}{% if row.pricing.trial %}<br><span class="sub">{{ row.pricing.trial }}</span>{% endif %}</td>
+                <td>{{ row.developer or "—" }}{% if row.developer_app_count %}<br><span class="sub">{{ row.developer_app_count }} indexed app{% if row.developer_app_count != 1 %}s{% endif %}</span>{% endif %}</td>
+                <td>{{ row.reviews if row.reviews is not none else "—" }}</td>
+                <td>{{ row.event_at|local_time("%-d %b %Y %H:%M") }}<br><span class="sub">Shopify lastmod: {{ row.listing_updated_on or "—" }}</span></td>
+                <td>{% if row.last_verified_change %}<a href="/discover/apps/{{ row.handle|urlencode }}?view=history">{{ row.last_verified_change|local_time("%-d %b %H:%M") }}</a>{% else %}—{% endif %}</td>
+                <td><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
             </tr>
             {% else %}
             <tr><td colspan="5">{% if indexed %}No newly observed apps match these filters yet.{% else %}The first App Store baseline has not run yet.{% endif %}</td></tr>
@@ -117,7 +130,7 @@
     </div>
 
     <div class="pager">
-        <span class="sub">{{ total }} newly observed apps</span>
+        <span class="sub">{{ total }} {{ activity|replace('_',' ') }} events</span>
         <span class="pager-links">
             {% if page > 1 %}<a href="/discover?{% if filter_qs %}{{ filter_qs }}&amp;{% endif %}page={{ page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}
             <span class="sub">Page {{ page }} of {{ pages }}</span>
@@ -133,9 +146,9 @@
             <p class="sub">Apps gaining reviews or category position between App Store scans.</p>
         </div>
         <nav class="aso-tabs growth-tabs" aria-label="Growth signal">
-            <a href="/discover?growth=gems"{% if selected_growth == "gems" %} aria-current="page"{% endif %}>Rising gems</a>
-            <a href="/discover?growth=fastest"{% if selected_growth == "fastest" %} aria-current="page"{% endif %}>Fastest growers</a>
-            <a href="/discover?growth=contenders"{% if selected_growth == "contenders" %} aria-current="page"{% endif %}>New contenders</a>
+            <a href="/discover?growth=gems{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if selected_growth == "gems" %} aria-current="page"{% endif %}>Rising gems</a>
+            <a href="/discover?growth=fastest{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if selected_growth == "fastest" %} aria-current="page"{% endif %}>Fastest growers</a>
+            <a href="/discover?growth=contenders{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if selected_growth == "contenders" %} aria-current="page"{% endif %}>New contenders</a>
         </nav>
     </div>
     <div class="table-card">
@@ -155,7 +168,7 @@
                 <td>{{ row.age_days }}d</td>
             </tr>
             {% else %}
-            <tr><td colspan="9">No measured apps match this signal yet. Growth appears after at least two category scans.</td></tr>
+            <tr><td colspan="9">No measured apps match this signal yet. Next category scan: {{ next_category_scan|local_time("%a %-d %b %H:%M") }} CET/CEST.</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -163,5 +176,34 @@
     <p class="discovery-note">
         Rising gems are non-baseline apps up to 180 days old with 5–250 reviews and at least 3 new reviews since the previous scan. New contenders are first observed in the last 60 days.
     </p>
+</section>
+
+<section class="category-opportunities" aria-labelledby="category-opportunities-title">
+    <div class="section-heading">
+        <div>
+            <h2 id="category-opportunities-title">Category opportunities</h2>
+            <p class="sub">A transparent heuristic based on saturation, observed review distribution and zero-review share. Pricing coverage shows how complete the commercial comparison is.</p>
+        </div>
+    </div>
+    <div class="table-card">
+        <table class="opportunity-table">
+            <thead><tr><th>Category</th><th>Opportunity</th><th>Active apps</th><th>Median reviews</th><th>Zero reviews</th><th>Pricing coverage</th><th>Paid share</th><th>Avg. monthly</th><th>Dormant</th></tr></thead>
+            <tbody>
+            {% for row in opportunities[:50] %}
+            <tr>
+                <td><a href="/discover?activity=new&amp;category={{ row.slug|urlencode }}"><strong>{{ row.name }}</strong></a></td>
+                <td><strong>{{ row.score }}/100</strong></td>
+                <td>{{ row.apps }}</td>
+                <td>{{ row.median_reviews }}</td>
+                <td>{{ row.zero_review_share }}% <span class="sub">({{ row.reviews_covered }} measured)</span></td>
+                <td>{{ row.pricing_covered }}/{{ row.apps }}</td>
+                <td>{{ row.paid_share ~ "%" if row.paid_share is not none else "—" }}</td>
+                <td>{% if row.average_monthly_price is not none %}${{ "%.2f"|format(row.average_monthly_price) }}{% else %}—{% endif %}</td>
+                <td>{{ row.dormant }}</td>
+            </tr>
+            {% else %}<tr><td colspan="9">Category opportunity data appears after the category scan.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
 </section>
 {% endblock %}

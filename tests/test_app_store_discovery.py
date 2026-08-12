@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from app_dashboard.app_store_discovery import (
     CategoryApp,
@@ -9,11 +10,13 @@ from app_dashboard.app_store_discovery import (
     SitemapApp,
     CATEGORY_SITEMAP_URL,
     collect_categories,
+    category_opportunities,
     discovery_report,
     growth_signals,
     parse_app_sitemap,
     parse_category_page,
     parse_category_sitemap,
+    pricing_profile,
     search_app_catalog,
     sync_discovered_apps,
     sync_discovery_categories,
@@ -122,6 +125,57 @@ def test_initial_import_is_baseline_and_later_handle_is_new(db):
     assert rows == [("alpha", first, True), ("beta", later, False)]
 
 
+def test_sitemap_sync_separates_updates_delisting_and_relisting(db):
+    day1 = datetime(2026, 8, 1, 8, tzinfo=timezone.utc)
+    sync_discovered_apps(db, [SitemapApp("alpha", date(2026, 8, 1))], day1)
+
+    day2 = day1 + timedelta(days=1)
+    sync_discovered_apps(db, [
+        SitemapApp("alpha", date(2026, 8, 2)),
+        SitemapApp("beta", date(2026, 8, 2)),
+    ], day2)
+    assert db.execute(
+        "select event_type from discovery_app_events order by id"
+    ).fetchall() == [("discovered",), ("listing_updated",)]
+    assert db.execute(
+        """select watch.follow_source,watch.active
+           from discovery_watchlist watch join discovered_apps app
+             on app.id=watch.discovered_app_id where app.handle='beta'"""
+    ).fetchone() == ("new_app", True)
+
+    sync_discovered_apps(
+        db, [SitemapApp("alpha", date(2026, 8, 2))], day2 + timedelta(days=1)
+    )
+    sync_discovered_apps(
+        db, [SitemapApp("alpha", date(2026, 8, 2))], day2 + timedelta(days=2)
+    )
+    assert db.execute(
+        "select delisted_at,missing_scan_count from discovered_apps where handle='beta'"
+    ).fetchone() == (None, 2)
+
+    delisted_at = day2 + timedelta(days=3)
+    sync_discovered_apps(
+        db, [SitemapApp("alpha", date(2026, 8, 2))], delisted_at
+    )
+    assert db.execute(
+        "select delisted_at,missing_scan_count from discovered_apps where handle='beta'"
+    ).fetchone() == (delisted_at, 3)
+
+    relisted_at = day2 + timedelta(days=4)
+    sync_discovered_apps(db, [
+        SitemapApp("alpha", date(2026, 8, 2)),
+        SitemapApp("beta", date(2026, 8, 2)),
+    ], relisted_at)
+    assert db.execute(
+        "select delisted_at,missing_scan_count from discovered_apps where handle='beta'"
+    ).fetchone() == (None, 0)
+    assert db.execute(
+        """select event_type from discovery_app_events event
+           join discovered_apps app on app.id=event.discovered_app_id
+           where app.handle='beta' order by event.id"""
+    ).fetchall() == [("discovered",), ("delisted",), ("relisted",)]
+
+
 def test_empty_import_does_not_complete_baseline(db):
     with pytest.raises(ValueError, match="empty-app-sitemap"):
         sync_discovered_apps(db, [])
@@ -139,7 +193,7 @@ def test_category_sync_records_all_memberships_without_duplicate_apps(db):
         )),
         CategoryResult("marketing", "Marketing", (CategoryApp("alpha", "Alpha"),)),
     ], datetime(2026, 8, 12, tzinfo=timezone.utc))
-    assert result == {"categories": 2, "memberships": 3}
+    assert result == {"categories": 2, "memberships": 3, "new": 0}
     assert db.execute("select count(*) from discovered_apps").fetchone()[0] == 2
     assert db.execute("select count(*) from discovered_app_categories").fetchone()[0] == 3
 
@@ -181,6 +235,81 @@ def test_category_sync_records_daily_review_and_rank_observations(db):
     assert db.execute(
         "select position from discovery_category_observations order by position"
     ).fetchall() == [(3,), (8,)]
+
+
+def test_category_crawl_can_be_the_first_source_of_a_new_app(db):
+    baseline_at = datetime(2026, 8, 12, 8, tzinfo=timezone.utc)
+    sync_discovered_apps(db, [SitemapApp("alpha", None)], baseline_at)
+
+    found_at = baseline_at + timedelta(hours=2)
+    result = sync_discovery_categories(db, [
+        CategoryResult("design", "Design", (
+            CategoryApp("alpha", "Alpha", 12, Decimal("4.7"), 1),
+            CategoryApp("beta", "Beta", 0, None, 2),
+        )),
+    ], found_at)
+
+    assert result["new"] == 1
+    assert db.execute(
+        """select app.handle,event.event_type,event.details->>'source'
+           from discovery_app_events event join discovered_apps app
+             on app.id=event.discovered_app_id"""
+    ).fetchall() == [("beta", "discovered", "shopify_category_crawl")]
+
+    # The complete sitemap sees an existing handle and must not create a second
+    # discovery event or reinterpret Shopify's lastmod as its launch date.
+    sync_discovered_apps(db, [
+        SitemapApp("alpha", None), SitemapApp("beta", date(2026, 8, 12)),
+    ], found_at + timedelta(hours=1))
+    assert db.execute(
+        "select count(*) from discovery_app_events where event_type='discovered'"
+    ).fetchone()[0] == 1
+
+
+def test_pricing_profile_separates_free_monthly_and_annual_prices():
+    profile = pricing_profile({"pricing": [
+        "Free plan available",
+        "Pro $19 / month or $190/year and save 17%",
+        "7-day free trial",
+    ]})
+    assert profile["label"] == "Free + paid"
+    assert profile["monthly"] == [Decimal("19")]
+    assert profile["annual"] == [Decimal("190")]
+    assert profile["trial"] == "7-day trial"
+
+
+def test_category_opportunities_expose_coverage_instead_of_guessing_prices(db):
+    observed_at = datetime(2026, 8, 12, 8, tzinfo=timezone.utc)
+    sync_discovered_apps(db, [
+        SitemapApp("alpha", date(2025, 1, 1)),
+        SitemapApp("beta", date(2026, 8, 1)),
+    ], observed_at)
+    sync_discovery_categories(db, [
+        CategoryResult("design", "Design", (
+            CategoryApp("alpha", "Alpha", 0, None, 1),
+            CategoryApp("beta", "Beta", 10, Decimal("4.5"), 2),
+        )),
+    ], observed_at)
+    app_id = db.execute(
+        "select id from discovered_apps where handle='alpha'"
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,%s,%s,%s)""",
+        (app_id, observed_at, "pricing-alpha", Jsonb({
+            "pricing": ["Pro $24 / month or $240/year"],
+        })),
+    )
+
+    row = category_opportunities(db, now=observed_at)[0]
+    assert row["name"] == "Design"
+    assert row["apps"] == 2
+    assert row["reviews_covered"] == 2
+    assert row["zero_review_share"] == 50
+    assert row["pricing_covered"] == 1
+    assert row["paid_share"] == 100
+    assert row["average_monthly_price"] == Decimal("24")
 
 
 def test_growth_signals_separate_baseline_growers_and_new_contenders(db):
@@ -245,8 +374,9 @@ def test_report_excludes_baseline_and_counts_each_new_app_once(db):
     assert report["new_this_week"] == 1
     assert report["new_last_7_days"] == 1
     assert report["total"] == 1
-    assert sum(week["count"] for week in report["weeks"]) == 1
-    assert report["rows"][0][0:2] == ("new-app", "New App")
+    assert sum(week["new"] for week in report["weeks"]) == 1
+    assert report["rows"][0]["handle"] == "new-app"
+    assert report["rows"][0]["name"] == "New App"
 
 
 def test_catalog_search_includes_baseline_apps_categories_and_follow_state(db):

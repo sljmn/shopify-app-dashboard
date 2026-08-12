@@ -10,6 +10,7 @@ from psycopg.types.json import Jsonb
 
 from app_dashboard.app_store_discovery import growth_signals
 from app_dashboard.listing_intelligence import LISTING_FIELDS, listing_hash
+from app_dashboard.slack import escape, post_alert
 
 FOLLOW_SOURCES = frozenset({"manual", "rising_gem", "new_contender"})
 
@@ -62,7 +63,7 @@ def follow_app(conn, handle: str, *, source: str, now=None) -> WatchStatus:
              (discovered_app_id,active,follow_source,followed_at)
            values (%s,true,%s,%s)
            on conflict (discovered_app_id) do update set
-             active=true,unfollowed_at=null""",
+             active=true,follow_source=excluded.follow_source,unfollowed_at=null""",
         (app[0], source, followed_at),
     )
     return watch_status(conn, handle)
@@ -98,7 +99,10 @@ def follow_automatic_candidates(conn, *, now=None) -> dict:
             """insert into discovery_watchlist
                  (discovered_app_id,active,follow_source,followed_at)
                select id,true,%s,%s from discovered_apps where handle=%s
-               on conflict (discovered_app_id) do nothing
+               on conflict (discovered_app_id) do update set
+                 active=true,follow_source=excluded.follow_source,
+                 followed_at=excluded.followed_at,unfollowed_at=null
+               where discovery_watchlist.follow_source='new_app'
                returning discovered_app_id""",
             (source, observed_at, handle),
         ).fetchone()
@@ -136,9 +140,12 @@ def store_competitor_snapshot(
     if existing:
         conn.execute(
             """update discovery_watchlist
-               set last_attempt_at=%s,last_success_at=%s,last_error_code=null
+               set last_attempt_at=%s,last_success_at=%s,last_error_code=null,
+                   active=case when follow_source='new_app' then false else active end,
+                   unfollowed_at=case when follow_source='new_app' then %s
+                                      else unfollowed_at end
                where discovered_app_id=%s""",
-            (captured_at, captured_at, discovered_app_id),
+            (captured_at, captured_at, captured_at, discovered_app_id),
         )
         return CompetitorSnapshotResult(existing[0], False, ())
     previous = conn.execute(
@@ -169,6 +176,21 @@ def store_competitor_snapshot(
                     for field in changed_fields
                 ],
             )
+            if changed_fields:
+                conn.execute(
+                    """insert into discovery_alerts
+                         (event_key,alert_type,discovered_app_id,created_at,payload)
+                       select %s,'listing_change',%s,%s,%s
+                       where exists (
+                         select 1 from discovery_watchlist
+                         where discovered_app_id=%s and active
+                       ) on conflict (event_key) do nothing""",
+                    (
+                        f"listing-change:{snapshot_id}", discovered_app_id,
+                        captured_at, Jsonb({"fields": list(changed_fields)}),
+                        discovered_app_id,
+                    ),
+                )
         for role, position, source_url, archived in media:
             conn.execute(
                 """insert into discovery_media_objects
@@ -185,9 +207,12 @@ def store_competitor_snapshot(
             )
         conn.execute(
             """update discovery_watchlist
-               set last_attempt_at=%s,last_success_at=%s,last_error_code=null
+               set last_attempt_at=%s,last_success_at=%s,last_error_code=null,
+                   active=case when follow_source='new_app' then false else active end,
+                   unfollowed_at=case when follow_source='new_app' then %s
+                                      else unfollowed_at end
                where discovered_app_id=%s""",
-            (captured_at, captured_at, discovered_app_id),
+            (captured_at, captured_at, captured_at, discovered_app_id),
         )
     return CompetitorSnapshotResult(snapshot_id, True, changed_fields)
 
@@ -298,12 +323,18 @@ def listing_versions(conn, discovered_app_id: int) -> list[dict]:
            order by snapshot.captured_at desc,snapshot.id desc""",
         (discovered_app_id,),
     ).fetchall()
-    return [
+    versions = [
         {"id": row[0], "captured_at": row[1], "listing": row[2],
          "changed_fields": row[3], "media_count": row[4],
          "review_movement": row[5], "rank_movement": row[6]}
         for row in rows
     ]
+    for index, version in enumerate(versions):
+        version["before_id"] = (
+            versions[index + 1]["id"] if index + 1 < len(versions) else None
+        )
+        version["after_id"] = version["id"] if version["before_id"] else None
+    return versions
 
 
 def _version(conn, discovered_app_id: int, snapshot_id: int) -> dict | None:
@@ -449,3 +480,129 @@ def watchlist_summary(conn, start: date, end: date) -> dict:
         "patterns": patterns,
         "health": {"active": health[0], "failed": health[1], "scanned": health[2]},
     }
+
+
+def list_category_watches(conn) -> list[dict]:
+    rows = conn.execute(
+        """select category.slug,category.name,category.app_count,
+                  coalesce(watch.active,false)
+           from discovery_categories category
+           left join discovery_category_watchlist watch
+             on watch.category_id=category.id
+           order by category.name"""
+    ).fetchall()
+    return [
+        {"slug": row[0], "name": row[1], "app_count": row[2], "followed": row[3]}
+        for row in rows
+    ]
+
+
+def follow_category(conn, slug: str, *, now=None) -> None:
+    followed_at = now or datetime.now(timezone.utc)
+    result = conn.execute(
+        """insert into discovery_category_watchlist
+             (category_id,active,followed_at)
+           select id,true,%s from discovery_categories where slug=%s
+           on conflict (category_id) do update set
+             active=true,followed_at=excluded.followed_at,unfollowed_at=null
+           returning category_id""",
+        (followed_at, slug),
+    ).fetchone()
+    if not result:
+        raise LookupError("unknown-discovery-category")
+
+
+def unfollow_category(conn, slug: str, *, now=None) -> None:
+    result = conn.execute(
+        """update discovery_category_watchlist watch
+           set active=false,unfollowed_at=%s
+           from discovery_categories category
+           where category.id=watch.category_id and category.slug=%s
+           returning watch.category_id""",
+        (now or datetime.now(timezone.utc), slug),
+    ).fetchone()
+    if not result:
+        raise LookupError("category-not-followed")
+
+
+def queue_category_alerts(conn) -> int:
+    rows = conn.execute(
+        """insert into discovery_alerts
+             (event_key,alert_type,discovered_app_id,category_id,created_at,payload)
+           select 'new-category:' || event.id || ':' || category.id,
+                  'new_category_app',app.id,category.id,event.occurred_at,
+                  jsonb_build_object('handle',app.handle,'category',category.name)
+           from discovery_app_events event
+           join discovered_apps app on app.id=event.discovered_app_id
+           join discovered_app_categories member
+             on member.discovered_app_id=app.id
+           join discovery_categories category on category.id=member.category_id
+           join discovery_category_watchlist watch
+             on watch.category_id=category.id and watch.active
+            and event.occurred_at >= watch.followed_at
+           where event.event_type='discovered'
+           on conflict (event_key) do nothing returning id"""
+    ).fetchall()
+    return len(rows)
+
+
+def recent_discovery_alerts(conn, *, limit: int = 50) -> list[dict]:
+    rows = conn.execute(
+        """select alert.alert_type,alert.created_at,alert.payload,
+                  alert.delivered_at,alert.error_code,app.handle,app.display_name,
+                  category.name
+           from discovery_alerts alert
+           left join discovered_apps app on app.id=alert.discovered_app_id
+           left join discovery_categories category on category.id=alert.category_id
+           order by alert.created_at desc,alert.id desc limit %s""",
+        (limit,),
+    ).fetchall()
+    keys = (
+        "type", "created_at", "payload", "delivered_at", "error_code",
+        "handle", "app_name", "category_name",
+    )
+    return [dict(zip(keys, row, strict=True)) for row in rows]
+
+
+def deliver_discovery_alerts(
+    conn, webhook_url: str | None, public_base_url: str,
+    *, http_post=None, now=None,
+) -> dict:
+    pending = conn.execute(
+        """select alert.id,alert.alert_type,alert.payload,app.handle,
+                  app.display_name,category.name
+           from discovery_alerts alert
+           left join discovered_apps app on app.id=alert.discovered_app_id
+           left join discovery_categories category on category.id=alert.category_id
+           where alert.delivered_at is null order by alert.created_at,alert.id
+           limit 50"""
+    ).fetchall()
+    if not webhook_url:
+        return {"pending": len(pending), "delivered": 0, "skipped": len(pending)}
+    delivered = 0
+    attempted_at = now or datetime.now(timezone.utc)
+    for alert_id, alert_type, payload, handle, app_name, category_name in pending:
+        name = escape(app_name or handle or "Unknown app")
+        link = f"{public_base_url.rstrip('/')}/discover/apps/{escape(handle or '')}"
+        if alert_type == "new_category_app":
+            text = f":sparkles: New app in *{escape(category_name or '')}*: <{link}|{name}>"
+        elif alert_type == "listing_change":
+            fields = ", ".join(payload.get("fields") or [])
+            text = f":pencil2: Listing changed for <{link}|{name}>: {escape(fields)}"
+        else:
+            text = f":warning: Followed app delisted: <{link}|{name}>"
+        poster = post_alert if http_post is None else (
+            lambda url, body: post_alert(url, body, http_post=http_post)
+        )
+        ok = poster(webhook_url, {
+            "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+        })
+        conn.execute(
+            """update discovery_alerts set delivery_attempted_at=%s,
+                   delivered_at=case when %s then %s else delivered_at end,
+                   error_code=case when %s then null else 'SlackDeliveryError' end
+               where id=%s""",
+            (attempted_at, ok, attempted_at, ok, alert_id),
+        )
+        delivered += int(ok)
+    return {"pending": len(pending), "delivered": delivered, "skipped": 0}

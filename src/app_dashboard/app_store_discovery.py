@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup
+from psycopg.types.json import Jsonb
 
 APP_SITEMAP_URL = "https://apps.shopify.com/sitemap_apps_en.xml"
 CATEGORY_SITEMAP_URL = "https://apps.shopify.com/sitemap_categories_en.xml"
@@ -178,29 +179,117 @@ def sync_discovered_apps(conn, apps: list[SitemapApp], now=None) -> dict:
     if not apps:
         raise ValueError("empty-app-sitemap")
     observed_at = now or datetime.now(timezone.utc)
-    baseline = conn.execute(
+    state = conn.execute(
         "select baseline_completed_at from discovery_state where source='apps'"
-    ).fetchone() is None
-    handles = [app.handle for app in apps]
+    ).fetchone()
+    baseline = state is None or state[0] is None
+    apps_by_handle = {app.handle: app for app in apps}
+    handles = list(apps_by_handle)
     existing = {
-        row[0] for row in conn.execute(
-            "select handle from discovered_apps where handle = any(%s)", (handles,)
+        row[1]: {
+            "id": row[0], "updated_on": row[2], "delisted_at": row[3],
+        }
+        for row in conn.execute(
+            "select id,handle,listing_updated_on,delisted_at from discovered_apps"
         ).fetchall()
     }
+    new_handles = set(handles) - set(existing)
+    listing_updates = [
+        (existing[handle]["id"], existing[handle]["updated_on"], app.updated_on)
+        for handle, app in apps_by_handle.items()
+        if handle in existing and existing[handle]["updated_on"] is not None
+        and app.updated_on is not None
+        and existing[handle]["updated_on"] != app.updated_on
+    ]
+    relisted = [
+        existing[handle]["id"] for handle in handles
+        if handle in existing and existing[handle]["delisted_at"] is not None
+    ]
     with conn.transaction():
         conn.cursor().executemany(
             """insert into discovered_apps
-               (handle,listing_updated_on,first_seen_at,last_seen_at,is_baseline)
-               values (%s,%s,%s,%s,%s)
+               (handle,listing_updated_on,first_seen_at,last_seen_at,is_baseline,
+                missing_scan_count,delisted_at)
+               values (%s,%s,%s,%s,%s,0,null)
                on conflict (handle) do update set
-                 listing_updated_on=excluded.listing_updated_on,
+                 listing_updated_on=coalesce(
+                   excluded.listing_updated_on,discovered_apps.listing_updated_on
+                 ),
                  last_seen_at=excluded.last_seen_at,
-                 is_baseline=discovered_apps.is_baseline or excluded.is_baseline""",
+                 missing_scan_count=0,delisted_at=null""",
             [
                 (app.handle, app.updated_on, observed_at, observed_at, baseline)
-                for app in apps
+                for app in apps_by_handle.values()
             ],
         )
+        if not baseline and new_handles:
+            conn.execute(
+                """insert into discovery_app_events
+                     (discovered_app_id,event_type,occurred_at,listing_updated_on)
+                   select id,'discovered',%s,listing_updated_on
+                   from discovered_apps where handle=any(%s)""",
+                (observed_at, list(new_handles)),
+            )
+            conn.execute(
+                """insert into discovery_watchlist
+                     (discovered_app_id,active,follow_source,followed_at)
+                   select id,true,'new_app',%s from discovered_apps
+                   where handle=any(%s)
+                   on conflict (discovered_app_id) do nothing""",
+                (observed_at, list(new_handles)),
+            )
+        if listing_updates:
+            conn.cursor().executemany(
+                """insert into discovery_app_events
+                     (discovered_app_id,event_type,occurred_at,
+                      previous_listing_updated_on,listing_updated_on,details)
+                   values (%s,'listing_updated',%s,%s,%s,%s)""",
+                [
+                    (app_id, observed_at, before, after,
+                     Jsonb({"source": "shopify_sitemap"}))
+                    for app_id, before, after in listing_updates
+                ],
+            )
+        if relisted:
+            conn.cursor().executemany(
+                """insert into discovery_app_events
+                     (discovered_app_id,event_type,occurred_at,listing_updated_on)
+                   select id,'relisted',%s,listing_updated_on
+                   from discovered_apps where id=%s""",
+                [(observed_at, app_id) for app_id in relisted],
+            )
+        conn.execute(
+            """update discovered_apps set missing_scan_count=missing_scan_count+1
+               where not (handle=any(%s))""",
+            (handles,),
+        )
+        delisted = conn.execute(
+            """update discovered_apps set delisted_at=%s
+               where missing_scan_count >= 3 and delisted_at is null
+               returning id,listing_updated_on""",
+            (observed_at,),
+        ).fetchall()
+        if delisted:
+            conn.cursor().executemany(
+                """insert into discovery_app_events
+                     (discovered_app_id,event_type,occurred_at,listing_updated_on)
+                   values (%s,'delisted',%s,%s)""",
+                [(app_id, observed_at, updated_on) for app_id, updated_on in delisted],
+            )
+            conn.execute(
+                """insert into discovery_alerts
+                     (event_key,alert_type,discovered_app_id,created_at,payload)
+                   select 'delisted:' || event.id,'delisted',event.discovered_app_id,
+                          event.occurred_at,jsonb_build_object('handle',app.handle)
+                   from discovery_app_events event
+                   join discovered_apps app on app.id=event.discovered_app_id
+                   join discovery_watchlist watch
+                     on watch.discovered_app_id=event.discovered_app_id
+                    and watch.active
+                   where event.event_type='delisted' and event.occurred_at=%s
+                   on conflict (event_key) do nothing""",
+                (observed_at,),
+            )
         conn.execute(
             """insert into discovery_state
                (source,baseline_completed_at,last_success_at)
@@ -213,8 +302,8 @@ def sync_discovered_apps(conn, apps: list[SitemapApp], now=None) -> dict:
             (observed_at if baseline else None, observed_at),
         )
     return {
-        "seen": len(apps),
-        "new": 0 if baseline else len(set(handles) - existing),
+        "seen": len(apps_by_handle),
+        "new": 0 if baseline else len(new_handles),
         "baseline": baseline,
     }
 
@@ -224,9 +313,20 @@ def sync_discovery_categories(conn, categories: list[CategoryResult], now=None) 
         raise ValueError("empty-category-crawl")
     observed_at = now or datetime.now(timezone.utc)
     observed_on = observed_at.astimezone(DISPLAY_TZ).date()
-    baseline_pending = conn.execute(
-        "select 1 from discovery_state where source='apps'"
-    ).fetchone() is None
+    state = conn.execute(
+        "select baseline_completed_at from discovery_state where source='apps'"
+    ).fetchone()
+    baseline_pending = state is None or state[0] is None
+    handles = {
+        app.handle for category in categories for app in category.apps
+    }
+    existing_handles = {
+        row[0] for row in conn.execute(
+            "select handle from discovered_apps where handle=any(%s)",
+            (list(handles),),
+        ).fetchall()
+    } if handles else set()
+    new_handles = handles - existing_handles
     with conn.transaction():
         for category in categories:
             conn.execute(
@@ -246,6 +346,27 @@ def sync_discovery_categories(conn, categories: list[CategoryResult], now=None) 
                    last_seen_at=greatest(discovered_apps.last_seen_at,excluded.last_seen_at)""",
                 [(app.handle, app.name, observed_at, observed_at, baseline_pending)
                  for app in category.apps],
+            )
+        if not baseline_pending and new_handles:
+            conn.execute(
+                """insert into discovery_app_events
+                     (discovered_app_id,event_type,occurred_at,listing_updated_on,
+                      details)
+                   select id,'discovered',%s,listing_updated_on,%s
+                   from discovered_apps where handle=any(%s)""",
+                (
+                    observed_at,
+                    Jsonb({"source": "shopify_category_crawl"}),
+                    list(new_handles),
+                ),
+            )
+            conn.execute(
+                """insert into discovery_watchlist
+                     (discovered_app_id,active,follow_source,followed_at)
+                   select id,true,'new_app',%s from discovered_apps
+                   where handle=any(%s)
+                   on conflict (discovered_app_id) do nothing""",
+                (observed_at, list(new_handles)),
             )
         for category in categories:
             conn.execute(
@@ -319,10 +440,13 @@ def sync_discovery_categories(conn, categories: list[CategoryResult], now=None) 
     return {
         "categories": len(categories),
         "memberships": sum(len(category.apps) for category in categories),
+        "new": 0 if baseline_pending else len(new_handles),
     }
 
 
-def growth_signals(conn, *, now=None, limit: int = 20) -> dict:
+def growth_signals(
+    conn, *, now=None, limit: int = 20, category: str = "",
+) -> dict:
     current = now or datetime.now(timezone.utc)
     today = current.astimezone(DISPLAY_TZ).date()
     observations = conn.execute(
@@ -366,11 +490,19 @@ def growth_signals(conn, *, now=None, limit: int = 20) -> dict:
            left join discovered_app_categories member
              on member.discovered_app_id=app.id
            left join discovery_categories category on category.id=member.category_id
+           where (%s='' or exists (
+             select 1 from discovered_app_categories selected_member
+             join discovery_categories selected_category
+               on selected_category.id=selected_member.category_id
+             where selected_member.discovered_app_id=app.id
+               and selected_category.slug=%s
+           ))
            group by app.id,latest.discovered_app_id,latest.observed_on,
                     latest.review_count,latest.rating,latest.best_category_rank,
                     previous.observed_on,previous.review_count,
                     day7.observed_on,day7.review_count,
-                    day30.observed_on,day30.review_count"""
+                    day30.observed_on,day30.review_count""",
+        (category.strip(), category.strip()),
     ).fetchall()
     rank_changes = {
         row[0]: row[2] - row[1]
@@ -473,9 +605,148 @@ def run_category_discovery(conn, http_get=httpx.get, now=None, sleep=time.sleep)
     )
 
 
+def pricing_profile(listing: dict | None) -> dict:
+    values = [str(value) for value in (listing or {}).get("pricing") or []]
+    text = " ".join(values)
+    lowered = text.casefold()
+    monthly = sorted({
+        Decimal(value.replace(",", ""))
+        for value in re.findall(
+            r"\$\s*([0-9][0-9,.]*)\s*(?:/|per\s+)\s*(?:month|mo)\b",
+            text, re.IGNORECASE,
+        )
+    })
+    annual = sorted({
+        Decimal(value.replace(",", ""))
+        for value in re.findall(
+            r"\$\s*([0-9][0-9,.]*)\s*(?:/|per\s+)\s*(?:year|yr)\b",
+            text, re.IGNORECASE,
+        )
+    })
+    has_free = "free plan" in lowered or any(
+        value.casefold().startswith("free") for value in values
+    )
+    has_paid = bool(monthly or annual)
+    trial_match = re.search(r"(\d+)\s*[- ]?day[^.]*free trial", text, re.IGNORECASE)
+    trial = f"{trial_match.group(1)}-day trial" if trial_match else (
+        "Free trial" if "free trial" in lowered else ""
+    )
+    if has_free and has_paid:
+        label = "Free + paid"
+    elif has_free:
+        label = "Free"
+    elif has_paid:
+        label = "Paid"
+    else:
+        label = "Unknown"
+    return {
+        "label": label, "monthly": monthly, "annual": annual, "trial": trial,
+        "summary": values[0] if values else "",
+    }
+
+
+def next_category_scan(now=None) -> datetime:
+    local_now = (now or datetime.now(timezone.utc)).astimezone(DISPLAY_TZ)
+    for days in range(8):
+        candidate = (local_now + timedelta(days=days)).replace(
+            hour=4, minute=0, second=0, microsecond=0
+        )
+        if candidate.weekday() in {1, 4} and candidate > local_now:
+            return candidate
+    raise RuntimeError("category-scan-calendar")
+
+
+def category_opportunities(conn, *, now=None) -> list[dict]:
+    current = now or datetime.now(timezone.utc)
+    core = conn.execute(
+        """with latest as (
+             select distinct on (discovered_app_id)
+               discovered_app_id,review_count
+             from discovery_app_observations
+             order by discovered_app_id,observed_on desc
+           ), previous as (
+             select latest.discovered_app_id,
+               (select o.review_count from discovery_app_observations o
+                where o.discovered_app_id=latest.discovered_app_id
+                  and o.observed_on < (
+                    select max(observed_on) from discovery_app_observations recent
+                    where recent.discovered_app_id=latest.discovered_app_id
+                  )
+                order by o.observed_on desc limit 1) review_count
+             from latest
+           )
+           select category.id,category.slug,category.name,count(*) apps,
+             count(latest.review_count) reviews_covered,
+             count(*) filter (where latest.review_count=0) zero_reviews,
+             percentile_cont(0.5) within group (order by latest.review_count)
+               filter (where latest.review_count is not null) median_reviews,
+             count(*) filter (
+               where app.listing_updated_on <= %s
+                 and previous.review_count is not null
+                 and latest.review_count <= previous.review_count
+             ) dormant
+           from discovery_categories category
+           join discovered_app_categories member on member.category_id=category.id
+           join discovered_apps app on app.id=member.discovered_app_id
+             and app.delisted_at is null
+           left join latest on latest.discovered_app_id=app.id
+           left join previous on previous.discovered_app_id=app.id
+           group by category.id order by category.name""",
+        (current.astimezone(DISPLAY_TZ).date() - timedelta(days=365),),
+    ).fetchall()
+    pricing_by_category: dict[int, list[dict]] = {}
+    for category_id, listing in conn.execute(
+        """with latest as (
+             select distinct on (discovered_app_id) discovered_app_id,listing
+             from discovery_listing_snapshots
+             order by discovered_app_id,captured_at desc,id desc
+           )
+           select member.category_id,latest.listing
+           from latest join discovered_app_categories member
+             on member.discovered_app_id=latest.discovered_app_id"""
+    ).fetchall():
+        pricing_by_category.setdefault(category_id, []).append(
+            pricing_profile(listing)
+        )
+    max_apps = max((row[3] for row in core), default=1)
+    result = []
+    for (category_id, slug, name, app_count, reviews_covered, zero_reviews,
+         median_reviews, dormant) in core:
+        profiles = pricing_by_category.get(category_id, [])
+        known = [profile for profile in profiles if profile["label"] != "Unknown"]
+        paid = [profile for profile in known if profile["label"] in {"Paid", "Free + paid"}]
+        monthly_prices = []
+        for profile in paid:
+            if profile["monthly"]:
+                monthly_prices.append(profile["monthly"][0])
+            elif profile["annual"]:
+                monthly_prices.append(profile["annual"][0] / Decimal(12))
+        zero_share = (zero_reviews / reviews_covered) if reviews_covered else 0
+        observed_median = float(median_reviews or 0)
+        score = round(
+            (1 - app_count / max_apps) * 45
+            + zero_share * 30
+            + (1 - min(observed_median / 100, 1)) * 25
+        )
+        result.append({
+            "slug": slug, "name": name, "apps": app_count,
+            "reviews_covered": reviews_covered,
+            "median_reviews": int(observed_median),
+            "zero_review_share": round(zero_share * 100),
+            "pricing_covered": len(known),
+            "paid_share": round(len(paid) * 100 / len(known)) if known else None,
+            "average_monthly_price": (
+                sum(monthly_prices, Decimal(0)) / len(monthly_prices)
+                if monthly_prices else None
+            ),
+            "dormant": dormant, "score": max(0, min(score, 100)),
+        })
+    return sorted(result, key=lambda row: (-row["score"], row["name"]))
+
+
 def discovery_report(
     conn, *, search: str = "", category: str = "", page: int = 1,
-    per_page: int = 100, now=None,
+    per_page: int = 100, activity: str = "new", now=None,
 ) -> dict:
     current = now or datetime.now(timezone.utc)
     local_now = current.astimezone(DISPLAY_TZ)
@@ -483,8 +754,14 @@ def discovery_report(
         hour=0, minute=0, second=0, microsecond=0
     )
     chart_start = this_week - timedelta(weeks=11)
+    activity = activity if activity in {"new", "updated", "delisted", "relisted"} else "new"
+    event_type = {
+        "new": "discovered", "updated": "listing_updated",
+        "delisted": "delisted", "relisted": "relisted",
+    }[activity]
     params: list = []
-    where = ["not app.is_baseline"]
+    where = ["event.event_type=%s"]
+    params.append(event_type)
     if search.strip():
         where.append(
             "(app.handle ilike %s or coalesce(app.display_name,'') ilike %s)"
@@ -500,60 +777,133 @@ def discovery_report(
         params.append(category.strip())
     filtered = " and ".join(where)
     total_filtered = conn.execute(
-        f"select count(*) from discovered_apps app where {filtered}", params
+        f"""select count(*) from discovery_app_events event
+            join discovered_apps app on app.id=event.discovered_app_id
+            where {filtered}""",
+        params,
     ).fetchone()[0]
     page = max(1, min(page, max(1, (total_filtered + per_page - 1) // per_page)))
-    rows = conn.execute(
-        f"""select app.handle,app.display_name,app.first_seen_at,
-                   app.listing_updated_on,
-                   coalesce(string_agg(distinct category.name, ', '
-                     order by category.name), '') categories
-            from discovered_apps app
-            left join discovered_app_categories member
-              on member.discovered_app_id=app.id
-            left join discovery_categories category on category.id=member.category_id
+    raw_rows = conn.execute(
+        f"""select app.handle,app.display_name,event.occurred_at,event.event_type,
+                   event.previous_listing_updated_on,event.listing_updated_on,
+                   app.listing_updated_on,app.delisted_at,
+                   observation.review_count,observation.rating,
+                   observation.best_category_rank,snapshot.listing,
+                   verified.changed_at,category_names.names
+            from discovery_app_events event
+            join discovered_apps app on app.id=event.discovered_app_id
+            left join lateral (
+              select review_count,rating,best_category_rank
+              from discovery_app_observations
+              where discovered_app_id=app.id order by observed_on desc limit 1
+            ) observation on true
+            left join lateral (
+              select listing from discovery_listing_snapshots
+              where discovered_app_id=app.id order by captured_at desc,id desc limit 1
+            ) snapshot on true
+            left join lateral (
+              select changed_at from discovery_listing_changes
+              where discovered_app_id=app.id order by changed_at desc,id desc limit 1
+            ) verified on true
+            left join lateral (
+              select coalesce(string_agg(distinct category.name, ', '
+                       order by category.name),'') names
+              from discovered_app_categories member
+              join discovery_categories category on category.id=member.category_id
+              where member.discovered_app_id=app.id
+            ) category_names on true
             where {filtered}
-            group by app.id order by app.first_seen_at desc,app.handle
+            order by event.occurred_at desc,event.id desc
             limit %s offset %s""",
         [*params, per_page, (page - 1) * per_page],
     ).fetchall()
+    developer_counts = {
+        name.casefold(): count
+        for name, count in conn.execute(
+            """with latest as (
+                 select distinct on (discovered_app_id)
+                   listing->'developer'->>'name' developer
+                 from discovery_listing_snapshots
+                 order by discovered_app_id,captured_at desc,id desc
+               )
+               select developer,count(*) from latest
+               where coalesce(developer,'')<>'' group by developer"""
+        ).fetchall()
+    }
+    keys = (
+        "handle", "name", "event_at", "event_type", "previous_updated_on",
+        "event_updated_on", "listing_updated_on", "delisted_at", "reviews",
+        "rating", "best_rank", "listing", "last_verified_change", "categories",
+    )
+    rows = []
+    for raw in raw_rows:
+        row = dict(zip(keys, raw, strict=True))
+        row["name"] = row["name"] or row["handle"].replace("-", " ").title()
+        developer = ((row["listing"] or {}).get("developer") or {}).get("name") or ""
+        row["developer"] = developer
+        row["developer_app_count"] = developer_counts.get(developer.casefold(), 0)
+        row["pricing"] = pricing_profile(row["listing"])
+        rows.append(row)
     weekly_rows = conn.execute(
-        f"""select (date_trunc('week', first_seen_at at time zone
-                       'Europe/Amsterdam'))::date week, count(*)
-           from discovered_apps app where {filtered} and first_seen_at >= %s
-           group by week order by week""",
-        [*params, chart_start.astimezone(timezone.utc)],
+        """select (date_trunc('week', event.occurred_at at time zone
+                     'Europe/Amsterdam'))::date week,event.event_type,count(*)
+           from discovery_app_events event
+           where event.occurred_at >= %s
+           group by week,event.event_type order by week,event.event_type""",
+        (chart_start.astimezone(timezone.utc),),
     ).fetchall()
-    weekly = dict(weekly_rows)
+    weekly = {(week, kind): count for week, kind, count in weekly_rows}
     weeks = [
         {"start": (chart_start + timedelta(weeks=index)).date(),
-         "count": weekly.get((chart_start + timedelta(weeks=index)).date(), 0)}
+         "new": weekly.get(((chart_start + timedelta(weeks=index)).date(),
+                            "discovered"), 0),
+         "updated": weekly.get(((chart_start + timedelta(weeks=index)).date(),
+                                "listing_updated"), 0),
+         "delisted": weekly.get(((chart_start + timedelta(weeks=index)).date(),
+                                 "delisted"), 0)}
         for index in range(12)
     ]
+    first_activity = next(
+        (index for index, week in enumerate(weeks)
+         if week["new"] or week["updated"] or week["delisted"]),
+        len(weeks) - 1,
+    )
+    weeks = weeks[first_activity:]
     state = conn.execute(
         "select last_success_at from discovery_state where source='apps'"
     ).fetchone()
+    recent_counts = dict(conn.execute(
+        """select event_type,count(*) from discovery_app_events
+           where occurred_at >= %s group by event_type""",
+        (current - timedelta(days=7),),
+    ).fetchall())
     return {
         "indexed": conn.execute(
             "select count(*) from discovered_apps"
         ).fetchone()[0],
+        "active_indexed": conn.execute(
+            "select count(*) from discovered_apps where delisted_at is null"
+        ).fetchone()[0],
         "new_this_week": conn.execute(
-            """select count(*) from discovered_apps
-               where not is_baseline and first_seen_at >= %s""",
+            """select count(*) from discovery_app_events
+               where event_type='discovered' and occurred_at >= %s""",
             (this_week.astimezone(timezone.utc),),
         ).fetchone()[0],
-        "new_last_7_days": conn.execute(
-            """select count(*) from discovered_apps
-               where not is_baseline and first_seen_at >= %s""",
-            (current - timedelta(days=7),),
-        ).fetchone()[0],
+        "new_last_7_days": recent_counts.get("discovered", 0),
+        "updated_last_7_days": recent_counts.get("listing_updated", 0),
+        "delisted_last_7_days": recent_counts.get("delisted", 0),
         "last_scan": state[0] if state else None,
         "weeks": weeks,
-        "max_week": max((item["count"] for item in weeks), default=0),
+        "max_week": max(
+            (max(item["new"], item["updated"], item["delisted"])
+             for item in weeks), default=0,
+        ),
         "categories": conn.execute(
             "select slug,name,app_count from discovery_categories order by name"
         ).fetchall(),
         "rows": rows,
+        "activity": activity,
+        "next_category_scan": next_category_scan(current),
         "total": total_filtered,
         "page": page,
         "pages": max(1, (total_filtered + per_page - 1) // per_page),

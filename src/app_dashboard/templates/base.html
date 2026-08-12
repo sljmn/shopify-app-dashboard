@@ -882,16 +882,26 @@
         .discovery-chart-card { margin: 16px 0; overflow-x: auto; }
         .discovery-chart {
             min-width: 720px; height: 190px; display: grid;
-            grid-template-columns: repeat(12, minmax(44px, 1fr));
+            grid-template-columns: repeat(var(--week-count), minmax(72px, 1fr));
             gap: 10px; align-items: end; padding-top: 8px;
         }
         .discovery-week { height: 100%; display: grid; grid-template-rows: 20px 1fr 24px; gap: 5px; }
         .discovery-week strong { text-align: center; font: 600 12px var(--mono); }
-        .discovery-bar-slot { display: flex; align-items: end; justify-content: center; }
+        .discovery-bar-group { display: flex; align-items: end; justify-content: center; gap: 3px; }
         .discovery-bar {
-            width: min(34px, 72%); min-height: 2px; background: var(--brand);
+            width: min(18px, 28%); min-height: 2px; background: var(--brand);
             border-radius: 4px 4px 1px 1px;
         }
+        .discovery-bar.updated { background: var(--ink-2); }
+        .discovery-bar.delisted { background: var(--down); }
+        .discovery-chart-card .section-heading {
+            display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        }
+        .chart-legend { display: flex; align-items: center; gap: 14px; color: var(--ink-2); font-size: 12px; }
+        .chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+        .chart-legend i { width: 8px; height: 8px; border-radius: 2px; background: var(--brand); }
+        .chart-legend i.updated { background: var(--ink-2); }
+        .chart-legend i.delisted { background: var(--down); }
         .discovery-week time {
             color: var(--muted); text-align: center; font-size: 10px;
             white-space: nowrap;
@@ -909,8 +919,13 @@
         .catalog-actions { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
         .inline-form { display: inline; margin: 0; }
         .newest-apps { margin: 28px 0 20px; }
-        .newest-apps .section-heading { margin-bottom: 12px; }
+        .newest-apps .section-heading {
+            display: flex; align-items: end; justify-content: space-between;
+            gap: 20px; margin-bottom: 12px;
+        }
         .newest-apps .section-heading h2 { margin-bottom: 4px; }
+        .activity-table { min-width: 1480px; }
+        .opportunity-table { min-width: 1100px; }
         .page-heading { display: flex; justify-content: space-between; align-items: end; gap: 20px; }
         .heading-actions { display: flex; align-items: center; gap: 8px; }
         .heading-actions form { margin: 0; }
@@ -973,6 +988,9 @@
             .discovery-metrics .card { min-width: 0; padding: 15px; }
             .discovery-metrics .stat .num { font-size: 24px; overflow-wrap: anywhere; }
             .growth-signals .section-heading { align-items: stretch; flex-direction: column; }
+            .newest-apps .section-heading { align-items: stretch; flex-direction: column; }
+            .discovery-chart-card .section-heading { align-items: flex-start; flex-direction: column; }
+            .chart-legend { flex-wrap: wrap; }
             .growth-tabs { width: 100%; overflow-x: auto; }
             .growth-tabs a { white-space: nowrap; }
             .catalog-search .section-heading { align-items: stretch; flex-direction: column; }

@@ -44,6 +44,7 @@ from app_dashboard.aso import (
     portfolio_report,
 )
 from app_dashboard.app_store_discovery import (
+    category_opportunities,
     discovery_report,
     growth_signals,
     search_app_catalog,
@@ -51,10 +52,14 @@ from app_dashboard.app_store_discovery import (
 from app_dashboard.discovery_watchlist import (
     app_detail,
     compare_versions,
+    follow_category,
     follow_app,
     growth_history,
+    list_category_watches,
     list_watched_apps,
     listing_versions,
+    recent_discovery_alerts,
+    unfollow_category,
     unfollow_app,
     watchlist_summary,
 )
@@ -781,6 +786,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         catalog_category: str = "",
         catalog_page: int = 1,
         growth: str = "gems",
+        activity: str = "new",
         page: int = 1,
         user: str = Depends(verify_creds),
     ):
@@ -789,9 +795,10 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         try:
             apps = active_apps(conn)
             report = discovery_report(
-                conn, search=q, category=category, page=page
+                conn, search=q, category=category, page=page, activity=activity,
             )
-            signals = growth_signals(conn)
+            signals = growth_signals(conn, category=category)
+            opportunities = category_opportunities(conn)
             catalog = search_app_catalog(
                 conn, search=catalog_q, category=catalog_category,
                 page=catalog_page,
@@ -800,6 +807,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             conn.close()
         query = {
             "q": q.strip(), "category": category.strip(), "growth": growth,
+            "activity": report["activity"],
         }
         query = {key: value for key, value in query.items() if value}
         catalog_query_values = {
@@ -819,6 +827,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "selected_category": category.strip(),
                 "selected_growth": growth,
                 "growth_rows": signals[growth],
+                "opportunities": opportunities,
                 "catalog": catalog,
                 "catalog_query": catalog_q.strip(),
                 "catalog_category": catalog_category.strip(),
@@ -931,15 +940,48 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             apps = active_apps(conn)
             watched = list_watched_apps(conn, page=page)
             summary = watchlist_summary(conn, start, end)
+            categories = list_category_watches(conn)
+            alerts = recent_discovery_alerts(conn)
         finally:
             conn.close()
         return templates.TemplateResponse(
             request, "watchlist.html", {
                 **page_context(request, user, "discover", None, apps),
                 "watched": watched, "summary": summary, "period": period,
-                "start": start, "end": end,
+                "start": start, "end": end, "watch_categories": categories,
+                "discovery_alerts": alerts,
             },
         )
+
+    @app.post("/discover/categories/{slug}/follow")
+    async def follow_discovery_category(
+        request: Request, slug: str, user: str = Depends(verify_creds)
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            follow_category(conn, slug)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown category") from None
+        finally:
+            conn.close()
+        return RedirectResponse("/discover/watchlist", status_code=303)
+
+    @app.post("/discover/categories/{slug}/unfollow")
+    async def unfollow_discovery_category(
+        request: Request, slug: str, user: str = Depends(verify_creds)
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            unfollow_category(conn, slug)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Category not followed") from None
+        finally:
+            conn.close()
+        return RedirectResponse("/discover/watchlist", status_code=303)
 
     def _organization_form_response(
         request: Request, user: str, values: dict, *, error: str | None = None

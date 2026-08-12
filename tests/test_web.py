@@ -215,6 +215,12 @@ def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db
            values ('apps',%s,now())""",
         (baseline,),
     )
+    db.execute(
+        """insert into discovery_app_events
+             (discovered_app_id,event_type,occurred_at)
+           select id,'discovered',first_seen_at from discovered_apps
+           where not is_baseline"""
+    )
     app = create_app(conn_factory=lambda: keep_open(db))
     assert dashboard_client(app, authenticated=False).get(
         "/discover", headers={"accept": "text/html"}, follow_redirects=False
@@ -222,8 +228,8 @@ def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db
 
     page = dashboard_client(app).get("/discover?app=test-app")
     assert page.status_code == 200
-    assert "New apps per week" in page.text
-    assert "Newest apps found" in page.text
+    assert "App Store activity per week" in page.text
+    assert "App Store activity" in page.text
     assert "Growth signals" in page.text
     assert "Rising gems" in page.text
     assert "Fastest growers" in page.text
@@ -233,7 +239,7 @@ def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db
     assert "Old App" not in page.text
     assert "https://apps.shopify.com/fresh-app" in page.text
     assert "12 Aug 2026 11:00" in page.text
-    assert page.text.index("Newest apps found") < page.text.index("Growth signals")
+    assert page.text.index("App Store activity") < page.text.index("Growth signals")
     assert page.text.index("Newest App") < page.text.index("Fresh App")
     assert 'aria-current="page"><svg' in page.text
 

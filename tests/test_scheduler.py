@@ -5,6 +5,7 @@ from app_dashboard.scheduler import (
     run_app_discovery_job,
     run_all_apps,
     run_category_discovery_job,
+    run_discovery_alerts_job,
     run_watchlist_job,
     run_sync_job,
     run_aso_job,
@@ -221,9 +222,14 @@ def test_successful_category_discovery_adds_automatic_follows(monkeypatch):
         "app_dashboard.discovery_watchlist.follow_automatic_candidates",
         lambda current: {"followed": 2, "already_followed": 1},
     )
+    monkeypatch.setattr(
+        "app_dashboard.discovery_watchlist.queue_category_alerts",
+        lambda current: 3,
+    )
     assert run_category_discovery_job(lambda: conn) == {
         "ok": True, "categories": 2, "memberships": 4,
         "watchlist": {"followed": 2, "already_followed": 1},
+        "alerts_queued": 3,
     }
     assert conn.closed_count == 1
 

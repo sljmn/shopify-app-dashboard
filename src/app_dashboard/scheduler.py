@@ -228,12 +228,16 @@ def run_app_discovery_job(conn_factory) -> dict:
 
 def run_category_discovery_job(conn_factory) -> dict:
     from app_dashboard.app_store_discovery import run_category_discovery
-    from app_dashboard.discovery_watchlist import follow_automatic_candidates
+    from app_dashboard.discovery_watchlist import (
+        follow_automatic_candidates,
+        queue_category_alerts,
+    )
 
     conn = conn_factory()
     try:
         result = run_category_discovery(conn)
         result["watchlist"] = follow_automatic_candidates(conn)
+        result["alerts_queued"] = queue_category_alerts(conn)
         logger.info("App Store category discovery completed: %s", result)
         return {"ok": True, **result}
     except Exception as exc:
@@ -271,6 +275,21 @@ def run_watchlist_job(conn_factory, settings) -> list[dict]:
         results = list(pool.map(sync_one, watched))
     logger.info("watchlist sync completed: %s", results)
     return results
+
+
+def run_discovery_alerts_job(conn_factory, settings) -> dict:
+    from app_dashboard.discovery_watchlist import deliver_discovery_alerts
+
+    conn = conn_factory()
+    try:
+        return deliver_discovery_alerts(
+            conn, settings.slack_webhook_url, settings.public_base_url
+        )
+    except Exception as exc:
+        logger.exception("discovery alert delivery failed")
+        return {"pending": 0, "delivered": 0, "error": type(exc).__name__}
+    finally:
+        conn.close()
 
 
 def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
@@ -357,6 +376,12 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         "interval", hours=24,
         next_run_time=datetime.now() + timedelta(minutes=60),
         id="watchlist_listings",
+    )
+    scheduler.add_job(
+        lambda: run_discovery_alerts_job(conn_factory, settings),
+        "interval", minutes=15,
+        next_run_time=datetime.now() + timedelta(minutes=65),
+        id="discovery_alerts",
     )
     # Every 15 minutes, but it only posts once per stale episode. Deliberately
     # a separate job from run_sync: a check that lives inside the thing it is
