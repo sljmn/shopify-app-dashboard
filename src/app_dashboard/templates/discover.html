@@ -77,6 +77,55 @@
     </div>
 </section>
 
+<section class="newest-apps" aria-labelledby="newest-apps-title">
+    <div class="section-heading">
+        <div>
+            <h2 id="newest-apps-title">Newest apps found</h2>
+            <p class="sub">All apps found after the initial baseline, newest first. First observed is when Mantle detected the app.</p>
+        </div>
+    </div>
+    <form class="filters discover-filters" method="get" action="/discover">
+        <input type="hidden" name="growth" value="{{ selected_growth }}">
+        <input type="search" name="q" value="{{ query }}" placeholder="Search app name or handle" aria-label="Search app name or handle">
+        <select name="category" aria-label="Category">
+            <option value="">All categories</option>
+            {% for slug, name, count in categories %}
+            <option value="{{ slug }}"{% if selected_category == slug %} selected{% endif %}>{{ name }} ({{ count }})</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Filter</button>
+        {% if query or selected_category %}<a class="ghost" href="/discover?growth={{ selected_growth }}">Clear</a>{% endif %}
+    </form>
+
+    <div class="table-card">
+        <table class="discover-table">
+            <thead><tr><th>App</th><th>Categories</th><th>First observed</th><th>Listing updated</th><th></th></tr></thead>
+            <tbody>
+            {% for handle, name, first_seen, updated_on, category_names in rows %}
+            <tr>
+                <td><a href="/discover/apps/{{ handle|urlencode }}"><strong>{{ name or handle|replace("-", " ")|title }}</strong></a><br><span class="sub">/{{ handle }}</span></td>
+                <td class="category-list">{{ category_names or "Not categorized yet" }}</td>
+                <td>{{ first_seen|local_time("%-d %b %Y %H:%M") }}</td>
+                <td>{{ updated_on.strftime("%-d %b %Y") if updated_on else "—" }}</td>
+                <td><a href="https://apps.shopify.com/{{ handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">{% if indexed %}No newly observed apps match these filters yet.{% else %}The first App Store baseline has not run yet.{% endif %}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="pager">
+        <span class="sub">{{ total }} newly observed apps</span>
+        <span class="pager-links">
+            {% if page > 1 %}<a href="/discover?{% if filter_qs %}{{ filter_qs }}&amp;{% endif %}page={{ page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}
+            <span class="sub">Page {{ page }} of {{ pages }}</span>
+            {% if page < pages %}<a href="/discover?{% if filter_qs %}{{ filter_qs }}&amp;{% endif %}page={{ page + 1 }}">Next</a>{% else %}<span class="disabled">Next</span>{% endif %}
+        </span>
+    </div>
+</section>
+
 <section class="growth-signals" aria-labelledby="growth-signals-title">
     <div class="section-heading">
         <div>
@@ -115,45 +164,4 @@
         Rising gems are non-baseline apps up to 180 days old with 5–250 reviews and at least 3 new reviews since the previous scan. New contenders are first observed in the last 60 days.
     </p>
 </section>
-
-<form class="filters discover-filters" method="get" action="/discover">
-    <input type="hidden" name="growth" value="{{ selected_growth }}">
-    <input type="search" name="q" value="{{ query }}" placeholder="Search app name or handle" aria-label="Search app name or handle">
-    <select name="category" aria-label="Category">
-        <option value="">All categories</option>
-        {% for slug, name, count in categories %}
-        <option value="{{ slug }}"{% if selected_category == slug %} selected{% endif %}>{{ name }} ({{ count }})</option>
-        {% endfor %}
-    </select>
-    <button type="submit">Filter</button>
-    {% if query or selected_category %}<a class="ghost" href="/discover?growth={{ selected_growth }}">Clear</a>{% endif %}
-</form>
-
-<div class="table-card">
-    <table class="discover-table">
-        <thead><tr><th>App</th><th>Categories</th><th>First observed</th><th>Listing updated</th><th></th></tr></thead>
-        <tbody>
-        {% for handle, name, first_seen, updated_on, category_names in rows %}
-        <tr>
-            <td><a href="/discover/apps/{{ handle|urlencode }}"><strong>{{ name or handle|replace("-", " ")|title }}</strong></a><br><span class="sub">/{{ handle }}</span></td>
-            <td class="category-list">{{ category_names or "Not categorized yet" }}</td>
-            <td>{{ first_seen|local_time("%-d %b %Y") }}</td>
-            <td>{{ updated_on.strftime("%-d %b %Y") if updated_on else "—" }}</td>
-            <td><a href="https://apps.shopify.com/{{ handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5">{% if indexed %}No newly observed apps match these filters yet.{% else %}The first App Store baseline has not run yet.{% endif %}</td></tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-<div class="pager">
-    <span class="sub">{{ total }} newly observed apps</span>
-    <span class="pager-links">
-        {% if page > 1 %}<a href="/discover?{% if filter_qs %}{{ filter_qs }}&amp;{% endif %}page={{ page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}
-        <span class="sub">Page {{ page }} of {{ pages }}</span>
-        {% if page < pages %}<a href="/discover?{% if filter_qs %}{{ filter_qs }}&amp;{% endif %}page={{ page + 1 }}">Next</a>{% else %}<span class="disabled">Next</span>{% endif %}
-    </span>
-</div>
 {% endblock %}

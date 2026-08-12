@@ -199,12 +199,15 @@ def test_aso_requires_login_and_portfolio_lists_every_app(db):
 
 def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db):
     baseline = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    fresh = datetime(2026, 8, 12, 8, 0, tzinfo=timezone.utc)
+    newest = datetime(2026, 8, 12, 9, 0, tzinfo=timezone.utc)
     db.execute(
         """insert into discovered_apps
            (handle,display_name,first_seen_at,last_seen_at,is_baseline)
            values ('old-app','Old App',%s,%s,true),
-                  ('fresh-app','Fresh App',now(),now(),false)""",
-        (baseline, baseline),
+                  ('fresh-app','Fresh App',%s,%s,false),
+                  ('newest-app','Newest App',%s,%s,false)""",
+        (baseline, baseline, fresh, fresh, newest, newest),
     )
     db.execute(
         """insert into discovery_state
@@ -217,16 +220,21 @@ def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db
         "/discover", headers={"accept": "text/html"}, follow_redirects=False
     ).status_code == 307
 
-    page = dashboard_client(app).get("/discover?app=test-app&q=fresh")
+    page = dashboard_client(app).get("/discover?app=test-app")
     assert page.status_code == 200
     assert "New apps per week" in page.text
+    assert "Newest apps found" in page.text
     assert "Growth signals" in page.text
     assert "Rising gems" in page.text
     assert "Fastest growers" in page.text
     assert "New contenders" in page.text
     assert "Fresh App" in page.text
+    assert "Newest App" in page.text
     assert "Old App" not in page.text
     assert "https://apps.shopify.com/fresh-app" in page.text
+    assert "12 Aug 2026 11:00" in page.text
+    assert page.text.index("Newest apps found") < page.text.index("Growth signals")
+    assert page.text.index("Newest App") < page.text.index("Fresh App")
     assert 'aria-current="page"><svg' in page.text
 
 
