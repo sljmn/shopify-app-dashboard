@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
+{% if selected_category %}
+{% include "discover_category.html" %}
+{% else %}
 <h1>Discover</h1>
 <p class="sub">New apps observed across every Shopify App Store category.</p>
 
@@ -205,7 +208,7 @@
             <tbody>
             {% for row in opportunities[:50] %}
             <tr>
-                <td><a href="/discover?activity=new&amp;category={{ row.slug|urlencode }}"><strong>{{ row.name }}</strong></a></td>
+                <td><a href="/discover?category={{ row.slug|urlencode }}"><strong>{{ row.name }}</strong></a></td>
                 <td><strong>{{ row.score }}/100</strong></td>
                 <td>{{ row.apps }}</td>
                 <td>{{ row.median_reviews }}</td>
@@ -220,4 +223,5 @@
         </table>
     </div>
 </section>
+{% endif %}
 {% endblock %}

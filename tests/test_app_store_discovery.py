@@ -364,15 +364,15 @@ def test_category_dashboard_starts_with_inventory_and_filters_signals(db):
     ranked_id = db.execute(
         "select id from discovered_apps where handle='ranked'"
     ).fetchone()[0]
-    db.execute(
+    snapshot_id = db.execute(
         """insert into discovery_listing_snapshots
              (discovered_app_id,captured_at,content_hash,listing)
-           values (%s,%s,'category-listing',%s)""",
+           values (%s,%s,'category-listing',%s) returning id""",
         (ranked_id, now, Jsonb({
             "developer": {"name": "Ranked Labs"},
             "pricing": ["Pro $12 / month"],
         })),
-    )
+    ).fetchone()[0]
 
     report = category_dashboard(db, "anti-theft", now=now)
 
@@ -394,6 +394,43 @@ def test_category_dashboard_starts_with_inventory_and_filters_signals(db):
     assert category_dashboard(db, "anti-theft", bfs="bfs", now=now)[
         "total"
     ] == 1
+    assert category_dashboard(
+        db, "anti-theft", search="Ranked Labs", now=now,
+    )["total"] == 1
+    assert category_dashboard(
+        db, "anti-theft", page=2, per_page=1, now=now,
+    )["rows"][0]["handle"] == "unmeasured"
+
+    db.execute(
+        """insert into discovery_app_events
+             (discovered_app_id,event_type,occurred_at)
+           values (%s,'discovered',%s)""",
+        (ranked_id, now - timedelta(days=1)),
+    )
+    db.execute(
+        """insert into discovery_listing_changes
+             (discovered_app_id,snapshot_id,changed_at,field,
+              before_value,after_value)
+           values (%s,%s,%s,'pricing',%s,%s)""",
+        (ranked_id, snapshot_id, now - timedelta(days=1),
+         Jsonb(["Free"]), Jsonb(["Pro $12 / month"])),
+    )
+    assert category_dashboard(
+        db, "anti-theft", signal="new", now=now,
+    )["rows"][0]["handle"] == "ranked"
+    assert category_dashboard(
+        db, "anti-theft", signal="listing", now=now,
+    )["rows"][0]["handle"] == "ranked"
+
+    db.execute(
+        """update discovered_apps set delisted_at=%s
+           where handle='unmeasured'""",
+        (now,),
+    )
+    assert category_dashboard(db, "anti-theft", now=now)["total"] == 1
+    assert category_dashboard(
+        db, "anti-theft", signal="delisted", now=now,
+    )["rows"][0]["handle"] == "unmeasured"
     assert category_dashboard(db, "missing", now=now) is None
 
 

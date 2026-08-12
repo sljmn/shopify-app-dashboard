@@ -44,6 +44,7 @@ from app_dashboard.aso import (
     portfolio_report,
 )
 from app_dashboard.app_store_discovery import (
+    category_dashboard,
     category_opportunities,
     discovery_report,
     growth_signals,
@@ -791,9 +792,14 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         activity: str = "new",
         bfs: str = "",
         page: int = 1,
+        signal: str = "all",
+        category_page: int = 1,
         user: str = Depends(verify_creds),
     ):
         growth = growth if growth in {"gems", "fastest", "contenders"} else "gems"
+        signal = signal if signal in {
+            "all", "new", "reviews", "fastest", "listing", "delisted",
+        } else "all"
         bfs = bfs if bfs in {"bfs", "not_bfs", "unknown"} else ""
         catalog_bfs = (
             catalog_bfs if catalog_bfs in {"bfs", "not_bfs", "unknown"} else ""
@@ -801,21 +807,37 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         conn = conn_factory()
         try:
             apps = active_apps(conn)
-            report = discovery_report(
-                conn, search=q, category=category, page=page, activity=activity,
-                bfs=bfs,
-            )
-            signals = growth_signals(conn, category=category)
-            opportunities = category_opportunities(conn)
-            catalog = search_app_catalog(
-                conn, search=catalog_q, category=catalog_category,
-                page=catalog_page, bfs=catalog_bfs,
-            )
+            if category.strip():
+                category_report = category_dashboard(
+                    conn, category, search=q, signal=signal, bfs=bfs,
+                    page=category_page,
+                )
+                report = {}
+                signals = {"gems": [], "fastest": [], "contenders": []}
+                opportunities = []
+                catalog = {"rows": [], "total": 0, "page": 1, "pages": 1}
+                activity = (
+                    activity if activity in {
+                        "new", "updated", "delisted", "relisted",
+                    } else "new"
+                )
+            else:
+                category_report = None
+                report = discovery_report(
+                    conn, search=q, page=page, activity=activity, bfs=bfs,
+                )
+                activity = report["activity"]
+                signals = growth_signals(conn)
+                opportunities = category_opportunities(conn)
+                catalog = search_app_catalog(
+                    conn, search=catalog_q, category=catalog_category,
+                    page=catalog_page, bfs=catalog_bfs,
+                )
         finally:
             conn.close()
         query = {
             "q": q.strip(), "category": category.strip(), "growth": growth,
-            "activity": report["activity"],
+            "activity": activity,
             "bfs": bfs,
         }
         query = {key: value for key, value in query.items() if value}
@@ -827,6 +849,13 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         catalog_query_values = {
             key: value for key, value in catalog_query_values.items() if value
         }
+        category_query_values = {
+            "category": category.strip(), "q": q.strip(), "signal": signal,
+            "bfs": bfs,
+        }
+        category_query_values = {
+            key: value for key, value in category_query_values.items() if value
+        }
         return templates.TemplateResponse(
             request,
             "discover.html",
@@ -836,6 +865,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "query": q.strip(),
                 "selected_category": category.strip(),
                 "selected_bfs": bfs,
+                "selected_signal": signal,
                 "selected_growth": growth,
                 "growth_rows": signals[growth],
                 "opportunities": opportunities,
@@ -843,6 +873,9 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "catalog_query": catalog_q.strip(),
                 "catalog_category": catalog_category.strip(),
                 "catalog_bfs": catalog_bfs,
+                "category_report": category_report,
+                "category_filter_qs": urlencode(category_query_values),
+                "activity": activity,
                 "filter_qs": urlencode(query),
                 "catalog_filter_qs": urlencode(catalog_query_values),
             },

@@ -282,6 +282,65 @@ def test_discover_catalog_can_follow_baseline_app_and_open_watchlist(db):
     ).status_code == 404
 
 
+def test_discover_category_mode_shows_inventory_instead_of_empty_events(db):
+    observed_at = datetime(2026, 8, 12, 8, tzinfo=timezone.utc)
+    category_id = db.execute(
+        """insert into discovery_categories (slug,name,app_count,observed_at)
+           values ('anti-theft','Anti theft',2,%s) returning id""",
+        (observed_at,),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline,
+              built_for_shopify,bfs_checked_at)
+           values ('shield-one','Shield One',%s,%s,true,true,%s),
+                  ('shield-two','Shield Two',%s,%s,true,false,%s)""",
+        (observed_at, observed_at, observed_at,
+         observed_at, observed_at, observed_at),
+    )
+    db.execute(
+        """insert into discovered_app_categories (discovered_app_id,category_id)
+           select id,%s from discovered_apps""",
+        (category_id,),
+    )
+    db.execute(
+        """insert into discovery_app_observations
+             (discovered_app_id,observed_on,review_count,rating,
+              best_category_rank,observed_at)
+           select id,'2026-08-12',case when handle='shield-one' then 42 else 7 end,
+                  4.8,case when handle='shield-one' then 1 else 2 end,%s
+           from discovered_apps""",
+        (observed_at,),
+    )
+    db.execute(
+        """insert into discovery_category_observations
+             (discovered_app_id,category_id,observed_on,position,observed_at)
+           select id,%s,'2026-08-12',
+                  case when handle='shield-one' then 1 else 2 end,%s
+           from discovered_apps""",
+        (category_id, observed_at),
+    )
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    page = client.get("/discover?activity=new&category=anti-theft")
+
+    assert page.status_code == 200
+    assert "Anti theft" in page.text
+    assert "Category inventory" in page.text
+    assert "Shield One" in page.text
+    assert "Shield Two" in page.text
+    assert "https://apps.shopify.com/shield-one" in page.text
+    assert "App Store activity per week" not in page.text
+    assert "Category opportunities" not in page.text
+    assert "New reviews" in page.text
+    assert "Fastest growers" in page.text
+    assert "Built for Shopify" in page.text
+
+    missing = client.get("/discover?category=missing-category")
+    assert missing.status_code == 200
+    assert "Category not found" in missing.text
+
+
 def test_discovered_app_growth_uses_one_compact_empty_state(db):
     observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
     db.execute(

@@ -1,0 +1,75 @@
+<div class="page-heading category-heading">
+    <div>
+        <p class="sub"><a href="/discover">Discover</a> / Category</p>
+        <h1>{{ category_report.category_name if category_report else "Category not found" }}</h1>
+        {% if category_report %}<p class="sub">Category inventory · scanned {{ category_report.last_scan|local_time("%-d %b %Y %H:%M") }}</p>{% endif %}
+    </div>
+    <div class="heading-actions"><a class="ghost" href="/discover">All categories</a></div>
+</div>
+
+{% if category_report %}
+<div class="cards category-metrics">
+    <div class="card stat"><div class="label">Apps</div><div class="num">{{ category_report.total_apps }}</div></div>
+    <div class="card stat"><div class="label">With review data</div><div class="num">{{ category_report.measured_apps }}</div></div>
+    <div class="card stat"><div class="label">Built for Shopify</div><div class="num">{{ category_report.bfs_apps }}</div></div>
+    <div class="card stat"><div class="label">New in 30 days</div><div class="num">{{ category_report.new_30d }}</div></div>
+    <div class="card stat"><div class="label">Gaining reviews</div><div class="num">{{ category_report.review_gainers_30d }}</div><div class="sub">last 30 days</div></div>
+</div>
+
+<form class="filters discover-filters category-filters" method="get" action="/discover">
+    <input type="hidden" name="category" value="{{ selected_category }}">
+    <input type="search" name="q" value="{{ query }}" placeholder="Search this category" aria-label="Search this category">
+    <select name="signal" aria-label="Category signal">
+        <option value="all"{% if selected_signal == "all" %} selected{% endif %}>All current apps</option>
+        <option value="new"{% if selected_signal == "new" %} selected{% endif %}>New apps · 30 days</option>
+        <option value="reviews"{% if selected_signal == "reviews" %} selected{% endif %}>New reviews</option>
+        <option value="fastest"{% if selected_signal == "fastest" %} selected{% endif %}>Fastest growers</option>
+        <option value="listing"{% if selected_signal == "listing" %} selected{% endif %}>Listing changed · 30 days</option>
+        <option value="delisted"{% if selected_signal == "delisted" %} selected{% endif %}>Delisted apps</option>
+    </select>
+    <select name="bfs" aria-label="Built for Shopify status">
+        <option value="">All BFS statuses</option>
+        <option value="bfs"{% if selected_bfs == "bfs" %} selected{% endif %}>Built for Shopify</option>
+        <option value="not_bfs"{% if selected_bfs == "not_bfs" %} selected{% endif %}>Not BFS</option>
+        <option value="unknown"{% if selected_bfs == "unknown" %} selected{% endif %}>Not checked</option>
+    </select>
+    <button type="submit">Filter</button>
+    {% if query or selected_signal != "all" or selected_bfs %}<a class="ghost" href="/discover?category={{ selected_category|urlencode }}">Clear</a>{% endif %}
+</form>
+
+<div class="table-card category-results">
+    <table class="catalog-table category-inventory-table">
+        <thead><tr><th>Rank</th><th>App</th><th>Reviews</th><th>7 days</th><th>30 days</th><th>Rating</th><th>BFS</th><th>Pricing</th><th>Developer</th><th>Listing</th></tr></thead>
+        <tbody>
+        {% for row in category_report.rows %}
+        <tr>
+            <td data-label="Rank">{% if row.rank %}#{{ row.rank }}{% else %}—{% endif %}</td>
+            <td data-label="App"><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><span class="sub">/{{ row.handle }}</span></td>
+            <td data-label="Reviews">{{ row.reviews if row.reviews is not none else "—" }}</td>
+            <td data-label="7 days" class="{% if row.delta7 and row.delta7 > 0 %}money-up{% elif row.delta7 and row.delta7 < 0 %}money-down{% endif %}">{% if row.delta7 is not none %}{{ signed(row.delta7) }}{% else %}—{% endif %}</td>
+            <td data-label="30 days" class="{% if row.delta30 and row.delta30 > 0 %}money-up{% elif row.delta30 and row.delta30 < 0 %}money-down{% endif %}">{% if row.delta30 is not none %}{{ signed(row.delta30) }}{% else %}—{% endif %}</td>
+            <td data-label="Rating">{{ row.rating if row.rating is not none else "—" }}</td>
+            <td data-label="BFS">{% if row.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% elif row.bfs_checked_at %}<span class="sub">Not BFS</span>{% else %}<span class="sub">Not checked</span>{% endif %}</td>
+            <td data-label="Pricing"><strong>{{ row.pricing.label }}</strong>{% if row.pricing.monthly %}<br><span class="sub">from ${{ row.pricing.monthly[0] }}/mo</span>{% elif row.pricing.annual %}<br><span class="sub">from ${{ row.pricing.annual[0] }}/yr</span>{% endif %}</td>
+            <td data-label="Developer">{{ row.developer or "—" }}</td>
+            <td data-label="Listing"><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
+        </tr>
+        {% else %}<tr><td colspan="10">No apps match these filters.</td></tr>{% endfor %}
+        </tbody>
+    </table>
+</div>
+<div class="pager">
+    <span class="sub">{{ category_report.total }} apps</span>
+    <span class="pager-links">
+        {% if category_report.page > 1 %}<a href="/discover?{{ category_filter_qs }}&amp;category_page={{ category_report.page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}
+        <span class="sub">Page {{ category_report.page }} of {{ category_report.pages }}</span>
+        {% if category_report.page < category_report.pages %}<a href="/discover?{{ category_filter_qs }}&amp;category_page={{ category_report.page + 1 }}">Next</a>{% else %}<span class="disabled">Next</span>{% endif %}
+    </span>
+</div>
+{% else %}
+<section class="empty-state category-missing">
+    <h2>Category not found</h2>
+    <p>Shopify did not return this category in the latest complete category scan.</p>
+    <a href="/discover">Back to Discover</a>
+</section>
+{% endif %}
