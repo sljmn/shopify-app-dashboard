@@ -502,6 +502,70 @@ def test_report_excludes_baseline_and_counts_each_new_app_once(db):
     assert report["rows"][0]["name"] == "New App"
 
 
+def test_focused_discovery_reports_isolate_launches_and_expose_verified_diff(db):
+    baseline_at = datetime(2026, 8, 1, 8, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 12, 12, tzinfo=timezone.utc)
+    baseline_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('baseline-app','Baseline',%s,%s,true) returning id""",
+        (baseline_at, now),
+    ).fetchone()[0]
+    launched_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('real-launch','Real Launch',%s,%s,false) returning id""",
+        (now - timedelta(days=5), now),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_app_events
+             (discovered_app_id,event_type,occurred_at)
+           values (%s,'discovered',%s),(%s,'discovered',%s),
+                  (%s,'listing_updated',%s)""",
+        (baseline_id, baseline_at, launched_id, now - timedelta(days=5),
+         launched_id, now - timedelta(days=1)),
+    )
+    before_id = db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,%s,'focused-before',%s) returning id""",
+        (launched_id, now - timedelta(days=3), Jsonb({
+            "name": "Real Launch", "pricing": ["Free"],
+        })),
+    ).fetchone()[0]
+    after_at = now - timedelta(hours=12)
+    after_id = db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,%s,'focused-after',%s) returning id""",
+        (launched_id, after_at, Jsonb({
+            "name": "Real Launch Pro", "pricing": ["Pro $12 / month"],
+        })),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_listing_changes
+             (discovered_app_id,snapshot_id,changed_at,field,
+              before_value,after_value)
+           values (%s,%s,%s,'name',%s,%s),
+                  (%s,%s,%s,'pricing',%s,%s)""",
+        (launched_id, after_id, after_at, Jsonb("Real Launch"),
+         Jsonb("Real Launch Pro"), launched_id, after_id, after_at,
+         Jsonb(["Free"]), Jsonb(["Pro $12 / month"])),
+    )
+
+    launches = discovery_report(db, activity="new", period_days=7, now=now)
+    updates = discovery_report(
+        db, activity="updated", period_days=7, pricing="paid", now=now,
+    )
+
+    assert [row["handle"] for row in launches["rows"]] == ["real-launch"]
+    assert updates["total"] == 1
+    assert updates["rows"][0]["changed_fields"] == ["name", "pricing"]
+    assert updates["rows"][0]["before_id"] == before_id
+    assert updates["rows"][0]["after_id"] == after_id
+    assert updates["rows"][0]["verified_changed_at"] == after_at
+
+
 def test_catalog_search_includes_baseline_apps_categories_and_follow_state(db):
     observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
     sync_discovered_apps(db, [SitemapApp("alpha-books", None)], observed_at)

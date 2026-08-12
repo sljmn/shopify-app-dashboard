@@ -930,7 +930,8 @@ def category_opportunities(conn, *, now=None) -> list[dict]:
 
 def discovery_report(
     conn, *, search: str = "", category: str = "", page: int = 1,
-    per_page: int = 100, activity: str = "new", bfs: str = "", now=None,
+    per_page: int = 100, activity: str = "new", bfs: str = "",
+    pricing: str = "", period_days: int | None = None, now=None,
 ) -> dict:
     current = now or datetime.now(timezone.utc)
     local_now = current.astimezone(DISPLAY_TZ)
@@ -946,6 +947,11 @@ def discovery_report(
     params: list = []
     where = ["event.event_type=%s"]
     params.append(event_type)
+    if activity == "new":
+        where.append("app.is_baseline is false")
+    if period_days in {7, 30, 90}:
+        where.append("event.occurred_at >= %s")
+        params.append(current - timedelta(days=period_days))
     if search.strip():
         where.append(
             "(app.handle ilike %s or coalesce(app.display_name,'') ilike %s)"
@@ -965,23 +971,18 @@ def discovery_report(
         where.append("app.built_for_shopify is false")
     elif bfs == "unknown":
         where.append("app.built_for_shopify is null")
+    pricing_text = "lower(coalesce(snapshot.listing->'pricing','[]'::jsonb)::text)"
+    paid_pricing = f"{pricing_text} ~ '\\$[^]]*(month|mo|year|yr)'"
+    if pricing == "free":
+        where.append(f"{pricing_text} like '%free%'")
+    elif pricing == "paid":
+        where.append(paid_pricing)
+    elif pricing == "unknown":
+        where.extend([
+            f"{pricing_text} not like '%free%'", f"not ({paid_pricing})",
+        ])
     filtered = " and ".join(where)
-    total_filtered = conn.execute(
-        f"""select count(*) from discovery_app_events event
-            join discovered_apps app on app.id=event.discovered_app_id
-            where {filtered}""",
-        params,
-    ).fetchone()[0]
-    page = max(1, min(page, max(1, (total_filtered + per_page - 1) // per_page)))
-    raw_rows = conn.execute(
-        f"""select app.handle,app.display_name,event.occurred_at,event.event_type,
-                   event.previous_listing_updated_on,event.listing_updated_on,
-                   app.listing_updated_on,app.delisted_at,
-                   observation.review_count,observation.rating,
-                   observation.best_category_rank,snapshot.listing,
-                   verified.changed_at,category_names.names,
-                   app.built_for_shopify,app.bfs_checked_at
-            from discovery_app_events event
+    base = f"""from discovery_app_events event
             join discovered_apps app on app.id=event.discovered_app_id
             left join lateral (
               select review_count,rating,best_category_rank
@@ -993,8 +994,23 @@ def discovery_report(
               where discovered_app_id=app.id order by captured_at desc,id desc limit 1
             ) snapshot on true
             left join lateral (
-              select changed_at from discovery_listing_changes
-              where discovered_app_id=app.id order by changed_at desc,id desc limit 1
+              select changed_snapshot.captured_at changed_at,
+                     changed_snapshot.id after_id,previous_snapshot.id before_id,
+                     array_agg(change.field order by change.field) changed_fields
+              from discovery_listing_snapshots changed_snapshot
+              join discovery_listing_changes change
+                on change.snapshot_id=changed_snapshot.id
+              left join lateral (
+                select id from discovery_listing_snapshots
+                where discovered_app_id=app.id
+                  and (captured_at,id) <
+                      (changed_snapshot.captured_at,changed_snapshot.id)
+                order by captured_at desc,id desc limit 1
+              ) previous_snapshot on true
+              where changed_snapshot.discovered_app_id=app.id
+                and changed_snapshot.captured_at >= event.occurred_at
+              group by changed_snapshot.id,previous_snapshot.id
+              order by changed_snapshot.captured_at,changed_snapshot.id limit 1
             ) verified on true
             left join lateral (
               select coalesce(string_agg(distinct category.name, ', '
@@ -1003,7 +1019,22 @@ def discovery_report(
               join discovery_categories category on category.id=member.category_id
               where member.discovered_app_id=app.id
             ) category_names on true
-            where {filtered}
+            where {filtered}"""
+    total_filtered = conn.execute(
+        f"select count(*) {base}",
+        params,
+    ).fetchone()[0]
+    page = max(1, min(page, max(1, (total_filtered + per_page - 1) // per_page)))
+    raw_rows = conn.execute(
+        f"""select app.handle,app.display_name,event.occurred_at,event.event_type,
+                   event.previous_listing_updated_on,event.listing_updated_on,
+                   app.listing_updated_on,app.delisted_at,
+                   observation.review_count,observation.rating,
+                   observation.best_category_rank,snapshot.listing,
+                   verified.changed_at,verified.changed_fields,
+                   verified.before_id,verified.after_id,category_names.names,
+                   app.built_for_shopify,app.bfs_checked_at
+            {base}
             order by event.occurred_at desc,event.id desc
             limit %s offset %s""",
         [*params, per_page, (page - 1) * per_page],
@@ -1024,12 +1055,14 @@ def discovery_report(
     keys = (
         "handle", "name", "event_at", "event_type", "previous_updated_on",
         "event_updated_on", "listing_updated_on", "delisted_at", "reviews",
-        "rating", "best_rank", "listing", "last_verified_change", "categories",
+        "rating", "best_rank", "listing", "verified_changed_at",
+        "changed_fields", "before_id", "after_id", "categories",
         "built_for_shopify", "bfs_checked_at",
     )
     rows = []
     for raw in raw_rows:
         row = dict(zip(keys, raw, strict=True))
+        row["last_verified_change"] = row["verified_changed_at"]
         row["name"] = row["name"] or row["handle"].replace("-", " ").title()
         developer = ((row["listing"] or {}).get("developer") or {}).get("name") or ""
         row["developer"] = developer
