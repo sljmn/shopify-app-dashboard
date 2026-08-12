@@ -460,8 +460,14 @@
             .app-picker-dialog::backdrop {
                 background: rgba(18, 13, 27, .5); backdrop-filter: blur(3px);
             }
-            .app-picker-head { padding: 16px 18px 10px; }
+            .app-picker-head {
+                position: sticky; top: 0; z-index: 1;
+                padding: 12px 14px 8px; background: var(--card);
+            }
+            .app-picker-close { width: 44px; height: 44px; }
             .app-picker-search-wrap { margin: 0 16px 10px; }
+            /* iOS zooms the viewport when a focused input is below 16px. */
+            .app-picker-search { font-size: 16px !important; }
             .app-picker-options { max-height: calc(78dvh - 122px); padding: 2px 12px 16px; }
             .app-picker-option { min-height: 48px; font-size: 15px; }
         }
@@ -479,15 +485,13 @@
             .app-selector { padding-top: 0; }
             .app-picker-trigger { height: 38px; }
             .app-picker-dialog {
-                inset: max(8px, env(safe-area-inset-top)) 0 0;
-                height: calc(100dvh - max(8px, env(safe-area-inset-top)));
-                max-height: none; border-radius: 14px 14px 0 0;
+                inset: auto 0 0; height: min(82dvh, 680px); max-height: none;
+                border-radius: 14px 14px 0 0;
             }
             .app-picker-dialog[open] {
                 display: grid;
                 grid-template-rows: auto auto minmax(0, 1fr) auto;
             }
-            .app-picker-head { padding-top: 12px; }
             .app-picker-options {
                 min-height: 0; max-height: none; overflow-y: auto;
                 align-content: start; grid-auto-rows: max-content;
@@ -2000,7 +2004,9 @@
                     dialog.style.top = `${Math.min(
                         anchor.bottom + 8, innerHeight - panel.height - 12)}px`;
                 }
-                search.focus();
+                // Opening the picker should not summon the mobile keyboard.
+                // Desktop keeps focus for fast keyboard-driven selection.
+                if (!mobile) search.focus();
             };
 
             trigger.addEventListener("click", openPicker);
@@ -2033,6 +2039,7 @@
                     event.clientY < box.top || event.clientY > box.bottom) dialog.close();
             });
             dialog.addEventListener("close", () => {
+                search.blur();
                 trigger.setAttribute("aria-expanded", "false");
                 trigger.focus();
             });

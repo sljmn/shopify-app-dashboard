@@ -974,6 +974,9 @@ def test_selector_lists_every_app_and_unknown_slugs_404(
     assert 'class="app-selector-fallback"' in combined.text
     assert ".app-picker-option[hidden] { display: none; }" in combined.text
     assert "max-width: none;" in combined.text
+    assert ".app-picker-search { font-size: 16px !important; }" in combined.text
+    assert "if (!mobile) search.focus();" in combined.text
+    assert "search.blur();" in combined.text
     assert "new FormData(form)" in combined.text
     assert c.get(
         "/?app=other-app"
