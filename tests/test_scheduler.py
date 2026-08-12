@@ -2,7 +2,9 @@ from dataclasses import replace
 
 from app_dashboard.scheduler import (
     run_active_subscriptions_job,
+    run_app_discovery_job,
     run_all_apps,
+    run_category_discovery_job,
     run_sync_job,
     run_aso_job,
 )
@@ -161,7 +163,7 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, t
         digest_day_of_week="tue", digest_hour=7, digest_timezone="Europe/Berlin"),
         [test_app])
 
-    digest = [kw for trigger, kw in fake.jobs if trigger == "cron"]
+    digest = [kw for trigger, kw in fake.jobs if kw.get("id") == "weekly_digest"]
     assert len(digest) == 1
     # Read off settings rather than hardcoded, so a deployment that wants its
     # digest on Tuesday morning in Berlin gets it there.
@@ -174,4 +176,33 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, t
     ]
     assert len(active_subscriptions) == 1
     assert active_subscriptions[0]["hours"] == 6
+    discovery = {kw["id"]: kw for trigger, kw in fake.jobs
+                 if kw.get("id", "").startswith("app_store_")}
+    assert discovery["app_store_discovery"]["hour"] == 3
+    assert discovery["app_store_categories"]["day_of_week"] == "tue,fri"
     assert started["yes"] is True
+
+
+def test_discovery_jobs_close_connections_and_contain_failures(monkeypatch):
+    app_conn = FakeConn()
+    category_conn = FakeConn()
+    monkeypatch.setattr(
+        "app_dashboard.app_store_discovery.run_app_discovery",
+        lambda conn: {"seen": 12, "new": 2, "baseline": False},
+    )
+
+    def fail_categories(conn):
+        raise RuntimeError("source unavailable")
+
+    monkeypatch.setattr(
+        "app_dashboard.app_store_discovery.run_category_discovery", fail_categories
+    )
+
+    assert run_app_discovery_job(lambda: app_conn) == {
+        "ok": True, "seen": 12, "new": 2, "baseline": False,
+    }
+    assert run_category_discovery_job(lambda: category_conn) == {
+        "ok": False, "error": "RuntimeError",
+    }
+    assert app_conn.closed_count == 1
+    assert category_conn.closed_count == 1

@@ -865,6 +865,34 @@
         .bar.down { background: var(--down); }
         .bar.gone { background: var(--gone); }
         .bar-val { font-family: var(--mono); font-size: 13px; }
+        .discovery-metrics { margin-top: 18px; }
+        .discovery-note { margin: 16px 0; color: var(--ink-2); font-size: 13px; }
+        .discovery-chart-card { margin: 16px 0; overflow-x: auto; }
+        .discovery-chart {
+            min-width: 720px; height: 190px; display: grid;
+            grid-template-columns: repeat(12, minmax(44px, 1fr));
+            gap: 10px; align-items: end; padding-top: 8px;
+        }
+        .discovery-week { height: 100%; display: grid; grid-template-rows: 20px 1fr 24px; gap: 5px; }
+        .discovery-week strong { text-align: center; font: 600 12px var(--mono); }
+        .discovery-bar-slot { display: flex; align-items: end; justify-content: center; }
+        .discovery-bar {
+            width: min(34px, 72%); min-height: 2px; background: var(--brand);
+            border-radius: 4px 4px 1px 1px;
+        }
+        .discovery-week time {
+            color: var(--muted); text-align: center; font-size: 10px;
+            white-space: nowrap;
+        }
+        .discover-filters { margin: 18px 0 12px; }
+        .discover-filters input[type="search"] { flex: 1 1 320px; }
+        .discover-table { min-width: 920px; }
+        .category-list { max-width: 320px; white-space: normal; }
+        @media (max-width: 620px) {
+            .discovery-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .discovery-metrics .card { min-width: 0; padding: 15px; }
+            .discovery-metrics .stat .num { font-size: 24px; overflow-wrap: anywhere; }
+        }
         .bar-pair { display: grid; gap: 2px; }
         /* Wraps rather than squeezing: the store-deaths list is a run of shop
            names, and without this each one broke over three lines. */
@@ -1243,6 +1271,9 @@
           ("What GA4 missed", "reconciliation")]),
         ("/aso", "aso", "ASO",
          '<path d="M4 15.5 8 11l3 2 5-7"/><path d="M12.5 6H16v3.5"/><circle cx="5" cy="6" r="2"/>',
+         []),
+        ("/discover", "discover", "Discover",
+         '<circle cx="8" cy="8" r="4.5"/><path d="m11.5 11.5 4 4"/><path d="M15 3v4M13 5h4"/>',
          []),
         ("/management/integrations", "management", "Management",
          '<path d="M4 5h12M4 10h12M4 15h12"/><circle cx="7" cy="5" r="1.5"/><circle cx="13" cy="10" r="1.5"/><circle cx="8" cy="15" r="1.5"/>',

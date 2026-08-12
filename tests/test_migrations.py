@@ -16,7 +16,8 @@ def test_core_tables_exist(db):
             "active_subscriptions", "aso_source_capabilities",
             "aso_keyword_daily", "aso_install_sources",
             "aso_listing_snapshots", "aso_listing_changes",
-            "aso_popular_keywords"} <= names
+            "aso_popular_keywords", "discovered_apps", "discovery_categories",
+            "discovered_app_categories", "discovery_state"} <= names
 
 
 def test_every_app_owned_table_has_a_required_app_id(db):

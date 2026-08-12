@@ -210,6 +210,36 @@ def run_keyword_research_job(conn_factory) -> dict:
         conn.close()
 
 
+def run_app_discovery_job(conn_factory) -> dict:
+    from app_dashboard.app_store_discovery import run_app_discovery
+
+    conn = conn_factory()
+    try:
+        result = run_app_discovery(conn)
+        logger.info("App Store discovery completed: %s", result)
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.exception("App Store discovery failed")
+        return {"ok": False, "error": type(exc).__name__}
+    finally:
+        conn.close()
+
+
+def run_category_discovery_job(conn_factory) -> dict:
+    from app_dashboard.app_store_discovery import run_category_discovery
+
+    conn = conn_factory()
+    try:
+        result = run_category_discovery(conn)
+        logger.info("App Store category discovery completed: %s", result)
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.exception("App Store category discovery failed")
+        return {"ok": False, "error": type(exc).__name__}
+    finally:
+        conn.close()
+
+
 def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
     """Poll the Partner API on an interval via run_sync. Caller owns shutdown()."""
     scheduler = BackgroundScheduler()
@@ -270,6 +300,24 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         "interval", hours=24,
         next_run_time=datetime.now() + timedelta(minutes=30),
         id="aso_keyword_research",
+    )
+    # The sitemap is one cheap request for the complete public app registry.
+    # Run shortly after boot so a new deployment establishes its baseline, then
+    # at a stable local time every day.
+    scheduler.add_job(
+        lambda: run_app_discovery_job(conn_factory),
+        "cron", hour=3, minute=30, timezone="Europe/Amsterdam",
+        next_run_time=datetime.now() + timedelta(minutes=35),
+        id="app_store_discovery",
+    )
+    # Category pages require many polite paginated requests. Keep this separate
+    # from the daily sitemap and lifecycle jobs; a partial crawl never commits.
+    scheduler.add_job(
+        lambda: run_category_discovery_job(conn_factory),
+        "cron", day_of_week="tue,fri", hour=4, minute=0,
+        timezone="Europe/Amsterdam",
+        next_run_time=datetime.now() + timedelta(minutes=45),
+        id="app_store_categories",
     )
     # Every 15 minutes, but it only posts once per stale episode. Deliberately
     # a separate job from run_sync: a check that lives inside the thing it is

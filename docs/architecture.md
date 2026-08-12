@@ -134,6 +134,14 @@ cannot say which churned subscriptions were trialing in an old month. `app_event
 therefore an independent current-state validator, not yet the chart source. Switching the chart to
 event sums before persisting trial start/end outcomes would count old trial days as paid MRR.
 
+**App Store discovery is observational and app-independent.** `sitemap_apps_en.xml` supplies the
+daily canonical handle set with one request. The first successful set is marked as a baseline;
+only handles absent from that baseline and first observed later contribute to weekly growth.
+`sitemap_categories_en.xml` supplies every current category slug, and a twice-weekly paginated crawl
+builds many-to-many category membership. The complete crawl is collected before memberships are
+replaced, so a timeout cannot turn a partial response into false removals. No discovery row carries
+an owned `app_id`: these are public App Store listings, not apps in one of our Partner accounts.
+
 ## The invariants
 
 `tests/test_invariants.py` asserts these on every `pytest` against a seeded world;
@@ -216,6 +224,7 @@ it will not run.
 | `src/app_dashboard/stats.py` | every read-side aggregate; no writes |
 | `src/app_dashboard/metrics.py` | one definition per number: name, rule, source table. Read by the tiles |
 | `src/app_dashboard/annotations.py` | dated notes on the charts; the only place a person writes to this database |
+| `src/app_dashboard/app_store_discovery.py` | public app/category collection, baseline-safe persistence, and weekly discovery reporting |
 | `src/app_dashboard/ranges.py` | the allowlist behind every time-range control |
 | `src/app_dashboard/security.py` | response headers, CSP nonce, request clock, rate limiter |
 | `src/app_dashboard/static/` | the three error illustrations, and nothing else |

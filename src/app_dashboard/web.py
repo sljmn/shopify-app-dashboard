@@ -43,6 +43,7 @@ from app_dashboard.aso import (
     position_history,
     portfolio_report,
 )
+from app_dashboard.app_store_discovery import discovery_report
 from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.integrations import (
     IntegrationError,
@@ -754,6 +755,36 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 request, user, rows=rows, organizations=organizations,
                 status=status, lifecycle_statuses=LIFECYCLE_STATUSES,
             ),
+        )
+
+    @app.get("/discover")
+    def discover_apps(
+        request: Request,
+        q: str = "",
+        category: str = "",
+        page: int = 1,
+        user: str = Depends(verify_creds),
+    ):
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+            report = discovery_report(
+                conn, search=q, category=category, page=page
+            )
+        finally:
+            conn.close()
+        query = {"q": q.strip(), "category": category.strip()}
+        query = {key: value for key, value in query.items() if value}
+        return templates.TemplateResponse(
+            request,
+            "discover.html",
+            {
+                **page_context(request, user, "discover", None, apps),
+                **report,
+                "query": q.strip(),
+                "selected_category": category.strip(),
+                "filter_qs": urlencode(query),
+            },
         )
 
     def _organization_form_response(

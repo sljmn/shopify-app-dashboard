@@ -1,5 +1,5 @@
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from html import unescape
 
 import pytest
@@ -195,6 +195,35 @@ def test_aso_requires_login_and_portfolio_lists_every_app(db):
     assert response.status_code == 200
     assert "ASO" in response.text
     assert "Organic users" in response.text
+
+
+def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db):
+    baseline = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    db.execute(
+        """insert into discovered_apps
+           (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('old-app','Old App',%s,%s,true),
+                  ('fresh-app','Fresh App',now(),now(),false)""",
+        (baseline, baseline),
+    )
+    db.execute(
+        """insert into discovery_state
+           (source,baseline_completed_at,last_success_at)
+           values ('apps',%s,now())""",
+        (baseline,),
+    )
+    app = create_app(conn_factory=lambda: keep_open(db))
+    assert dashboard_client(app, authenticated=False).get(
+        "/discover", headers={"accept": "text/html"}, follow_redirects=False
+    ).status_code == 307
+
+    page = dashboard_client(app).get("/discover?app=test-app&q=fresh")
+    assert page.status_code == 200
+    assert "New apps per week" in page.text
+    assert "Fresh App" in page.text
+    assert "Old App" not in page.text
+    assert "https://apps.shopify.com/fresh-app" in page.text
+    assert 'aria-current="page"><svg' in page.text
 
 
 def test_selected_aso_app_has_views_and_csv(db, test_app):

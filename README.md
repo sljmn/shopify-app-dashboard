@@ -46,6 +46,8 @@ revenue figure appears anywhere in this repository, in the screenshots, or in th
 - **ASO intelligence** owned in Postgres: verified GA4 keyword positions and install attribution,
   localized App Store listing history, public autocomplete research, merchant source filters, and
   CSV export. It does not call Rankbase.
+- **App discovery** across the full Shopify App Store, with automatic category enrichment and a
+  12-week view of apps first observed by this dashboard.
 - **Slack** stale-sync alerts and a weekly digest.
 
 ## Install
@@ -176,6 +178,15 @@ being relabelled Direct.
 Public listing and autocomplete collectors run at most daily with bounded retries. They retain the
 last valid listing snapshot if Shopify is temporarily unavailable. Community monitoring is not
 part of this feature.
+
+### App Store discovery
+
+The Discover page is independent from the owned-app selector. A daily import reads Shopify's public
+app sitemap, while a slower twice-weekly crawl reads every category published in Shopify's category
+sitemap. The first complete app import is a baseline: those existing listings are indexed but never
+reported as new. Later handles are counted once in the week Mantle first observes them, even when
+Shopify places the app in several categories. “First observed” is not presented as Shopify's private
+publication date.
 
 ### Customers, and the sign-in page
 
