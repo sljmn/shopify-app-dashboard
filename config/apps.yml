@@ -74,6 +74,16 @@ organizations:
       - slug: image-translate-easy
         name: Image Translate Easy
         partner_app_id: gid://partners/App/303500361729
+        usage:
+          token_env: IMAGE_TRANSLATE_USAGE_TOKEN
+          event_types: [image_translation_succeeded]
+        review_prompt:
+          enabled: true
+          trigger_event: image_translation_succeeded
+          min_success_count: 1
+          min_install_hours: 24
+          retry_days: 90
+          annual_cap: 3
         ga4:
           property_id: "549592628"
           credentials_env: SHARED_GA4_CREDENTIALS_JSON

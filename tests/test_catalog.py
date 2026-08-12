@@ -19,6 +19,7 @@ TOKEN_ENV = {
     "SHOPIFY_PARTNER_TOKEN_4742901": "token-4742901",
     "SHOPIFY_PARTNER_TOKEN_4821379": "token-4821379",
     "SHOPIFY_PARTNER_TOKEN_4975891": "token-4975891",
+    "IMAGE_TRANSLATE_USAGE_TOKEN": "image-translate-token",
     "SHARED_GA4_CREDENTIALS_JSON": "{}",
 }
 
@@ -43,6 +44,10 @@ def test_repository_catalog_contains_all_configured_apps():
     assert isbn.annual_plan_amounts == {
         Decimal("100.00"), Decimal("190.00"), Decimal("390.00")
     }
+    image_translate = next(app for app in apps if app.slug == "image-translate-easy")
+    assert image_translate.usage_event_types == frozenset({"image_translation_succeeded"})
+    assert image_translate.review_prompt_enabled is True
+    assert image_translate.review_trigger_event == "image_translation_succeeded"
     review_apps = [app for app in apps if app.partner_org_id == "4975891"]
     assert {app.slug for app in review_apps} == {
         "best-buy-reviews",
