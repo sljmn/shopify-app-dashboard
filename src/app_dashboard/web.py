@@ -43,7 +43,7 @@ from app_dashboard.aso import (
     position_history,
     portfolio_report,
 )
-from app_dashboard.app_store_discovery import discovery_report
+from app_dashboard.app_store_discovery import discovery_report, growth_signals
 from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.integrations import (
     IntegrationError,
@@ -762,18 +762,23 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         request: Request,
         q: str = "",
         category: str = "",
+        growth: str = "gems",
         page: int = 1,
         user: str = Depends(verify_creds),
     ):
+        growth = growth if growth in {"gems", "fastest", "contenders"} else "gems"
         conn = conn_factory()
         try:
             apps = active_apps(conn)
             report = discovery_report(
                 conn, search=q, category=category, page=page
             )
+            signals = growth_signals(conn)
         finally:
             conn.close()
-        query = {"q": q.strip(), "category": category.strip()}
+        query = {
+            "q": q.strip(), "category": category.strip(), "growth": growth,
+        }
         query = {key: value for key, value in query.items() if value}
         return templates.TemplateResponse(
             request,
@@ -783,6 +788,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 **report,
                 "query": q.strip(),
                 "selected_category": category.strip(),
+                "selected_growth": growth,
+                "growth_rows": signals[growth],
                 "filter_qs": urlencode(query),
             },
         )

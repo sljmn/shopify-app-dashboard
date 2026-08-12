@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -9,6 +10,7 @@ from app_dashboard.app_store_discovery import (
     CATEGORY_SITEMAP_URL,
     collect_categories,
     discovery_report,
+    growth_signals,
     parse_app_sitemap,
     parse_category_page,
     parse_category_sitemap,
@@ -54,6 +56,17 @@ def test_category_cards_supply_names_and_are_deduplicated():
     assert apps == [CategoryApp("alpha", "Alpha Again"), CategoryApp("beta", "Beta")]
 
 
+def test_category_cards_parse_review_count_and_rating():
+    html = """
+      <div data-controller="app-card" data-app-card-handle-value="alpha"
+           data-app-card-name-value="Alpha App">
+        <span>4.8 out of 5 stars</span><span>1,234 total reviews</span>
+      </div>
+    """
+    _, apps = parse_category_page(html, "design")
+    assert apps == [CategoryApp("alpha", "Alpha App", 1234, Decimal("4.8"))]
+
+
 def test_category_collection_uses_every_sitemap_category_and_stops_on_empty_page():
     class Response:
         def __init__(self, text, status_code=200):
@@ -87,6 +100,7 @@ def test_category_collection_uses_every_sitemap_category_and_stops_on_empty_page
 
     result = collect_categories(get, sleep=lambda *_: None, max_pages=5, page_delay=0)
     assert [category.slug for category in result] == ["design", "marketing"]
+    assert result[0].apps[0].rank == 1
     assert len(calls) == 6  # two leaf categories paginate; the umbrella stops at 404
 
 
@@ -144,6 +158,71 @@ def test_category_sync_records_all_memberships_without_duplicate_apps(db):
            order by category.slug,app.handle"""
     ).fetchall()
     assert memberships == [("design", "beta"), ("marketing", "alpha")]
+
+
+def test_category_sync_records_daily_review_and_rank_observations(db):
+    observed_at = datetime(2026, 8, 12, 8, tzinfo=timezone.utc)
+    sync_discovered_apps(db, [SitemapApp("alpha", None)], observed_at)
+    sync_discovery_categories(db, [
+        CategoryResult("design", "Design", (
+            CategoryApp("alpha", "Alpha", 12, Decimal("4.7"), 8),
+        )),
+        CategoryResult("marketing", "Marketing", (
+            CategoryApp("alpha", "Alpha", 12, Decimal("4.7"), 3),
+        )),
+    ], observed_at)
+
+    app_observation = db.execute(
+        """select review_count,rating,best_category_rank
+           from discovery_app_observations"""
+    ).fetchone()
+    assert app_observation == (12, Decimal("4.70"), 3)
+    assert db.execute(
+        "select position from discovery_category_observations order by position"
+    ).fetchall() == [(3,), (8,)]
+
+
+def test_growth_signals_separate_baseline_growers_and_new_contenders(db):
+    day1 = datetime(2026, 7, 1, 8, tzinfo=timezone.utc)
+    day8 = day1 + timedelta(days=7)
+    sync_discovered_apps(db, [SitemapApp("established", None)], day1)
+    sync_discovery_categories(db, [
+        CategoryResult("design", "Design", (
+            CategoryApp("established", "Established", 100, Decimal("4.5"), 2),
+        )),
+    ], day1)
+
+    sync_discovered_apps(db, [
+        SitemapApp("established", None), SitemapApp("young-gem", None),
+        SitemapApp("young-quiet", None),
+    ], day1 + timedelta(days=1))
+    sync_discovery_categories(db, [
+        CategoryResult("design", "Design", (
+            CategoryApp("established", "Established", 100, Decimal("4.5"), 2),
+            CategoryApp("young-gem", "Young Gem", 10, Decimal("4.9"), 10),
+            CategoryApp("young-quiet", "Young Quiet", 2, Decimal("5.0"), 12),
+        )),
+    ], day1 + timedelta(days=1))
+    sync_discovery_categories(db, [
+        CategoryResult("design", "Design", (
+            CategoryApp("established", "Established", 150, Decimal("4.6"), 1),
+            CategoryApp("young-gem", "Young Gem", 20, Decimal("4.9"), 5),
+            CategoryApp("young-quiet", "Young Quiet", 2, Decimal("5.0"), 12),
+        )),
+    ], day8)
+
+    signals = growth_signals(db, now=day8)
+    assert [row["handle"] for row in signals["fastest"]] == [
+        "established", "young-gem",
+    ]
+    assert [row["handle"] for row in signals["gems"]] == ["young-gem"]
+    assert {row["handle"] for row in signals["contenders"]} == {
+        "young-gem", "young-quiet",
+    }
+    gem = signals["gems"][0]
+    assert gem["previous_delta"] == 10
+    assert gem["delta7"] is None
+    assert gem["rank_change"] == 5
 
 
 def test_report_excludes_baseline_and_counts_each_new_app_once(db):

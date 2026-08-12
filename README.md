@@ -46,8 +46,8 @@ revenue figure appears anywhere in this repository, in the screenshots, or in th
 - **ASO intelligence** owned in Postgres: verified GA4 keyword positions and install attribution,
   localized App Store listing history, public autocomplete research, merchant source filters, and
   CSV export. It does not call Rankbase.
-- **App discovery** across the full Shopify App Store, with automatic category enrichment and a
-  12-week view of apps first observed by this dashboard.
+- **App discovery** across the full Shopify App Store, with automatic category enrichment, a
+  12-week view of newly observed apps, and review/rank signals for rising apps.
 - **Slack** stale-sync alerts and a weekly digest.
 
 ## Install
@@ -187,6 +187,11 @@ sitemap. The first complete app import is a baseline: those existing listings ar
 reported as new. Later handles are counted once in the week Mantle first observes them, even when
 Shopify places the app in several categories. “First observed” is not presented as Shopify's private
 publication date.
+
+The same category crawl records public review totals, ratings, and absolute category positions.
+Discover uses dated observations to show Rising gems, Fastest growers, and New contenders. These
+signals require at least two successful category scans; missing 7- or 30-day history stays unknown
+instead of being displayed as zero. They measure public App Store momentum, not installs or revenue.
 
 ### Customers, and the sign-in page
 

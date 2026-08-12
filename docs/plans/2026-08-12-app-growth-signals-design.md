@@ -21,7 +21,7 @@ The first successful metrics crawl is a baseline. Growth appears only after a la
 ## Lists
 
 1. **Rising gems:** non-baseline apps first observed within 180 days, 5–250 current reviews, at least 3 new reviews in the measured window, ranked by a transparent combination of review velocity, relative growth, and upward category movement.
-2. **Fastest growers:** all apps with positive measured review growth, sorted by absolute 30-day growth and then 7-day growth.
+2. **Fastest growers:** all apps with positive measured review growth, sorted by review velocity normalized to 30 days and then current review count.
 3. **New contenders:** non-baseline apps first observed within 60 days, sorted by review growth, current reviews, and best category rank.
 
 Every row exposes the component metrics. No list claims installs, revenue, or publication date: those are not public App Store data.
@@ -33,4 +33,3 @@ One app is counted once in each list even if it appears in multiple categories. 
 ## Interface
 
 Add a `Growth signals` section above the existing discovery filters with three compact tabs. Desktop tables show reviews, 7/30-day gains, rating, best rank and movement, age, and categories. Mobile retains the existing horizontal overflow instead of compressing labels into unreadable columns.
-

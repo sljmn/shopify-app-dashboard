@@ -141,6 +141,10 @@ only handles absent from that baseline and first observed later contribute to we
 builds many-to-many category membership. The complete crawl is collected before memberships are
 replaced, so a timeout cannot turn a partial response into false removals. No discovery row carries
 an owned `app_id`: these are public App Store listings, not apps in one of our Partner accounts.
+The category cards also provide public review totals, ratings, and ordered positions. Dated app and
+app/category observations preserve that history without extra listing requests. Growth reports only
+compare real observations; no earlier measurement is treated as zero, and baseline apps are excluded
+from lists that imply a recently launched app.
 
 ## The invariants
 
@@ -224,7 +228,7 @@ it will not run.
 | `src/app_dashboard/stats.py` | every read-side aggregate; no writes |
 | `src/app_dashboard/metrics.py` | one definition per number: name, rule, source table. Read by the tiles |
 | `src/app_dashboard/annotations.py` | dated notes on the charts; the only place a person writes to this database |
-| `src/app_dashboard/app_store_discovery.py` | public app/category collection, baseline-safe persistence, and weekly discovery reporting |
+| `src/app_dashboard/app_store_discovery.py` | public app/category collection, dated review/rank observations, and discovery growth reporting |
 | `src/app_dashboard/ranges.py` | the allowlist behind every time-range control |
 | `src/app_dashboard/security.py` | response headers, CSP nonce, request clock, rate limiter |
 | `src/app_dashboard/static/` | the three error illustrations, and nothing else |

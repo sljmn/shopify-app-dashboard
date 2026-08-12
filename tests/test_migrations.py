@@ -18,6 +18,7 @@ def test_core_tables_exist(db):
             "aso_listing_snapshots", "aso_listing_changes",
             "aso_popular_keywords", "discovered_apps", "discovery_categories",
             "discovered_app_categories", "discovery_state"} <= names
+    assert {"discovery_app_observations", "discovery_category_observations"} <= names
 
 
 def test_every_app_owned_table_has_a_required_app_id(db):

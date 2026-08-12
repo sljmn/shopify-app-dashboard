@@ -220,6 +220,10 @@ def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db
     page = dashboard_client(app).get("/discover?app=test-app&q=fresh")
     assert page.status_code == 200
     assert "New apps per week" in page.text
+    assert "Growth signals" in page.text
+    assert "Rising gems" in page.text
+    assert "Fastest growers" in page.text
+    assert "New contenders" in page.text
     assert "Fresh App" in page.text
     assert "Old App" not in page.text
     assert "https://apps.shopify.com/fresh-app" in page.text

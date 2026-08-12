@@ -6,6 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
@@ -40,6 +41,9 @@ class SitemapApp:
 class CategoryApp:
     handle: str
     name: str | None
+    review_count: int | None = None
+    rating: Decimal | None = None
+    rank: int | None = None
 
 
 @dataclass(frozen=True)
@@ -99,7 +103,14 @@ def parse_category_page(html: str, slug: str) -> tuple[str, list[CategoryApp]]:
         if not HANDLE.fullmatch(handle) or handle in NON_APPS:
             continue
         display_name = (card.get("data-app-card-name-value") or "").strip() or None
-        apps.append(CategoryApp(handle, display_name))
+        card_text = card.get_text(" ", strip=True)
+        reviews_match = re.search(r"([0-9,]+)\s+total reviews?", card_text)
+        rating_match = re.search(r"([0-5](?:\.\d+)?)\s+out of 5 stars", card_text)
+        review_count = (
+            int(reviews_match.group(1).replace(",", "")) if reviews_match else None
+        )
+        rating = Decimal(rating_match.group(1)) if rating_match else None
+        apps.append(CategoryApp(handle, display_name, review_count, rating))
     return name, list({app.handle: app for app in apps}.values())
 
 
@@ -151,7 +162,11 @@ def collect_categories(
             fresh = [app for app in apps if app.handle not in found]
             if not fresh:
                 break
-            found.update((app.handle, app) for app in fresh)
+            for app in fresh:
+                found[app.handle] = CategoryApp(
+                    app.handle, app.name, app.review_count, app.rating,
+                    len(found) + 1,
+                )
             sleep(page_delay)
         # Umbrella categories have no populated /all page and add no useful tag.
         if found:
@@ -208,6 +223,7 @@ def sync_discovery_categories(conn, categories: list[CategoryResult], now=None) 
     if not categories:
         raise ValueError("empty-category-crawl")
     observed_at = now or datetime.now(timezone.utc)
+    observed_on = observed_at.astimezone(DISPLAY_TZ).date()
     baseline_pending = conn.execute(
         "select 1 from discovery_state where source='apps'"
     ).fetchone() is None
@@ -245,6 +261,55 @@ def sync_discovery_categories(conn, categories: list[CategoryResult], now=None) 
                    on conflict do nothing""",
                 [(app.handle, category.slug) for app in category.apps],
             )
+            conn.cursor().executemany(
+                """insert into discovery_category_observations
+                   (discovered_app_id,category_id,observed_on,position,observed_at)
+                   select app.id,category.id,%s,%s,%s
+                   from discovered_apps app cross join discovery_categories category
+                   where app.handle=%s and category.slug=%s
+                   on conflict (discovered_app_id,category_id,observed_on)
+                   do update set position=excluded.position,
+                                 observed_at=excluded.observed_at""",
+                [
+                    (observed_on, app.rank, observed_at, app.handle, category.slug)
+                    for app in category.apps if app.rank is not None
+                ],
+            )
+        app_metrics: dict[str, dict] = {}
+        for category in categories:
+            for app in category.apps:
+                metrics = app_metrics.setdefault(app.handle, {
+                    "review_count": app.review_count,
+                    "rating": app.rating,
+                    "best_rank": app.rank,
+                })
+                if app.review_count is not None and (
+                    metrics["review_count"] is None
+                    or app.review_count > metrics["review_count"]
+                ):
+                    metrics["review_count"] = app.review_count
+                    metrics["rating"] = app.rating
+                if app.rank is not None:
+                    metrics["best_rank"] = min(
+                        rank for rank in (metrics["best_rank"], app.rank)
+                        if rank is not None
+                    )
+        conn.cursor().executemany(
+            """insert into discovery_app_observations
+               (discovered_app_id,observed_on,review_count,rating,
+                best_category_rank,observed_at)
+               select id,%s,%s,%s,%s,%s from discovered_apps where handle=%s
+               on conflict (discovered_app_id,observed_on) do update set
+                 review_count=excluded.review_count,rating=excluded.rating,
+                 best_category_rank=excluded.best_category_rank,
+                 observed_at=excluded.observed_at""",
+            [
+                (observed_on, values["review_count"], values["rating"],
+                 values["best_rank"], observed_at, handle)
+                for handle, values in app_metrics.items()
+                if values["best_rank"] is not None
+            ],
+        )
         conn.execute(
             """insert into discovery_state (source,last_success_at)
                values ('categories',%s) on conflict (source) do update set
@@ -255,6 +320,147 @@ def sync_discovery_categories(conn, categories: list[CategoryResult], now=None) 
         "categories": len(categories),
         "memberships": sum(len(category.apps) for category in categories),
     }
+
+
+def growth_signals(conn, *, now=None, limit: int = 20) -> dict:
+    current = now or datetime.now(timezone.utc)
+    today = current.astimezone(DISPLAY_TZ).date()
+    observations = conn.execute(
+        """with latest as (
+               select distinct on (o.discovered_app_id)
+                 o.discovered_app_id,o.observed_on,o.review_count,o.rating,
+                 o.best_category_rank
+               from discovery_app_observations o
+               order by o.discovered_app_id,o.observed_on desc
+           )
+           select app.id,app.handle,app.display_name,app.first_seen_at,
+                  app.is_baseline,latest.observed_on,latest.review_count,
+                  latest.rating,latest.best_category_rank,
+                  previous.observed_on,previous.review_count,
+                  day7.observed_on,day7.review_count,
+                  day30.observed_on,day30.review_count,
+                  coalesce(string_agg(distinct category.name, ', '
+                    order by category.name),'') categories
+           from latest
+           join discovered_apps app on app.id=latest.discovered_app_id
+           left join lateral (
+             select o.observed_on,o.review_count
+             from discovery_app_observations o
+             where o.discovered_app_id=app.id and o.observed_on < latest.observed_on
+             order by o.observed_on desc limit 1
+           ) previous on true
+           left join lateral (
+             select o.observed_on,o.review_count
+             from discovery_app_observations o
+             where o.discovered_app_id=app.id
+               and o.observed_on <= latest.observed_on - 7
+             order by o.observed_on desc limit 1
+           ) day7 on true
+           left join lateral (
+             select o.observed_on,o.review_count
+             from discovery_app_observations o
+             where o.discovered_app_id=app.id
+               and o.observed_on <= latest.observed_on - 30
+             order by o.observed_on desc limit 1
+           ) day30 on true
+           left join discovered_app_categories member
+             on member.discovered_app_id=app.id
+           left join discovery_categories category on category.id=member.category_id
+           group by app.id,latest.discovered_app_id,latest.observed_on,
+                    latest.review_count,latest.rating,latest.best_category_rank,
+                    previous.observed_on,previous.review_count,
+                    day7.observed_on,day7.review_count,
+                    day30.observed_on,day30.review_count"""
+    ).fetchall()
+    rank_changes = {
+        row[0]: row[2] - row[1]
+        for row in conn.execute(
+            """with latest_category_rank as (
+                   select distinct on (o.discovered_app_id,o.category_id)
+                     o.discovered_app_id,o.category_id,o.observed_on,o.position
+                   from discovery_category_observations o
+                   order by o.discovered_app_id,o.category_id,o.observed_on desc
+               ), current_rank as (
+                   select distinct on (o.discovered_app_id)
+                     o.discovered_app_id,o.category_id,o.observed_on,o.position
+                   from latest_category_rank o
+                   order by o.discovered_app_id,o.position,o.observed_on desc
+               )
+               select current_rank.discovered_app_id,current_rank.position,
+                      previous.position
+               from current_rank
+               left join lateral (
+                 select o.position from discovery_category_observations o
+                 where o.discovered_app_id=current_rank.discovered_app_id
+                   and o.category_id=current_rank.category_id
+                   and o.observed_on < current_rank.observed_on
+                 order by o.observed_on desc limit 1
+               ) previous on true
+               where previous.position is not null"""
+        ).fetchall()
+    }
+    rows = []
+    for row in observations:
+        (app_id, handle, name, first_seen, is_baseline, observed_on, reviews,
+         rating, best_rank, previous_on, previous_reviews, day7_on, day7_reviews,
+         day30_on, day30_reviews, categories) = row
+        def delta(value):
+            return None if reviews is None or value is None else reviews - value
+        previous_delta = delta(previous_reviews)
+        delta7 = delta(day7_reviews)
+        delta30 = delta(day30_reviews)
+        comparison_on = day30_on or day7_on or previous_on
+        comparison_reviews = (
+            day30_reviews if day30_on else day7_reviews if day7_on else previous_reviews
+        )
+        comparison_delta = delta(comparison_reviews)
+        comparison_days = (
+            max(1, (observed_on - comparison_on).days) if comparison_on else None
+        )
+        velocity30 = (
+            comparison_delta * 30 / comparison_days
+            if comparison_delta is not None and comparison_days else None
+        )
+        relative_growth = (
+            comparison_delta * 100 / comparison_reviews
+            if comparison_delta is not None and comparison_reviews else None
+        )
+        age_days = max(0, (today - first_seen.astimezone(DISPLAY_TZ).date()).days)
+        rows.append({
+            "handle": handle, "name": name or handle.replace("-", " ").title(),
+            "reviews": reviews, "rating": rating, "best_rank": best_rank,
+            "rank_change": rank_changes.get(app_id), "previous_delta": previous_delta,
+            "delta7": delta7, "delta30": delta30,
+            "relative_growth": relative_growth, "velocity30": velocity30,
+            "comparison_days": comparison_days, "age_days": age_days,
+            "is_baseline": is_baseline, "categories": categories,
+        })
+    positive = [row for row in rows if (row["velocity30"] or 0) > 0]
+    fastest = sorted(
+        positive,
+        key=lambda row: (row["velocity30"], row["delta30"] or -1,
+                         row["reviews"] or 0), reverse=True,
+    )[:limit]
+    gems = [
+        row for row in positive
+        if not row["is_baseline"] and row["age_days"] <= 180
+        and 5 <= (row["reviews"] or 0) <= 250
+        and (row["previous_delta"] or 0) >= 3
+    ]
+    for row in gems:
+        row["score"] = round(
+            (row["velocity30"] or 0)
+            + min(row["relative_growth"] or 0, 200) * 0.15
+            + max(row["rank_change"] or 0, 0) * 2,
+            1,
+        )
+    gems.sort(key=lambda row: (row["score"], row["reviews"] or 0), reverse=True)
+    contenders = sorted(
+        [row for row in rows if not row["is_baseline"] and row["age_days"] <= 60],
+        key=lambda row: (row["velocity30"] or 0, row["reviews"] or 0,
+                         -(row["best_rank"] or 99999)), reverse=True,
+    )[:limit]
+    return {"gems": gems[:limit], "fastest": fastest, "contenders": contenders}
 
 
 def run_app_discovery(conn, http_get=httpx.get, now=None, sleep=time.sleep) -> dict:
