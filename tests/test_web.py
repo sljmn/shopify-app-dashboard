@@ -245,6 +245,8 @@ def test_discover_catalog_can_follow_baseline_app_and_open_watchlist(db):
     assert page.status_code == 200
     assert "Alpha Books" in page.text
     assert "/discover/apps/alpha-books" in page.text
+    assert "https://apps.shopify.com/alpha-books" in page.text
+    assert "View listing" in page.text
     response = client.post(
         "/discover/apps/alpha-books/follow", data={"follow": "1"},
         headers={"origin": "https://dash.test"}, follow_redirects=False,

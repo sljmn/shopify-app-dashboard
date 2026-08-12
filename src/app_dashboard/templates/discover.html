@@ -25,7 +25,7 @@
     {% if catalog_query or catalog_category %}
     <div class="table-card catalog-results">
         <table class="catalog-table">
-            <thead><tr><th>App</th><th>Developer</th><th>Reviews</th><th>Rating</th><th>Best rank</th><th>Categories</th><th></th></tr></thead>
+            <thead><tr><th>App</th><th>Developer</th><th>Reviews</th><th>Rating</th><th>Best rank</th><th>Categories</th><th>Actions</th></tr></thead>
             <tbody>
             {% for row in catalog.rows %}
             <tr>
@@ -35,11 +35,12 @@
                 <td data-label="Rating">{{ row.rating if row.rating is not none else "—" }}</td>
                 <td data-label="Best rank">{% if row.best_rank %}#{{ row.best_rank }}{% else %}—{% endif %}</td>
                 <td data-label="Categories" class="category-list">{{ row.categories or "—" }}</td>
-                <td data-label="Follow">
+                <td data-label="Actions"><div class="catalog-actions">
+                    <a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a>
                     <form class="inline-form" method="post" action="/discover/apps/{{ row.handle|urlencode }}/{% if row.followed %}unfollow{% else %}follow{% endif %}">
                         <button class="ghost" type="submit">{% if row.followed %}Following{% else %}Follow{% endif %}</button>
                     </form>
-                </td>
+                </div></td>
             </tr>
             {% else %}<tr><td colspan="7">No indexed apps match this search.</td></tr>{% endfor %}
             </tbody>

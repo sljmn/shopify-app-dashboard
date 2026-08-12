@@ -906,6 +906,7 @@
             gap: 18px;
         }
         .catalog-table { min-width: 980px; }
+        .catalog-actions { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
         .inline-form { display: inline; margin: 0; }
         .page-heading { display: flex; justify-content: space-between; align-items: end; gap: 20px; }
         .heading-actions { display: flex; align-items: center; gap: 8px; }
@@ -986,6 +987,7 @@
                 content: attr(data-label); color: var(--muted); font-size: 11px;
                 text-transform: uppercase;
             }
+            .catalog-actions { justify-content: flex-start; flex-wrap: wrap; }
             .page-heading, .heading-actions, .watch-movement { align-items: stretch; flex-direction: column; }
             .listing-overview, .diff-pair { grid-template-columns: 1fr; }
             .listing-gallery { grid-template-columns: 1fr; }
