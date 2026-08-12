@@ -1469,6 +1469,8 @@
         .research-notes { display: grid; gap: 12px; }
         .research-note { padding: 18px; }
         .research-note header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+        .research-note-actions { display: flex; gap: 8px; align-items: center; }
+        .research-note-actions form { margin: 0; }
         .research-note h3 { margin: 0 0 3px; }
         .research-note p { white-space: pre-wrap; line-height: 1.55; }
         .attachment-list a { display: inline-flex; gap: 6px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; }
@@ -1562,7 +1564,8 @@
             .research-app-search-control { grid-template-columns: auto minmax(0, 1fr); }
             .research-app-search-control button { grid-column: 1 / -1; min-height: 42px; border-radius: 0 0 8px 8px; }
             .research-note header { align-items: stretch; flex-direction: column; }
-            .research-note header form button { width: 100%; }
+            .research-note-actions, .research-note-actions > * { width: 100%; }
+            .research-note-actions .ghost { width: 100%; text-align: center; }
             .research-app-heading, .research-app-block-head { align-items: stretch; flex-direction: column; }
             .research-app-heading > a, .research-app-block-head > a { width: 100%; text-align: center; }
             .research-app-toolbar > div, .research-app-memberships { grid-template-columns: 1fr; }

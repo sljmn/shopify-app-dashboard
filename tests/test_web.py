@@ -302,6 +302,39 @@ def test_research_note_form_explains_when_storage_is_unavailable(db):
     assert 'name="attachments"' not in response.text
 
 
+def test_research_note_can_be_edited_and_returns_to_its_app(db):
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('editable-note','Editable Note',now(),now(),false) returning id"""
+    ).fetchone()[0]
+    note_id = db.execute(
+        """insert into research_notes
+             (title,body,discovered_app_id,author)
+           values ('Before','Old body',%s,'tester@example.com') returning id""",
+        (app_id,),
+    ).fetchone()[0]
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    form = client.get(f"/research/notes/{note_id}/edit")
+    assert form.status_code == 200
+    assert 'value="Before"' in form.text
+    assert "Old body" in form.text
+
+    response = client.post(
+        f"/research/notes/{note_id}",
+        data={"title": "After", "body": "New body"},
+        files={"attachments": ("", b"", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/discover/apps/editable-note?view=research"
+    row = db.execute(
+        "select title,body from research_notes where id=%s", (note_id,),
+    ).fetchone()
+    assert row == ("After", "New body")
+
+
 def test_integration_management_labels_connected_tracking_without_data_as_waiting(db):
     db.execute("update apps set tracking_status='connected'")
 

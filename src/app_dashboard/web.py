@@ -77,12 +77,14 @@ from app_dashboard.research import (
     create_list as create_research_list,
     create_note as create_research_note,
     delete_note as delete_research_note,
+    get_note as get_research_note,
     get_list as get_research_list,
     list_lists as list_research_lists,
     remove_app_from_list,
     research_index,
     search_apps as search_research_apps,
     target_research,
+    update_note as update_research_note,
     update_list as update_research_list,
 )
 from app_dashboard.review_collector import review_report
@@ -953,6 +955,41 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             request, "research_note_form.html",
             _research_context(
                 request, user, target_kind=target, target_id=target_id, error=None,
+                note=None,
+            ),
+        )
+
+    def _research_note_destination(conn, note: dict) -> str:
+        if note["target_kind"] == "list":
+            return f"/research/lists/{note['target_id']}"
+        if note["target_kind"] == "app":
+            row = conn.execute(
+                "select handle from discovered_apps where id=%s",
+                (note["target_id"],),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Unknown discovered app")
+            return f"/discover/apps/{row[0]}?view=research"
+        return f"/research/developers/{note['target_id']}"
+
+    @app.get("/research/notes/{note_id}/edit")
+    def edit_research_note(
+        request: Request, note_id: int, user: str = Depends(verify_creds),
+    ):
+        conn = conn_factory()
+        try:
+            note = get_research_note(conn, note_id)
+            if not note:
+                raise HTTPException(status_code=404, detail="Unknown research note")
+            cancel_url = _research_note_destination(conn, note)
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request, "research_note_form.html",
+            _research_context(
+                request, user, target_kind=note["target_kind"],
+                target_id=note["target_id"], note=note, error=None,
+                cancel_url=cancel_url,
             ),
         )
 
@@ -1004,19 +1041,66 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             )
         finally:
             conn.close()
-        if target_kind == "list":
-            destination = f"/research/lists/{target_id}"
-        elif target_kind == "app":
-            app_conn = conn_factory()
-            try:
-                handle = app_conn.execute(
-                    "select handle from discovered_apps where id=%s", (target_id,),
-                ).fetchone()[0]
-            finally:
-                app_conn.close()
-            destination = f"/discover/apps/{handle}?view=research"
-        else:
-            destination = f"/research/developers/{target_id}"
+        destination_conn = conn_factory()
+        try:
+            destination = _research_note_destination(destination_conn, note)
+        finally:
+            destination_conn.close()
+        return RedirectResponse(destination, status_code=303)
+
+    @app.post("/research/notes/{note_id}")
+    async def save_research_note(
+        request: Request, note_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        _, values = await _research_form(request)
+        conn = conn_factory()
+        store = None
+        uploaded = []
+        try:
+            note = get_research_note(conn, note_id)
+            if not note:
+                raise LookupError("unknown-research-note")
+            files = [value for value in values.getlist("attachments")
+                     if hasattr(value, "filename") and value.filename]
+            if files:
+                store = _research_store()
+            for upload in files:
+                data = await upload.read(settings.research_upload_max_bytes + 1)
+                saved = store.validate_and_upload(
+                    data, filename=upload.filename, content_type=upload.content_type,
+                )
+                uploaded.append(saved)
+            note = update_research_note(
+                conn, note_id, title=str(values.get("title", "")),
+                body=str(values.get("body", "")),
+            )
+            for saved in uploaded:
+                attach_object(
+                    conn, note_id, digest=saved.digest, object_key=saved.object_key,
+                    mime_type=saved.mime_type, byte_size=saved.byte_size,
+                    original_filename=saved.filename,
+                )
+            destination = _research_note_destination(conn, note)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown research note") from None
+        except (ValueError, InvalidResearchFile) as exc:
+            for saved in uploaded:
+                if saved.created and store:
+                    store.delete(saved.object_key)
+            note = get_research_note(conn, note_id)
+            if not note:
+                raise HTTPException(status_code=404, detail="Unknown research note") from None
+            return templates.TemplateResponse(
+                request, "research_note_form.html",
+                _research_context(
+                    request, note["author"], target_kind=note["target_kind"],
+                    target_id=note["target_id"], note=note, error=str(exc),
+                    cancel_url=_research_note_destination(conn, note),
+                ), status_code=422,
+            )
+        finally:
+            conn.close()
         return RedirectResponse(destination, status_code=303)
 
     @app.post("/research/notes/{note_id}/delete")

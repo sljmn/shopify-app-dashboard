@@ -274,6 +274,28 @@ def get_note(conn, note_id: int) -> dict | None:
     return result
 
 
+def update_note(
+    conn, note_id: int, *, title: str, body: str, now=None,
+) -> dict:
+    updated_at = _now(now)
+    row = conn.execute(
+        """update research_notes
+           set title=%s,body=%s,updated_at=%s
+           where id=%s
+           returning id,title,body,author,created_at,updated_at""",
+        (_clean_required(title, "title"), body.strip(), updated_at, note_id),
+    ).fetchone()
+    if not row:
+        raise LookupError("unknown-research-note")
+    result = get_note(conn, note_id)
+    if result["target_kind"] == "list":
+        conn.execute(
+            "update research_lists set updated_at=%s where id=%s",
+            (updated_at, result["target_id"]),
+        )
+    return result
+
+
 def delete_note(conn, note_id: int) -> list[DetachedObject]:
     objects = conn.execute(
         """select distinct object.digest,object.object_key

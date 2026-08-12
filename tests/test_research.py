@@ -11,6 +11,7 @@ from app_dashboard.research import (
     remove_app_from_list,
     search_apps,
     target_research,
+    update_note,
 )
 
 
@@ -92,3 +93,22 @@ def test_deleting_last_note_reference_marks_physical_object_for_deletion(db):
     assert db.execute(
         "select count(*) from research_attachment_objects"
     ).fetchone()[0] == 0
+
+
+def test_note_can_be_updated_without_losing_its_target(db):
+    app_id = discovered(db)
+    note = create_note(
+        db, target_kind="app", target_id=app_id, title="First title",
+        body="First body", author="first@example.com",
+    )
+
+    updated = update_note(
+        db, note["id"], title="Better title", body="Better body",
+        now=datetime(2026, 8, 12, 14, tzinfo=timezone.utc),
+    )
+
+    assert updated["title"] == "Better title"
+    assert updated["body"] == "Better body"
+    assert updated["author"] == "first@example.com"
+    assert updated["target_kind"] == "app"
+    assert updated["target_id"] == app_id
