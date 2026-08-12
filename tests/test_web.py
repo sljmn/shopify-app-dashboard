@@ -415,6 +415,20 @@ def test_management_can_create_a_draft_and_runbook_is_available(db):
     assert "Measurement Protocol" in runbook.text
     assert "SHOPIFY_PARTNER_TOKEN_ORGID" in runbook.text
 
+    review_playbook = client.get("/management/review-playbook")
+    assert review_playbook.status_code == 200
+    assert "Review collection playbook" in review_playbook.text
+    assert "shop.plan.partnerDevelopment" in review_playbook.text
+    assert "book_import_succeeded" in review_playbook.text
+    assert "shopify.reviews.request()" in review_playbook.text
+    assert "Definition of Done" in review_playbook.text
+
+    unauthenticated = TestClient(
+        create_app(conn_factory=lambda: keep_open(db)),
+        follow_redirects=False,
+    ).get("/management/review-playbook")
+    assert unauthenticated.status_code == 401
+
 
 def test_management_write_refuses_cross_origin_requests(db):
     client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))

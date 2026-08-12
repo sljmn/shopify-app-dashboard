@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Review collection playbook{% endblock %}
+{% block content %}
+<div class="manage-head">
+    <div><a class="back-link" href="/management/integrations">Back to integrations</a><h1>Review collection playbook</h1><p>The implementation contract for native Shopify review prompts and contact capture.</p></div>
+    <a class="button secondary" href="/management/runbook">New app runbook</a>
+</div>
+
+<div class="runbook-layout">
+<nav class="runbook-index card" aria-label="Playbook sections">
+    <strong>Implementation</strong>
+    <a href="#flow">1. Understand the flow</a>
+    <a href="#event">2. Choose success</a>
+    <a href="#contact">3. Capture contacts</a>
+    <a href="#usage">4. Report usage</a>
+    <a href="#prompt">5. Open the prompt</a>
+    <a href="#outcome">6. Report outcome</a>
+    <a href="#configure">7. Configure Mantle</a>
+    <a href="#test">8. Test end to end</a>
+    <a href="#done">Definition of Done</a>
+</nav>
+
+<article class="runbook">
+<section id="flow">
+    <p class="eyebrow">Architecture</p><h2>1. Understand the trusted flow</h2>
+    <ol><li>The embedded app authenticates the Shopify session and captures the shop plus current staff member.</li><li>A persisted business action succeeds and the app reports one idempotent usage event to Mantle.</li><li>Mantle applies the shared policy and may return a short-lived decision ID.</li><li>The app claims that decision in its own authenticated backend, then calls <code>shopify.reviews.request()</code> in the embedded frontend.</li><li>The app reports Shopify's exact result to Mantle. A displayed modal is not proof that a public review was posted.</li></ol>
+    <div class="notice"><strong>Trust boundary.</strong> The browser never receives <code>MANTLE_USAGE_TOKEN</code>. Shopify identity is validated by the app; policy and history belong to Mantle.</div>
+</section>
+
+<section id="event">
+    <p class="eyebrow">Product rule</p><h2>2. Choose a real success event</h2>
+    <p>Ask after the merchant has received value, not after login, installation, navigation, a lookup, or a failed action. The event must originate from committed application state.</p>
+    <table><thead><tr><th>App workflow</th><th>Good trigger</th><th>Do not use</th></tr></thead><tbody><tr><td>Book importer</td><td><code>book_import_succeeded</code> after the product import commits</td><td>ISBN lookup or scan opened</td></tr><tr><td>Order sync</td><td>First successfully persisted external order</td><td>Connection attempt</td></tr><tr><td>Widget app</td><td>Widget successfully published</td><td>Editor opened</td></tr><tr><td>Translation</td><td>Translation successfully written to Shopify</td><td>Preview generated</td></tr></tbody></table>
+    <p>Use a stable event ID derived from the saved record, for example <code>book-import:&lt;database-id&gt;:success</code>. Retries must reuse it.</p>
+</section>
+
+<section id="contact">
+    <p class="eyebrow">Every authenticated session</p><h2>3. Capture shop and staff contacts</h2>
+    <p>Use Shopify token exchange for the staff identity. Store staff by Shopify user ID, not email, so multiple employees remain separate. Only send an email when Shopify marks it verified.</p>
+    <p>Read the shop plan through Admin GraphQL and send Shopify's authoritative development-store flag:</p>
+    <pre><code>query ShopContactContext {
+  shop {
+    id
+    email
+    contactEmail
+    plan { partnerDevelopment publicDisplayName }
+  }
+}</code></pre>
+    <pre><code>POST /ingest/contacts/&lt;app-slug&gt;
+X-Usage-Token: &lt;MANTLE_USAGE_TOKEN&gt;
+
+{
+  "shop_gid": "gid://shopify/Shop/123",
+  "shop_domain": "store.myshopify.com",
+  "kind": "shop",
+  "email": "owner@example.com",
+  "email_verified": true,
+  "partner_development": false,
+  "seen_at": "2026-08-13T10:00:00Z"
+}</code></pre>
+    <div class="notice"><strong>Development stores.</strong> When <code>shop.plan.partnerDevelopment</code> is <code>true</code>, Mantle never issues a review decision. Shopify can show a test modal there, but the store cannot publish a review.</div>
+</section>
+
+<section id="usage">
+    <p class="eyebrow">Server to server</p><h2>4. Report the successful action</h2>
+    <pre><code>POST /ingest/usage/&lt;app-slug&gt;
+X-Usage-Token: &lt;MANTLE_USAGE_TOKEN&gt;
+
+{
+  "events": [{
+    "shop_gid": "gid://shopify/Shop/123",
+    "event_id": "book-import:481:success",
+    "event_type": "book_import_succeeded",
+    "occurred_at": "2026-08-13T10:04:00Z",
+    "properties": {}
+  }]
+}</code></pre>
+    <p>Retry network and 5xx failures with bounded backoff. A duplicate event is safe. Never make the merchant's successful workflow fail because Mantle is unavailable.</p>
+    <pre><code>{
+  "stored": 1,
+  "review_prompt": {
+    "decision_id": "opaque-single-use-value",
+    "expires_at": "2026-08-13T10:19:00Z"
+  }
+}</code></pre>
+</section>
+
+<section id="prompt">
+    <p class="eyebrow">Embedded frontend</p><h2>5. Open Shopify's native prompt once</h2>
+    <p>Persist the returned decision in the app database. Expose it only through an authenticated app endpoint and atomically claim it before opening the modal. On embedded desktop, call:</p>
+    <pre><code>const result = await window.shopify.reviews.request()</code></pre>
+    <p>Do not build a custom rating modal, offer an incentive, send review-request emails, or block functionality. The decision expires after 15 minutes and is single use.</p>
+</section>
+
+<section id="outcome">
+    <p class="eyebrow">Exact Shopify result</p><h2>6. Report the outcome</h2>
+    <pre><code>POST /ingest/review-outcomes/&lt;app-slug&gt;
+X-Usage-Token: &lt;MANTLE_USAGE_TOKEN&gt;
+
+{
+  "decision_id": "opaque-single-use-value",
+  "success": false,
+  "code": "cancelled",
+  "message": "Merchant closed the dialog"
+}</code></pre>
+    <table><thead><tr><th>Shopify code</th><th>Mantle policy</th></tr></thead><tbody><tr><td><code>success</code></td><td>Modal shown; wait at least 60 days</td></tr><tr><td><code>cancelled</code></td><td>Retry after the configured interval and a later success</td></tr><tr><td><code>cooldown-period</code></td><td>Wait 60 days</td></tr><tr><td><code>annual-limit-reached</code></td><td>Wait 365 days</td></tr><tr><td><code>recently-installed</code></td><td>Retry after 24 hours</td></tr><tr><td><code>already-reviewed</code></td><td>Stop permanently</td></tr><tr><td><code>merchant-ineligible</code></td><td>Stop until an operator resets it</td></tr><tr><td><code>mobile-app</code>, <code>already-open</code>, <code>open-in-progress</code></td><td>Temporary failure; reconsider after a later success</td></tr></tbody></table>
+</section>
+
+<section id="configure">
+    <p class="eyebrow">Mantle management</p><h2>7. Configure only after telemetry works</h2>
+    <ol><li>Add the usage event to the app's allowlist and set its usage-token ENV name.</li><li>Deploy the app with contact, usage, and outcome reporting while review prompting remains disabled.</li><li>Verify contacts and success events in Mantle.</li><li>Set the success event, minimum event count, minimum install age, cancellation retry, and annual cap.</li><li>Enable native prompts last.</li></ol>
+    <p>Current inventory: {{ configured_review_apps|length }} of {{ rows|length }} recorded apps have review prompting enabled. Edit the policy from <a href="/management/integrations">Integrations</a>.</p>
+</section>
+
+<section id="test">
+    <p class="eyebrow">Verification</p><h2>8. Test end to end</h2>
+    <ol><li>Use a development store to verify rendering only; expect Shopify's “testing purposes only” notice and no publishable review.</li><li>Confirm Mantle received <code>partner_development=true</code> and does not issue further decisions for that store.</li><li>For policy verification, create a short-lived test decision explicitly rather than weakening production rules.</li><li>Trigger the real committed success path and verify exactly one local decision is stored.</li><li>Reload and navigate: the decision must not open twice.</li><li>Close the modal and verify the exact Shopify code, next eligible date, and merchant history in Mantle.</li><li>Test Mantle downtime: the app workflow must still succeed.</li><li>Redact the shop and confirm contacts disappear while aggregate decision history remains without response messages.</li></ol>
+</section>
+
+<section id="reference">
+    <p class="eyebrow">Working example</p><h2>Book Importer reference files</h2>
+    <ul><li><code>app/jobs/shopify/after_authenticate_job.rb</code> reads shop contact and development status.</li><li><code>app/services/mantle/contact_capture.rb</code> derives trusted staff identity from Shopify token exchange.</li><li><code>app/jobs/mantle/report_usage_event_job.rb</code> reports the committed success event.</li><li><code>app/controllers/api/review_prompts_controller.rb</code> claims decisions and reports outcomes.</li><li><code>app/frontend/hooks/useReviewPrompt.ts</code> calls the native Reviews API once.</li><li><code>app/models/book_import.rb</code> emits only after a successful persisted state transition.</li></ul>
+</section>
+
+<section id="done">
+    <p class="eyebrow">Release gate</p><h2>Definition of Done</h2>
+    <ul class="runbook-checklist"><li>Success event represents delivered merchant value and has a stable ID.</li><li>Shop and every staff user are captured from authenticated Shopify data.</li><li><code>partnerDevelopment</code> is reported and confirmed development stores are excluded.</li><li>All Mantle calls are server-side, authenticated, bounded, retryable, and non-blocking.</li><li>A decision is persisted and atomically claimed before the frontend opens it.</li><li>The native Shopify result is reported exactly; “shown” is not called a posted review.</li><li>Duplicate events, reloads, multiple staff sessions, cancellation, cooldown, mobile, and downtime are tested.</li><li>Prompting is enabled only after contact and usage telemetry are visible in production.</li></ul>
+</section>
+</article>
+</div>
+{% endblock %}

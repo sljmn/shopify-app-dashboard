@@ -71,7 +71,7 @@ def parse_contact(raw: bytes) -> dict:
     allowed = {
         "shop_gid", "shop_domain", "kind", "shopify_user_id", "first_name",
         "last_name", "email", "email_verified", "locale", "account_owner",
-        "collaborator", "access_level", "seen_at",
+        "collaborator", "access_level", "partner_development", "seen_at",
     }
     unknown = set(payload) - allowed
     if unknown:
@@ -87,6 +87,11 @@ def parse_contact(raw: bytes) -> dict:
         raise UsageError(422, "staff contacts require a numeric shopify_user_id")
     if kind == "shop" and user_id:
         raise UsageError(422, "shop contacts cannot have shopify_user_id")
+    partner_development = payload.get("partner_development")
+    if partner_development is not None and not isinstance(partner_development, bool):
+        raise UsageError(422, "partner_development must be a boolean")
+    if kind == "staff" and partner_development is not None:
+        raise UsageError(422, "partner_development belongs on the shop contact")
     verified = payload.get("email_verified") is True
     email = _text(payload.get("email"), "email") if verified else None
     return {
@@ -102,6 +107,7 @@ def parse_contact(raw: bytes) -> dict:
         "account_owner": payload.get("account_owner") if isinstance(payload.get("account_owner"), bool) else None,
         "collaborator": payload.get("collaborator") if isinstance(payload.get("collaborator"), bool) else None,
         "access_level": _text(payload.get("access_level"), "access_level", limit=40),
+        "partner_development": partner_development,
         "seen_at": _timestamp(payload.get("seen_at"), "seen_at"),
     }
 
@@ -136,6 +142,18 @@ def upsert_contact(conn: psycopg.Connection, app_id: int, contact: dict) -> None
          contact["account_owner"], contact["collaborator"], contact["access_level"],
          contact["seen_at"], contact["seen_at"]),
     )
+    if contact["kind"] == "shop" and contact["partner_development"] is not None:
+        conn.execute(
+            """insert into shops
+                   (app_id, shop_gid, shop_domain, partner_development, updated_at)
+               values (%s, %s, %s, %s, now())
+               on conflict (app_id, shop_gid) do update set
+                   shop_domain=coalesce(shops.shop_domain, excluded.shop_domain),
+                   partner_development=excluded.partner_development,
+                   updated_at=now()""",
+            (app_id, contact["shop_gid"], contact["shop_domain"],
+             contact["partner_development"]),
+        )
     conn.commit()
 
 
@@ -161,10 +179,13 @@ def issue_review_decision(
         return None
     with conn.transaction():
         shop = conn.execute(
-            """select installed_at from shops where app_id=%s and shop_gid=%s
+            """select installed_at, partner_development
+               from shops where app_id=%s and shop_gid=%s
                for update""", (app.id, shop_gid),
         ).fetchone()
         if not shop or not shop[0] or shop[0] > now - timedelta(hours=app.review_min_install_hours):
+            return None
+        if shop[1] is True:
             return None
         if conn.execute(
             "select 1 from review_prompt_suppressions where app_id=%s and shop_gid=%s",

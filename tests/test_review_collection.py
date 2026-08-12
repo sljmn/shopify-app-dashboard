@@ -98,6 +98,42 @@ def test_young_install_and_suppression_block_decision(db, test_app):
                                  event_type="book_import_succeeded", now=NOW) is None
 
 
+def test_confirmed_partner_development_shop_cannot_receive_a_decision(db, test_app):
+    app = review_app(test_app)
+    install(db, app)
+    db.execute(
+        "update shops set partner_development=true where app_id=%s and shop_gid=%s",
+        (app.id, GID),
+    )
+    db.commit()
+    ingest(db, app.id, [event()])
+
+    assert issue_review_decision(
+        db, app, shop_gid=GID, event_id="event-1",
+        event_type="book_import_succeeded", now=NOW,
+    ) is None
+
+
+def test_shop_contact_records_authoritative_development_store_status(db, test_app):
+    contact = parse_contact(json.dumps({
+        "shop_gid": GID,
+        "shop_domain": "books-dev.myshopify.com",
+        "kind": "shop",
+        "email": "owner@example.com",
+        "email_verified": True,
+        "partner_development": True,
+        "seen_at": NOW.isoformat(),
+    }).encode())
+
+    upsert_contact(db, test_app.id, contact)
+
+    assert db.execute(
+        """select partner_development, shop_domain from shops
+           where app_id=%s and shop_gid=%s""",
+        (test_app.id, GID),
+    ).fetchone() == (True, "books-dev.myshopify.com")
+
+
 def test_outcome_is_idempotent_and_schedules_cancelled_retry(db, test_app):
     app = review_app(test_app)
     install(db, app)

@@ -3,7 +3,7 @@
 {% block content %}
 <div class="manage-head">
     <div><a class="back-link" href="/management/integrations">Back to integrations</a><h1>{{ 'Organization' if kind == 'organization' else 'App' }}</h1></div>
-    <a class="button secondary" href="/management/runbook">Open runbook</a>
+    <div class="manage-actions"><a class="button secondary" href="/management/runbook">New app runbook</a>{% if kind == 'app' %}<a class="button secondary" href="/management/review-playbook">Review playbook</a>{% endif %}</div>
 </div>
 {% if request.query_params.get('saved') %}<div class="notice success">Saved. Runtime and scheduled syncs now read this configuration.</div>{% endif %}
 {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}

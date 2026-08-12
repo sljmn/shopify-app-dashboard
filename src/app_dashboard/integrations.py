@@ -106,7 +106,8 @@ def integration_rows(
                a.ga4_credentials_env, a.tracking_status, a.active,
                a.archived_at, a.updated_at, o.id, o.name, o.partner_org_id,
                o.token_env, o.archived_at,
-               exists(select 1 from ga4_daily g where g.app_id=a.id) as has_ga4_data
+               exists(select 1 from ga4_daily g where g.app_id=a.id) as has_ga4_data,
+               a.review_prompt_enabled
         from apps a
         join organizations o on o.id = a.organization_id
         order by a.archived_at nulls first, o.name, a.name
@@ -134,6 +135,7 @@ def integration_rows(
             "organization_archived": row[19] is not None,
             "partner_token_present": secret_present(row[18], environ),
             "ga4_credentials_present": secret_present(row[10], environ),
+            "review_prompt_enabled": row[21],
         })
     return result
 

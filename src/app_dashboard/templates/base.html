@@ -1576,6 +1576,16 @@
         .runbook h2 { margin-bottom: 8px; }
         .runbook p, .runbook li { color: var(--ink-2); line-height: 1.65; }
         .runbook pre { overflow-x: auto; background: var(--sidebar); color: #f4f1fa; border-radius: 7px; padding: 13px; font-size: 12px; }
+        .runbook .eyebrow { margin: 0 0 4px; color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+        .runbook .notice { margin-top: 16px; padding: 13px 15px; border-left: 3px solid var(--accent); background: var(--surface-2); color: var(--ink-2); line-height: 1.55; }
+        .runbook { min-width: 0; overflow-wrap: anywhere; }
+        .runbook table { display: block; width: 100%; margin: 14px 0; border-collapse: collapse; overflow-x: auto; }
+        .runbook th, .runbook td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+        .runbook th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+        .runbook code:not(pre code) { padding: 2px 5px; border-radius: 4px; background: var(--surface-2); color: var(--ink); }
+        .runbook-checklist { list-style: none; padding: 0; }
+        .runbook-checklist li { position: relative; padding-left: 26px; margin-bottom: 10px; }
+        .runbook-checklist li::before { content: ""; position: absolute; left: 0; top: 7px; width: 12px; height: 12px; border: 1px solid var(--muted); border-radius: 3px; }
         @media (max-width: 900px) {
             .manage-head { flex-direction: column; }
             .manage-actions { width: 100%; }

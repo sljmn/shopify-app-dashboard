@@ -2041,6 +2041,23 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             _management_context(request, user, rows=rows),
         )
 
+    @app.get("/management/review-playbook")
+    def management_review_playbook(
+        request: Request, user: str = Depends(verify_creds)
+    ):
+        conn = conn_factory()
+        try:
+            rows = integration_rows(conn)
+        finally:
+            conn.close()
+        configured = [row for row in rows if row.get("review_prompt_enabled")]
+        return templates.TemplateResponse(
+            request, "review_playbook.html",
+            _management_context(
+                request, user, rows=rows, configured_review_apps=configured,
+            ),
+        )
+
     def _back_to_notes(
         selected_app: AppConfig, error: str | None = None
     ) -> RedirectResponse:
