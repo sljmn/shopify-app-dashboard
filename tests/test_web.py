@@ -414,6 +414,8 @@ def test_management_can_create_a_draft_and_runbook_is_available(db):
     assert runbook.status_code == 200
     assert "Measurement Protocol" in runbook.text
     assert "SHOPIFY_PARTNER_TOKEN_ORGID" in runbook.text
+    assert "--code-bg: #211A2E" in runbook.text
+    assert ".runbook pre code" in runbook.text
 
     review_playbook = client.get("/management/review-playbook")
     assert review_playbook.status_code == 200

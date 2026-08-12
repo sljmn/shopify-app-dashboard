@@ -50,6 +50,9 @@
             --control-inset: #FAF9FC;
             --control-shadow: 0 1px 2px rgba(33, 26, 46, .05);
             --overlay-shadow: 0 20px 60px rgba(33, 26, 46, .22);
+            --code-bg: #211A2E;
+            --code-border: #3A334D;
+            --code-ink: #F7F4FC;
             --heat-rgb: 108 75 244;   /* retention cells, alpha carries the value */
             --heat-ink: #FFFFFF;      /* text once a cell is dark enough to need it */
             --on-brand: #FFFFFF;      /* text on a brand-filled button */
@@ -98,6 +101,9 @@
                 --control-inset: #191521;
                 --control-shadow: 0 1px 2px rgba(0, 0, 0, .18);
                 --overlay-shadow: 0 20px 60px rgba(0, 0, 0, .48);
+                --code-bg: #0D0A14;
+                --code-border: #3B334D;
+                --code-ink: #F7F4FC;
                 --heat-rgb: 155 133 255;
                 --heat-ink: #14111C;
                 --on-brand: #14111C;
@@ -1575,7 +1581,17 @@
         .runbook section { padding: 0 0 26px; margin-bottom: 26px; border-bottom: 1px solid var(--border); scroll-margin-top: 20px; }
         .runbook h2 { margin-bottom: 8px; }
         .runbook p, .runbook li { color: var(--ink-2); line-height: 1.65; }
-        .runbook pre { overflow-x: auto; background: var(--sidebar); color: #f4f1fa; border-radius: 7px; padding: 13px; font-size: 12px; }
+        .runbook pre {
+            overflow-x: auto; margin: 14px 0; padding: 15px 16px;
+            border: 1px solid var(--code-border); border-radius: 7px;
+            background: var(--code-bg); color: var(--code-ink);
+            font: 500 12px/1.65 var(--mono); white-space: pre;
+            -webkit-overflow-scrolling: touch;
+        }
+        .runbook pre code {
+            display: block; min-width: max-content;
+            background: transparent; color: inherit; font: inherit;
+        }
         .runbook .eyebrow { margin: 0 0 4px; color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase; }
         .runbook .notice { margin-top: 16px; padding: 13px 15px; border-left: 3px solid var(--accent); background: var(--surface-2); color: var(--ink-2); line-height: 1.55; }
         .runbook { min-width: 0; overflow-wrap: anywhere; }
