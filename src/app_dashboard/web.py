@@ -785,6 +785,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             conn.close()
         return {
             **page_context(request, user, "research", None, apps),
+            "attachments_enabled": settings.b2_configured,
             **extra,
         }
 

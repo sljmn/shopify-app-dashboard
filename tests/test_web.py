@@ -184,6 +184,21 @@ def test_research_write_refuses_cross_origin_requests(db):
     assert db.execute("select count(*) from research_lists").fetchone()[0] == 0
 
 
+def test_research_note_form_explains_when_storage_is_unavailable(db):
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('note-target','Note Target',now(),now(),false) returning id"""
+    ).fetchone()[0]
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    response = client.get(f"/research/notes/new?target=app&target_id={app_id}")
+
+    assert response.status_code == 200
+    assert "Private file storage is not configured yet" in response.text
+    assert 'name="attachments"' not in response.text
+
+
 def test_integration_management_labels_connected_tracking_without_data_as_waiting(db):
     db.execute("update apps set tracking_status='connected'")
 
