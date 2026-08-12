@@ -14,10 +14,10 @@ from urllib.parse import parse_qs, urlencode, urlparse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from datetime import date
+from datetime import date, timedelta
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -43,7 +43,22 @@ from app_dashboard.aso import (
     position_history,
     portfolio_report,
 )
-from app_dashboard.app_store_discovery import discovery_report, growth_signals
+from app_dashboard.app_store_discovery import (
+    discovery_report,
+    growth_signals,
+    search_app_catalog,
+)
+from app_dashboard.discovery_watchlist import (
+    app_detail,
+    compare_versions,
+    follow_app,
+    growth_history,
+    list_watched_apps,
+    listing_versions,
+    unfollow_app,
+    watchlist_summary,
+)
+from app_dashboard.watchlist_collector import media_path
 from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.integrations import (
     IntegrationError,
@@ -762,6 +777,9 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         request: Request,
         q: str = "",
         category: str = "",
+        catalog_q: str = "",
+        catalog_category: str = "",
+        catalog_page: int = 1,
         growth: str = "gems",
         page: int = 1,
         user: str = Depends(verify_creds),
@@ -774,12 +792,23 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 conn, search=q, category=category, page=page
             )
             signals = growth_signals(conn)
+            catalog = search_app_catalog(
+                conn, search=catalog_q, category=catalog_category,
+                page=catalog_page,
+            )
         finally:
             conn.close()
         query = {
             "q": q.strip(), "category": category.strip(), "growth": growth,
         }
         query = {key: value for key, value in query.items() if value}
+        catalog_query_values = {
+            "catalog_q": catalog_q.strip(),
+            "catalog_category": catalog_category.strip(),
+        }
+        catalog_query_values = {
+            key: value for key, value in catalog_query_values.items() if value
+        }
         return templates.TemplateResponse(
             request,
             "discover.html",
@@ -790,7 +819,125 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "selected_category": category.strip(),
                 "selected_growth": growth,
                 "growth_rows": signals[growth],
+                "catalog": catalog,
+                "catalog_query": catalog_q.strip(),
+                "catalog_category": catalog_category.strip(),
                 "filter_qs": urlencode(query),
+                "catalog_filter_qs": urlencode(catalog_query_values),
+            },
+        )
+
+    @app.post("/discover/apps/{handle}/follow")
+    async def follow_discovered_app(
+        request: Request, handle: str, user: str = Depends(verify_creds)
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            follow_app(conn, handle, source="manual")
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown app") from None
+        finally:
+            conn.close()
+        return RedirectResponse(f"/discover/apps/{handle}", status_code=303)
+
+    @app.post("/discover/apps/{handle}/unfollow")
+    async def unfollow_discovered_app(
+        request: Request, handle: str, user: str = Depends(verify_creds)
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            unfollow_app(conn, handle)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="App is not followed") from None
+        finally:
+            conn.close()
+        return RedirectResponse(f"/discover/apps/{handle}", status_code=303)
+
+    @app.get("/discover/apps/{handle}")
+    def discovered_app_detail(
+        request: Request, handle: str, view: str = "overview",
+        before: int | None = None, after: int | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        view = view if view in {"overview", "growth", "history", "compare"} else "overview"
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+            detail = app_detail(conn, handle)
+            if not detail:
+                raise HTTPException(status_code=404, detail="Unknown app")
+            history = growth_history(conn, detail["id"]) if view == "growth" else None
+            versions = listing_versions(conn, detail["id"])
+            comparison = None
+            if view == "compare" and before is None and after is None \
+                    and len(versions) >= 2:
+                before, after = versions[1]["id"], versions[0]["id"]
+            if view == "compare" and before is not None and after is not None:
+                comparison = compare_versions(conn, detail["id"], before, after)
+                if comparison is None:
+                    raise HTTPException(status_code=404, detail="Unknown listing version")
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request, "discovered_app.html", {
+                **page_context(request, user, "discover", None, apps),
+                "detail": detail, "view": view, "history": history,
+                "versions": versions, "comparison": comparison,
+                "before_id": before, "after_id": after,
+            },
+        )
+
+    @app.get("/discover/media/{digest}")
+    def discovered_media(
+        digest: str, user: str = Depends(verify_creds),
+    ):
+        del user
+        try:
+            path = media_path(settings.watchlist_media_path, digest)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Unknown media") from None
+        conn = conn_factory()
+        try:
+            row = conn.execute(
+                "select mime_type from discovery_media_objects where digest=%s",
+                (digest,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Unknown media")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Missing media")
+        return FileResponse(
+            path, media_type=row[0],
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
+
+    @app.get("/discover/watchlist")
+    def watchlist_page(
+        request: Request, period: str = "7d", page: int = 1,
+        user: str = Depends(verify_creds),
+    ):
+        period = period if period in {"7d", "30d"} else "7d"
+        days = 7 if period == "7d" else 30
+        end = local_today()
+        start = end - timedelta(days=days - 1)
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+            watched = list_watched_apps(conn, page=page)
+            summary = watchlist_summary(conn, start, end)
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request, "watchlist.html", {
+                **page_context(request, user, "discover", None, apps),
+                "watched": watched, "summary": summary, "period": period,
+                "start": start, "end": end,
             },
         )
 

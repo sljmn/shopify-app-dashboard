@@ -61,6 +61,22 @@ fly deploy
 
 Builds on remote builders, so no local Docker daemon is needed.
 
+### Dokku watchlist media
+
+Competitor listing JSON is stored in Postgres, but archived icons and screenshots need a persistent
+host directory. Create and mount it before deploying migration 018:
+
+```bash
+mkdir -p /var/lib/dokku/data/storage/mantle-watchlist
+chown -R 10001:10001 /var/lib/dokku/data/storage/mantle-watchlist
+dokku storage:mount mantle /var/lib/dokku/data/storage/mantle-watchlist:/data/mantle-watchlist
+dokku config:set --no-restart mantle \
+  WATCHLIST_MEDIA_PATH=/data/mantle-watchlist WATCHLIST_CONCURRENCY=2
+```
+
+Keep one web process: the daily watchlist job is part of the same APScheduler instance. Back up the
+mounted directory together with Postgres; the database contains content digests, not media bytes.
+
 ## Verify
 
 Do not consider it deployed until all three pass:

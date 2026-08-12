@@ -888,6 +888,42 @@
         .discover-filters input[type="search"] { flex: 1 1 320px; }
         .discover-table { min-width: 920px; }
         .category-list { max-width: 320px; white-space: normal; }
+        .catalog-search { margin: 24px 0 30px; }
+        .catalog-search .section-heading {
+            display: flex; align-items: end; justify-content: space-between;
+            gap: 18px;
+        }
+        .catalog-table { min-width: 980px; }
+        .inline-form { display: inline; margin: 0; }
+        .page-heading { display: flex; justify-content: space-between; align-items: end; gap: 20px; }
+        .heading-actions { display: flex; align-items: center; gap: 8px; }
+        .heading-actions form { margin: 0; }
+        .segment-control {
+            display: inline-flex; width: fit-content; padding: 3px;
+            background: var(--control-inset); border: 1px solid var(--border);
+            border-radius: 9px;
+        }
+        .segment-control a {
+            padding: 6px 10px; color: var(--ink-2); border-radius: 6px;
+            font-size: 13px; font-weight: 600; text-decoration: none;
+        }
+        .segment-control a[aria-current="page"] {
+            color: var(--ink); background: var(--card); box-shadow: var(--control-shadow);
+        }
+        .listing-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .8fr); gap: 32px; }
+        .listing-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .listing-gallery img { display: block; width: 100%; border: 1px solid var(--border); border-radius: 6px; }
+        .empty-state { padding: 20px 0; color: var(--muted); }
+        .version-diff { display: grid; gap: 14px; margin-top: 18px; }
+        .version-diff article { border-top: 1px solid var(--border); padding-top: 14px; }
+        .diff-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+        .diff-pair pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px var(--mono); color: var(--ink-2); }
+        .watch-movement { display: flex; gap: 34px; margin: 24px 0; padding: 16px 0; border-block: 1px solid var(--border); }
+        .watch-movement > div { display: grid; gap: 4px; }
+        .watch-movement strong { font: 700 26px var(--mono); }
+        .quiet-list { display: grid; }
+        .quiet-list a, .quiet-list > div { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+        .watch-table { min-width: 960px; }
         .growth-signals { margin: 28px 0 20px; }
         .growth-signals .section-heading {
             display: flex; align-items: end; justify-content: space-between;
@@ -911,6 +947,30 @@
             .growth-signals .section-heading { align-items: stretch; flex-direction: column; }
             .growth-tabs { width: 100%; overflow-x: auto; }
             .growth-tabs a { white-space: nowrap; }
+            .catalog-search .section-heading { align-items: stretch; flex-direction: column; }
+            .catalog-table, .catalog-table tbody, .catalog-table tr, .catalog-table td {
+                display: block; width: 100%;
+            }
+            .catalog-table { min-width: 0; }
+            .catalog-table thead { display: none; }
+            .catalog-table tr { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+            .catalog-table td {
+                display: grid; grid-template-columns: 88px minmax(0, 1fr);
+                gap: 10px; padding: 5px 0; border: 0;
+            }
+            .catalog-table td::before {
+                content: attr(data-label); color: var(--muted); font-size: 11px;
+                text-transform: uppercase;
+            }
+            .page-heading, .heading-actions, .watch-movement { align-items: stretch; flex-direction: column; }
+            .listing-overview, .diff-pair { grid-template-columns: 1fr; }
+            .listing-gallery { grid-template-columns: 1fr; }
+            .page-heading .segment-control { align-self: flex-start; }
+            .watch-movement {
+                display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 12px; flex-direction: initial;
+            }
+            .watch-movement strong { font-size: 22px; }
         }
         .bar-pair { display: grid; gap: 2px; }
         /* Wraps rather than squeezing: the store-deaths list is a run of shop

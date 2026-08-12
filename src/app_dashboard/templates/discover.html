@@ -3,6 +3,52 @@
 <h1>Discover</h1>
 <p class="sub">New apps observed across every Shopify App Store category.</p>
 
+<section class="catalog-search" aria-labelledby="catalog-search-title">
+    <div class="section-heading">
+        <div>
+            <h2 id="catalog-search-title">Search all App Store apps</h2>
+            <p class="sub">Find any indexed app by name, handle, category, or developer.</p>
+        </div>
+        <a class="ghost" href="/discover/watchlist">Watchlist</a>
+    </div>
+    <form class="filters discover-filters" method="get" action="/discover">
+        <input type="search" name="catalog_q" value="{{ catalog_query }}" placeholder="Search all {{ indexed }} apps" aria-label="Search all App Store apps">
+        <select name="catalog_category" aria-label="Catalog category">
+            <option value="">All categories</option>
+            {% for slug, name, count in categories %}
+            <option value="{{ slug }}"{% if catalog_category == slug %} selected{% endif %}>{{ name }} ({{ count }})</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Search</button>
+        {% if catalog_query or catalog_category %}<a class="ghost" href="/discover">Clear</a>{% endif %}
+    </form>
+    {% if catalog_query or catalog_category %}
+    <div class="table-card catalog-results">
+        <table class="catalog-table">
+            <thead><tr><th>App</th><th>Developer</th><th>Reviews</th><th>Rating</th><th>Best rank</th><th>Categories</th><th></th></tr></thead>
+            <tbody>
+            {% for row in catalog.rows %}
+            <tr>
+                <td data-label="App"><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name or row.handle|replace('-', ' ')|title }}</strong></a><br><span class="sub">/{{ row.handle }}</span></td>
+                <td data-label="Developer">{{ row.developer or "—" }}</td>
+                <td data-label="Reviews">{{ row.reviews if row.reviews is not none else "—" }}</td>
+                <td data-label="Rating">{{ row.rating if row.rating is not none else "—" }}</td>
+                <td data-label="Best rank">{% if row.best_rank %}#{{ row.best_rank }}{% else %}—{% endif %}</td>
+                <td data-label="Categories" class="category-list">{{ row.categories or "—" }}</td>
+                <td data-label="Follow">
+                    <form class="inline-form" method="post" action="/discover/apps/{{ row.handle|urlencode }}/{% if row.followed %}unfollow{% else %}follow{% endif %}">
+                        <button class="ghost" type="submit">{% if row.followed %}Following{% else %}Follow{% endif %}</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}<tr><td colspan="7">No indexed apps match this search.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="pager"><span class="sub">{{ catalog.total }} apps</span><span class="pager-links">{% if catalog.page > 1 %}<a href="/discover?{{ catalog_filter_qs }}&amp;catalog_page={{ catalog.page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}<span class="sub">Page {{ catalog.page }} of {{ catalog.pages }}</span>{% if catalog.page < catalog.pages %}<a href="/discover?{{ catalog_filter_qs }}&amp;catalog_page={{ catalog.page + 1 }}">Next</a>{% else %}<span class="disabled">Next</span>{% endif %}</span></div>
+    {% endif %}
+</section>
+
 <div class="cards discovery-metrics">
     <div class="card stat"><div class="label">Apps indexed</div><div class="num">{{ indexed }}</div></div>
     <div class="card stat"><div class="label">New this week</div><div class="num">{{ new_this_week }}</div></div>
@@ -48,7 +94,7 @@
             <tbody>
             {% for row in growth_rows %}
             <tr>
-                <td><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener"><strong>{{ row.name }}</strong></a><br><span class="sub">{{ row.categories or "/" ~ row.handle }}</span></td>
+                <td><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><span class="sub">{{ row.categories or "/" ~ row.handle }}</span></td>
                 <td>{{ row.reviews if row.reviews is not none else "—" }}</td>
                 <td class="{% if row.previous_delta and row.previous_delta > 0 %}money-up{% elif row.previous_delta and row.previous_delta < 0 %}money-down{% endif %}">{% if row.previous_delta is not none %}{{ signed(row.previous_delta) }}{% else %}—{% endif %}</td>
                 <td class="{% if row.delta7 and row.delta7 > 0 %}money-up{% elif row.delta7 and row.delta7 < 0 %}money-down{% endif %}">{% if row.delta7 is not none %}{{ signed(row.delta7) }}{% else %}—{% endif %}</td>
@@ -88,7 +134,7 @@
         <tbody>
         {% for handle, name, first_seen, updated_on, category_names in rows %}
         <tr>
-            <td><strong>{{ name or handle|replace("-", " ")|title }}</strong><br><span class="sub">/{{ handle }}</span></td>
+            <td><a href="/discover/apps/{{ handle|urlencode }}"><strong>{{ name or handle|replace("-", " ")|title }}</strong></a><br><span class="sub">/{{ handle }}</span></td>
             <td class="category-list">{{ category_names or "Not categorized yet" }}</td>
             <td>{{ first_seen|local_time("%-d %b %Y") }}</td>
             <td>{{ updated_on.strftime("%-d %b %Y") if updated_on else "—" }}</td>

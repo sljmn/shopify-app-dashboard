@@ -1,11 +1,12 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app_dashboard.catalog import AppConfig
 from app_dashboard.active_subscriptions import sync_active_subscriptions
+from app_dashboard.catalog import AppConfig
 from app_dashboard.digest import send_weekly_digest
 from app_dashboard.ops import check_stale_sync
 from app_dashboard.partner_api import PartnerClient
@@ -227,10 +228,12 @@ def run_app_discovery_job(conn_factory) -> dict:
 
 def run_category_discovery_job(conn_factory) -> dict:
     from app_dashboard.app_store_discovery import run_category_discovery
+    from app_dashboard.discovery_watchlist import follow_automatic_candidates
 
     conn = conn_factory()
     try:
         result = run_category_discovery(conn)
+        result["watchlist"] = follow_automatic_candidates(conn)
         logger.info("App Store category discovery completed: %s", result)
         return {"ok": True, **result}
     except Exception as exc:
@@ -238,6 +241,36 @@ def run_category_discovery_job(conn_factory) -> dict:
         return {"ok": False, "error": type(exc).__name__}
     finally:
         conn.close()
+
+
+def run_watchlist_job(conn_factory, settings) -> list[dict]:
+    from app_dashboard.discovery_watchlist import active_watched_apps
+    from app_dashboard.watchlist_collector import sync_followed_listing
+
+    conn = conn_factory()
+    try:
+        watched = active_watched_apps(conn)
+    finally:
+        conn.close()
+
+    def sync_one(item):
+        discovered_app_id, handle = item
+        worker_conn = conn_factory()
+        try:
+            return sync_followed_listing(
+                worker_conn, discovered_app_id, handle,
+                media_root=settings.watchlist_media_path,
+            )
+        except Exception as exc:
+            logger.exception("watchlist sync failed for %s", handle)
+            return {"handle": handle, "ok": False, "error": type(exc).__name__}
+        finally:
+            worker_conn.close()
+
+    with ThreadPoolExecutor(max_workers=settings.watchlist_concurrency) as pool:
+        results = list(pool.map(sync_one, watched))
+    logger.info("watchlist sync completed: %s", results)
+    return results
 
 
 def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
@@ -318,6 +351,12 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         timezone="Europe/Amsterdam",
         next_run_time=datetime.now() + timedelta(minutes=45),
         id="app_store_categories",
+    )
+    scheduler.add_job(
+        lambda: run_watchlist_job(conn_factory, settings),
+        "interval", hours=24,
+        next_run_time=datetime.now() + timedelta(minutes=60),
+        id="watchlist_listings",
     )
     # Every 15 minutes, but it only posts once per stale episode. Deliberately
     # a separate job from run_sync: a check that lives inside the thing it is

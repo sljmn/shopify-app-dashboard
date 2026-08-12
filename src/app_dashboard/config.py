@@ -1,5 +1,6 @@
 from datetime import date
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -59,6 +60,9 @@ class Settings(BaseSettings):
     # coverage before and after is not comparable and reports say so. Verify
     # against your own feed before trusting the boundary.
     reason_mandatory_from: date = date(2026, 4, 29)
+    # Public competitor media is content-addressed on a persistent volume.
+    watchlist_media_path: Path = Path("/data/mantle-watchlist")
+    watchlist_concurrency: int = 2
 
     # --- validation ---------------------------------------------------------
     # These run at construction, which for this app means at import, because
@@ -85,6 +89,20 @@ class Settings(BaseSettings):
     @classmethod
     def _timezone_is_named(cls, raw: str) -> str:
         return raw.strip() or "UTC"
+
+    @field_validator("watchlist_media_path")
+    @classmethod
+    def _watchlist_path_is_absolute(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("WATCHLIST_MEDIA_PATH must be absolute")
+        return value
+
+    @field_validator("watchlist_concurrency")
+    @classmethod
+    def _watchlist_concurrency_is_bounded(cls, value: int) -> int:
+        if not 1 <= value <= 4:
+            raise ValueError("WATCHLIST_CONCURRENCY must be between 1 and 4")
+        return value
 
     @property
     def dashboard_name(self) -> str:

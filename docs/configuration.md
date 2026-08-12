@@ -111,3 +111,9 @@ and annotation writes require one selected app.
 instance must run APScheduler. `SESSION_SECRET` must contain at least 32 characters off localhost.
 `TRUSTED_CLIENT_IP_HEADER` must name a header your proxy overwrites. `SLACK_WEBHOOK_URL` and per-app
 usage/GA4 integrations are optional.
+
+`WATCHLIST_MEDIA_PATH` is the absolute directory used for archived public competitor icons and
+screenshots. It defaults to `/data/mantle-watchlist`; production must mount durable storage there.
+`WATCHLIST_CONCURRENCY` bounds the daily followed-listing collector to 1–4 workers and defaults to 2.
+The sitemap still indexes the whole App Store daily and category pages still run twice weekly. Only
+active followed apps receive the heavier daily listing and media fetch.

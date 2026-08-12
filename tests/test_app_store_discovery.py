@@ -14,6 +14,7 @@ from app_dashboard.app_store_discovery import (
     parse_app_sitemap,
     parse_category_page,
     parse_category_sitemap,
+    search_app_catalog,
     sync_discovered_apps,
     sync_discovery_categories,
 )
@@ -246,3 +247,40 @@ def test_report_excludes_baseline_and_counts_each_new_app_once(db):
     assert report["total"] == 1
     assert sum(week["count"] for week in report["weeks"]) == 1
     assert report["rows"][0][0:2] == ("new-app", "New App")
+
+
+def test_catalog_search_includes_baseline_apps_categories_and_follow_state(db):
+    observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    sync_discovered_apps(db, [SitemapApp("alpha-books", None)], observed_at)
+    sync_discovery_categories(db, [
+        CategoryResult("product-content", "Product content", (
+            CategoryApp("alpha-books", "Alpha Books", 42, Decimal("4.8"), 3),
+        )),
+    ], observed_at)
+    app_id = db.execute(
+        "select id from discovered_apps where handle='alpha-books'"
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_watchlist
+             (discovered_app_id,active,follow_source,followed_at)
+           values (%s,true,'manual',%s)""",
+        (app_id, observed_at),
+    )
+    db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,%s,'hash',%s::jsonb)""",
+        (app_id, observed_at, '{"developer":{"name":"North Books"}}'),
+    )
+
+    result = search_app_catalog(db, search="North")
+    assert result["total"] == 1
+    assert result["rows"][0] == {
+        "handle": "alpha-books", "name": "Alpha Books",
+        "developer": "North Books", "reviews": 42,
+        "rating": Decimal("4.80"), "best_rank": 3,
+        "categories": "Product content", "followed": True,
+        "follow_source": "manual",
+    }
+    assert search_app_catalog(db, category="product-content")["total"] == 1
+    assert search_app_catalog(db)["rows"] == []

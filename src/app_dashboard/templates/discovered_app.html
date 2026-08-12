@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading">
+    <div>
+        <p class="sub"><a href="/discover">Discover</a> / Public app</p>
+        <h1>{{ detail.name or detail.handle|replace('-', ' ')|title }}</h1>
+        <p class="sub">/{{ detail.handle }} · {{ detail.categories or "Not categorized" }}</p>
+    </div>
+    <div class="heading-actions">
+        <form method="post" action="/discover/apps/{{ detail.handle|urlencode }}/{% if detail.followed %}unfollow{% else %}follow{% endif %}">
+            <button type="submit"{% if detail.followed %} class="ghost"{% endif %}>{% if detail.followed %}Following{% else %}Follow app{% endif %}</button>
+        </form>
+        <a class="ghost" href="https://apps.shopify.com/{{ detail.handle|urlencode }}" target="_blank" rel="noopener">View listing</a>
+    </div>
+</div>
+
+<nav class="aso-tabs" aria-label="App intelligence views">
+    {% for key, label in [("overview","Overview"),("growth","Growth"),("history","Listing history"),("compare","Compare")] %}
+    <a href="/discover/apps/{{ detail.handle|urlencode }}?view={{ key }}"{% if view == key %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>
+
+{% if view == "overview" %}
+<div class="cards detail-metrics">
+    <div class="card stat"><div class="label">Reviews</div><div class="num">{{ detail.reviews if detail.reviews is not none else "—" }}</div></div>
+    <div class="card stat"><div class="label">Rating</div><div class="num">{{ detail.rating if detail.rating is not none else "—" }}</div></div>
+    <div class="card stat"><div class="label">Best category rank</div><div class="num">{% if detail.best_rank %}#{{ detail.best_rank }}{% else %}—{% endif %}</div></div>
+    <div class="card stat"><div class="label">First observed</div><div class="num"><small>{{ detail.first_seen_at|local_time("%-d %b %Y") }}</small></div></div>
+</div>
+{% if detail.listing %}
+<section class="listing-overview">
+    <div class="listing-copy">
+        <h2>{{ detail.listing.name }}</h2>
+        {% if detail.listing.subtitle %}<p><strong>{{ detail.listing.subtitle }}</strong></p>{% endif %}
+        <p>{{ detail.listing.description }}</p>
+        {% if detail.listing.features %}<h3>Features</h3><ul>{% for item in detail.listing.features %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+        {% if detail.listing.pricing %}<h3>Pricing</h3><ul>{% for item in detail.listing.pricing %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+    {% if detail.listing.screenshots %}<div class="listing-gallery">{% for source in detail.listing.screenshots %}<img src="{{ source }}" alt="Listing screenshot {{ loop.index }}" loading="lazy">{% endfor %}</div>{% endif %}
+</section>
+{% else %}<p class="empty-state">Follow this app to capture its first full listing version during the next daily scan.</p>{% endif %}
+{% elif view == "growth" %}
+<section>
+    <h2>Review history</h2>
+    <div class="table-card"><table><thead><tr><th>Date</th><th>Reviews</th><th>Rating</th><th>Best rank</th></tr></thead><tbody>
+    {% for observed_on, reviews, rating, rank in history.reviews %}<tr><td>{{ observed_on.strftime("%-d %b %Y") }}</td><td>{{ reviews if reviews is not none else "—" }}</td><td>{{ rating if rating is not none else "—" }}</td><td>{% if rank %}#{{ rank }}{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="4">No growth observations yet.</td></tr>{% endfor %}
+    </tbody></table></div>
+    <h2>Category positions</h2>
+    <div class="table-card"><table><thead><tr><th>Date</th><th>Category</th><th>Position</th></tr></thead><tbody>
+    {% for observed_on, category, position in history.ranks %}<tr><td>{{ observed_on.strftime("%-d %b %Y") }}</td><td>{{ category }}</td><td>#{{ position }}</td></tr>{% else %}<tr><td colspan="3">No category history yet.</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% elif view == "history" %}
+<section><h2>Immutable listing versions</h2><p class="sub">Growth movement is measured at the first category scan after a listing change. It shows correlation, not causation.</p><div class="table-card"><table><thead><tr><th>Captured</th><th>Changed fields</th><th>Next review movement</th><th>Next rank movement</th><th>Archived media</th></tr></thead><tbody>
+{% for version in versions %}<tr><td>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</td><td>{{ version.changed_fields|join(", ") or "Baseline" }}</td><td{% if version.review_movement and version.review_movement > 0 %} class="money-up"{% endif %}>{% if version.review_movement is not none %}{{ signed(version.review_movement) }}{% else %}—{% endif %}</td><td{% if version.rank_movement and version.rank_movement > 0 %} class="money-up"{% endif %}>{% if version.rank_movement is not none %}{{ signed(version.rank_movement) }}{% else %}—{% endif %}</td><td>{{ version.media_count }}</td></tr>{% else %}<tr><td colspan="5">No listing versions captured yet.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% else %}
+<section><h2>Compare listing versions</h2>
+<form class="filters compare-picker" method="get"><input type="hidden" name="view" value="compare"><select name="before" aria-label="Before version">{% for version in versions %}<option value="{{ version.id }}"{% if version.id == before_id %} selected{% endif %}>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</option>{% endfor %}</select><select name="after" aria-label="After version">{% for version in versions %}<option value="{{ version.id }}"{% if version.id == after_id %} selected{% endif %}>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</option>{% endfor %}</select><button type="submit">Compare</button></form>
+{% if comparison %}<div class="version-diff">{% for change in comparison.fields %}<article><h3>{{ change.field|replace('_',' ')|title }}</h3><div class="diff-pair"><div><span class="sub">Before</span><pre>{{ change.before }}</pre></div><div><span class="sub">After</span><pre>{{ change.after }}</pre></div></div></article>{% else %}<p>No differences between these versions.</p>{% endfor %}
+<article><h3>Archived media</h3><div class="diff-pair"><div><span class="sub">Before</span><div class="listing-gallery">{% for role, position, digest, source in comparison.before.media if role == "screenshot" %}<img src="/discover/media/{{ digest }}" alt="Before screenshot {{ position + 1 }}" loading="lazy">{% else %}<span>—</span>{% endfor %}</div></div><div><span class="sub">After</span><div class="listing-gallery">{% for role, position, digest, source in comparison.after.media if role == "screenshot" %}<img src="/discover/media/{{ digest }}" alt="After screenshot {{ position + 1 }}" loading="lazy">{% else %}<span>—</span>{% endfor %}</div></div></div></article></div>{% elif versions|length < 2 %}<p class="empty-state">Two changed listing versions are required for comparison.</p>{% endif %}
+</section>
+{% endif %}
+{% endblock %}

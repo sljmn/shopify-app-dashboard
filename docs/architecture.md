@@ -115,6 +115,13 @@ added above it. Cursors may move only inside one pagination loop.
 Slack alerts, and a duplicate weekly digest. Never `fly scale count 2`. The in-process rate limiter
 in `security.py` assumes this too.
 
+**Public-app discovery has a cheap index and a bounded watchlist.** The sitemap indexes every public
+handle; category scans provide review and rank observations. `discovery_watchlist` selects the small
+set whose full listing is fetched daily. Listing JSON and field changes are immutable in Postgres,
+while content-addressed icon and screenshot bytes live under `WATCHLIST_MEDIA_PATH`. An identical
+content hash updates scan health without creating a version. A failed listing or media fetch leaves
+the previous complete version current.
+
 **Frozen subscriptions leave current MRR and unfreezes restore them without requiring a second
 activation.** Both movements remain explicit in `app_events`, so the independent event ledger can
 detect current-state drift. Declined and expired charges become zero-MRR `charge_abandoned` events

@@ -20,6 +20,46 @@ def test_listing_parser_extracts_stable_fields():
     assert listing["rating_count"] == 40
 
 
+def test_listing_parser_extracts_competitor_strategy_fields():
+    html = """
+    <script type="application/ld+json">{
+      "@type":"SoftwareApplication","name":"Alpha",
+      "description":"Recover abandoned carts.",
+      "image":"https://cdn.shopify.com/icon.png",
+      "aggregateRating":{"ratingValue":"4.8","ratingCount":"120"}
+    }</script>
+    <p data-app-listing-subtitle>Recover more abandoned carts</p>
+    <a href="https://apps.shopify.com/partners/alpha">Alpha Labs</a>
+    <span data-language="English"></span><span data-language="Dutch"></span>
+    <span data-integration="Klaviyo"></span>
+    <div id="app-details"><li>Feature one</li></div>
+    <div class="app-details-pricing-plan-card">Starter $9.00/month</div>
+    <div data-screenshot-index="0"><img src="https://cdn.shopify.com/screen.png"></div>
+    <video><source src="https://cdn.shopify.com/video.mp4"></video>
+    """
+    listing = parse_listing(html)
+    assert listing["subtitle"] == "Recover more abandoned carts"
+    assert listing["developer"] == {
+        "name": "Alpha Labs", "url": "https://apps.shopify.com/partners/alpha",
+    }
+    assert listing["languages"] == ["English", "Dutch"]
+    assert listing["integrations"] == ["Klaviyo"]
+    assert listing["videos"] == ["https://cdn.shopify.com/video.mp4"]
+
+
+def test_listing_parser_supports_shopifys_label_value_metadata_grid():
+    listing = parse_listing("""
+      <script type="application/ld+json">{"@type":"SoftwareApplication",
+        "name":"Alpha","description":"Useful"}</script>
+      <div><dt>Pricing</dt><dd><div>Free plan available. Free trial available.</div></dd></div>
+      <div><p>Languages</p><div><p>English, Dutch, and German</p></div></div>
+      <div><p>Works with</p><ul><li>Checkout</li><li>Shopify Flow</li></ul></div>
+    """)
+    assert listing["pricing"] == ["Free plan available. Free trial available."]
+    assert listing["languages"] == ["English", "Dutch", "German"]
+    assert listing["integrations"] == ["Checkout", "Shopify Flow"]
+
+
 def test_identical_snapshot_is_reused_and_changes_are_field_level(db, test_app):
     first = store_listing_snapshot(db, test_app.id, "en", {"name": "Old"}, NOW)
     same = store_listing_snapshot(db, test_app.id, "en", {"name": "Old"}, NOW)

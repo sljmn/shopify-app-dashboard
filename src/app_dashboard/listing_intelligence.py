@@ -6,9 +6,9 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -18,8 +18,9 @@ from psycopg.types.json import Jsonb
 from app_dashboard.catalog import AppConfig
 
 LISTING_FIELDS = (
-    "name", "description", "features", "pricing", "icon", "screenshots",
-    "rating", "rating_count",
+    "name", "subtitle", "description", "features", "pricing", "developer",
+    "languages", "integrations", "icon", "screenshots", "videos", "rating",
+    "rating_count",
 )
 AUTOCOMPLETE_URL = "https://apps.shopify.com/search/autocomplete"
 USER_AGENT = "Mantle ASO Intelligence/1.0"
@@ -41,6 +42,23 @@ def _stable_url(value: str) -> str:
     if parsed.scheme != "https":
         return ""
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _label_value(soup: BeautifulSoup, label: str):
+    node = next(
+        (text.parent for text in soup.find_all(string=True)
+         if _text(text).casefold() == label.casefold()),
+        None,
+    )
+    if not node or not node.parent:
+        return None
+    values = [child for child in node.parent.find_all(recursive=False) if child is not node]
+    return values[0] if values else None
+
+
+def _comma_values(value: str) -> list[str]:
+    value = re.sub(r",?\s+and\s+", ", ", _text(value), flags=re.IGNORECASE)
+    return list(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
 
 
 def parse_listing(html: str) -> dict:
@@ -78,13 +96,68 @@ def parse_listing(html: str) -> dict:
         value = _text(card.get_text(" ", strip=True))
         if value and value not in pricing:
             pricing.append(value)
+    if not pricing:
+        pricing_node = _label_value(soup, "Pricing")
+        values = [
+            _text(child.get_text(" ", strip=True))
+            for child in pricing_node.find_all(recursive=False)
+        ] if pricing_node else []
+        value = next((item for item in values if item), "")
+        if not value and pricing_node:
+            value = _text(pricing_node.get_text(" ", strip=True))
+        if value:
+            pricing.append(value)
+    subtitle_node = soup.select_one(
+        '[data-app-listing-subtitle], .app-listing__subtitle, [data-testid="app-subtitle"]'
+    )
+    developer_node = soup.select_one(
+        'a[href*="/partners/"], a[data-testid="developer-link"]'
+    )
+    developer = {
+        "name": _text(developer_node.get_text(" ", strip=True)) if developer_node else "",
+        "url": _stable_url(developer_node.get("href", "")) if developer_node else "",
+    }
+    languages = []
+    for item in soup.select('[data-language], [data-testid="language"]'):
+        value = _text(item.get("data-language") or item.get_text(" ", strip=True))
+        if value and value not in languages:
+            languages.append(value)
+    if not languages:
+        languages_node = _label_value(soup, "Languages")
+        if languages_node:
+            languages = _comma_values(languages_node.get_text(" ", strip=True))
+    integrations = []
+    for item in soup.select('[data-integration], [data-testid="integration"]'):
+        value = _text(item.get("data-integration") or item.get_text(" ", strip=True))
+        if value and value not in integrations:
+            integrations.append(value)
+    if not integrations:
+        integrations_node = _label_value(soup, "Works with")
+        if integrations_node:
+            integrations = list(dict.fromkeys(
+                _text(item.get_text(" ", strip=True))
+                for item in integrations_node.find_all("li")
+                if _text(item.get_text(" ", strip=True))
+            ))
+    videos = []
+    for item in soup.select("video[src], video source[src], iframe[src]"):
+        value = _stable_url(item.get("src", ""))
+        if value and value not in videos:
+            videos.append(value)
     return {
         "name": _text(application.get("name")),
+        "subtitle": _text(
+            subtitle_node.get_text(" ", strip=True) if subtitle_node else ""
+        ),
         "description": _text(application.get("description")),
         "features": features,
         "pricing": pricing,
+        "developer": developer,
+        "languages": languages,
+        "integrations": integrations,
         "icon": _stable_url(images[0]) if images else "",
         "screenshots": screenshots,
+        "videos": videos,
         "rating": rating.get("ratingValue"),
         "rating_count": rating.get("ratingCount"),
     }

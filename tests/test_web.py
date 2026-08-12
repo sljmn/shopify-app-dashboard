@@ -230,6 +230,65 @@ def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db
     assert 'aria-current="page"><svg' in page.text
 
 
+def test_discover_catalog_can_follow_baseline_app_and_open_watchlist(db):
+    observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('alpha-books','Alpha Books',%s,%s,true) returning id""",
+        (observed_at, observed_at),
+    ).fetchone()[0]
+    app = create_app(conn_factory=lambda: keep_open(db))
+    client = dashboard_client(app)
+
+    page = client.get("/discover?catalog_q=alpha")
+    assert page.status_code == 200
+    assert "Alpha Books" in page.text
+    assert "/discover/apps/alpha-books" in page.text
+    response = client.post(
+        "/discover/apps/alpha-books/follow", data={"follow": "1"},
+        headers={"origin": "https://dash.test"}, follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert db.execute(
+        "select active from discovery_watchlist where discovered_app_id=%s",
+        (app_id,),
+    ).fetchone() == (True,)
+    assert "Alpha Books" in client.get("/discover/watchlist").text
+    assert "Followed apps" in client.get("/discover/watchlist").text
+    assert client.post(
+        "/discover/apps/alpha-books/unfollow", data={},
+        headers={"origin": "https://attacker.test"},
+    ).status_code == 403
+    assert client.post(
+        "/discover/apps/not-indexed/follow", data={"follow": "1"},
+        headers={"origin": "https://dash.test"},
+    ).status_code == 404
+
+
+def test_discovery_media_requires_known_digest_and_serves_archive(
+    db, tmp_path, monkeypatch,
+):
+    digest = "a" * 64
+    target = tmp_path / digest[:2] / digest
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"archived-image")
+    db.execute(
+        """insert into discovery_media_objects
+             (digest,object_key,mime_type,byte_size,created_at)
+           values (%s,%s,'image/png',%s,now())""",
+        (digest, f"{digest[:2]}/{digest}", len(b"archived-image")),
+    )
+    monkeypatch.setenv("WATCHLIST_MEDIA_PATH", str(tmp_path))
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    response = client.get(f"/discover/media/{digest}")
+    assert response.status_code == 200
+    assert response.content == b"archived-image"
+    assert "immutable" in response.headers["cache-control"]
+    assert client.get("/discover/media/not-a-digest").status_code == 404
+
+
 def test_selected_aso_app_has_views_and_csv(db, test_app):
     db.execute(
         """insert into aso_keyword_daily

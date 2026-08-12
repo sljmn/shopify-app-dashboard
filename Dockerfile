@@ -14,8 +14,8 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Drop root. Nothing here writes to disk: settings come from the environment,
-# the GA4 service-account key is held in memory, and all state is in Postgres.
+# Drop root. Runtime state stays in Postgres except the explicitly mounted,
+# content-addressed competitor media archive.
 RUN useradd --system --uid 10001 dashboard
 USER dashboard
 

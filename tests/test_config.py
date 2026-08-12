@@ -1,5 +1,5 @@
-import os
 from datetime import date
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -54,3 +54,17 @@ def test_a_published_example_credential_is_refused(monkeypatch):
                       ("DASHBOARD_PASSWORD", "change-me")):
         with pytest.raises(ValidationError):
             _settings(monkeypatch, **{name: bad})
+
+
+def test_watchlist_storage_and_concurrency_are_validated(monkeypatch):
+    settings = _settings(
+        monkeypatch,
+        WATCHLIST_MEDIA_PATH="/tmp/mantle-watchlist",
+        WATCHLIST_CONCURRENCY="4",
+    )
+    assert settings.watchlist_media_path == Path("/tmp/mantle-watchlist")
+    assert settings.watchlist_concurrency == 4
+    with pytest.raises(ValidationError):
+        _settings(monkeypatch, WATCHLIST_MEDIA_PATH="relative/path")
+    with pytest.raises(ValidationError):
+        _settings(monkeypatch, WATCHLIST_CONCURRENCY="5")

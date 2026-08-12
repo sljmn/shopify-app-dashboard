@@ -404,8 +404,8 @@ def growth_signals(conn, *, now=None, limit: int = 20) -> dict:
         (app_id, handle, name, first_seen, is_baseline, observed_on, reviews,
          rating, best_rank, previous_on, previous_reviews, day7_on, day7_reviews,
          day30_on, day30_reviews, categories) = row
-        def delta(value):
-            return None if reviews is None or value is None else reviews - value
+        def delta(value, current=reviews):
+            return None if current is None or value is None else current - value
         previous_delta = delta(previous_reviews)
         delta7 = delta(day7_reviews)
         delta30 = delta(day30_reviews)
@@ -557,4 +557,86 @@ def discovery_report(
         "total": total_filtered,
         "page": page,
         "pages": max(1, (total_filtered + per_page - 1) // per_page),
+    }
+
+
+def search_app_catalog(
+    conn, *, search: str = "", category: str = "", page: int = 1,
+    per_page: int = 50,
+) -> dict:
+    search = search.strip()
+    category = category.strip()
+    if not search and not category:
+        return {"rows": [], "total": 0, "page": 1, "pages": 1}
+    where = []
+    params = []
+    if search:
+        term = f"%{search}%"
+        where.append(
+            """(app.handle ilike %s or coalesce(app.display_name,'') ilike %s
+                or coalesce(snapshot.listing->'developer'->>'name','') ilike %s
+                or exists (
+                    select 1 from discovered_app_categories search_member
+                    join discovery_categories search_category
+                      on search_category.id=search_member.category_id
+                    where search_member.discovered_app_id=app.id
+                      and search_category.name ilike %s
+                ))"""
+        )
+        params.extend([term, term, term, term])
+    if category:
+        where.append(
+            """exists (
+                select 1 from discovered_app_categories filter_member
+                join discovery_categories filter_category
+                  on filter_category.id=filter_member.category_id
+                where filter_member.discovered_app_id=app.id
+                  and filter_category.slug=%s
+            )"""
+        )
+        params.append(category)
+    filtered = " and ".join(where)
+    base = f"""from discovered_apps app
+        left join lateral (
+          select o.review_count,o.rating,o.best_category_rank
+          from discovery_app_observations o
+          where o.discovered_app_id=app.id
+          order by o.observed_on desc limit 1
+        ) observation on true
+        left join lateral (
+          select s.listing from discovery_listing_snapshots s
+          where s.discovered_app_id=app.id
+          order by s.captured_at desc,s.id desc limit 1
+        ) snapshot on true
+        left join discovery_watchlist watch on watch.discovered_app_id=app.id
+        left join lateral (
+          select coalesce(string_agg(distinct category.name, ', '
+                   order by category.name),'') names
+          from discovered_app_categories member
+          join discovery_categories category on category.id=member.category_id
+          where member.discovered_app_id=app.id
+        ) category_names on true
+        where {filtered}"""
+    total = conn.execute(f"select count(*) {base}", params).fetchone()[0]
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, pages))
+    rows = conn.execute(
+        f"""select app.handle,app.display_name,
+                   snapshot.listing->'developer'->>'name' developer,
+                   observation.review_count,observation.rating,
+                   observation.best_category_rank,
+                   category_names.names categories,
+                   coalesce(watch.active,false),watch.follow_source
+            {base}
+            order by coalesce(app.display_name,app.handle),app.handle
+            limit %s offset %s""",
+        [*params, per_page, (page - 1) * per_page],
+    ).fetchall()
+    keys = (
+        "handle", "name", "developer", "reviews", "rating", "best_rank",
+        "categories", "followed", "follow_source",
+    )
+    return {
+        "rows": [dict(zip(keys, row, strict=True)) for row in rows],
+        "total": total, "page": page, "pages": pages,
     }

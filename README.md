@@ -193,6 +193,14 @@ Discover uses dated observations to show Rising gems, Fastest growers, and New c
 signals require at least two successful category scans; missing 7- or 30-day history stays unknown
 instead of being displayed as zero. They measure public App Store momentum, not installs or revenue.
 
+Universal Discover search includes the initial baseline as well as newly observed apps. Operators
+can follow any result; Rising gems and New contenders are followed automatically after a successful
+category crawl. Followed listings are fetched daily and stored as immutable, content-hashed versions.
+Text, pricing, metadata, screenshots, review growth, and category-rank movement can be inspected per
+app. Screenshot and icon bytes are content-addressed in `WATCHLIST_MEDIA_PATH`, so an older comparison
+does not break when Shopify replaces the public image. The Watchlist page summarizes new follows,
+growth, listing changes, and recurring change patterns over seven or thirty days.
+
 ### Customers, and the sign-in page
 
 ![The Customers list](docs/screenshots/customers.png)

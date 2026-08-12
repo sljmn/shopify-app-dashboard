@@ -5,6 +5,7 @@ from app_dashboard.scheduler import (
     run_app_discovery_job,
     run_all_apps,
     run_category_discovery_job,
+    run_watchlist_job,
     run_sync_job,
     run_aso_job,
 )
@@ -180,6 +181,8 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, t
                  if kw.get("id", "").startswith("app_store_")}
     assert discovery["app_store_discovery"]["hour"] == 3
     assert discovery["app_store_categories"]["day_of_week"] == "tue,fri"
+    watchlist = [kw for trigger, kw in fake.jobs if kw.get("id") == "watchlist_listings"]
+    assert len(watchlist) == 1 and watchlist[0]["hours"] == 24
     assert started["yes"] is True
 
 
@@ -206,3 +209,51 @@ def test_discovery_jobs_close_connections_and_contain_failures(monkeypatch):
     }
     assert app_conn.closed_count == 1
     assert category_conn.closed_count == 1
+
+
+def test_successful_category_discovery_adds_automatic_follows(monkeypatch):
+    conn = FakeConn()
+    monkeypatch.setattr(
+        "app_dashboard.app_store_discovery.run_category_discovery",
+        lambda current: {"categories": 2, "memberships": 4},
+    )
+    monkeypatch.setattr(
+        "app_dashboard.discovery_watchlist.follow_automatic_candidates",
+        lambda current: {"followed": 2, "already_followed": 1},
+    )
+    assert run_category_discovery_job(lambda: conn) == {
+        "ok": True, "categories": 2, "memberships": 4,
+        "watchlist": {"followed": 2, "already_followed": 1},
+    }
+    assert conn.closed_count == 1
+
+
+def test_watchlist_job_isolates_apps_and_closes_connections(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    index = FakeConn()
+    alpha = FakeConn()
+    beta = FakeConn()
+    connections = iter([index, alpha, beta])
+    monkeypatch.setattr(
+        "app_dashboard.discovery_watchlist.active_watched_apps",
+        lambda conn: [(1, "alpha"), (2, "beta")],
+    )
+
+    def sync(conn, app_id, handle, **kwargs):
+        if handle == "beta":
+            raise RuntimeError("failed")
+        return {"handle": handle, "ok": True, "created": True, "changes": 0}
+
+    monkeypatch.setattr(
+        "app_dashboard.watchlist_collector.sync_followed_listing", sync
+    )
+    results = run_watchlist_job(
+        lambda: next(connections),
+        SimpleNamespace(watchlist_media_path=tmp_path, watchlist_concurrency=1),
+    )
+    assert results == [
+        {"handle": "alpha", "ok": True, "created": True, "changes": 0},
+        {"handle": "beta", "ok": False, "error": "RuntimeError"},
+    ]
+    assert [conn.closed_count for conn in (index, alpha, beta)] == [1, 1, 1]

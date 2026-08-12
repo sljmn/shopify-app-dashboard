@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading"><div><p class="sub"><a href="/discover">Discover</a> / Watchlist</p><h1>Watchlist</h1><p class="sub">{{ start.strftime("%-d %b") }}–{{ end.strftime("%-d %b %Y") }} · listing and App Store movement</p></div><nav class="segment-control"><a href="/discover/watchlist?period=7d"{% if period == "7d" %} aria-current="page"{% endif %}>7 days</a><a href="/discover/watchlist?period=30d"{% if period == "30d" %} aria-current="page"{% endif %}>30 days</a></nav></div>
+
+<section class="watch-movement">
+    <div><span class="label">Following</span><strong>{{ summary.health.active }}</strong></div>
+    <div><span class="label">Scanned</span><strong>{{ summary.health.scanned }}</strong></div>
+    <div><span class="label">Needs attention</span><strong{% if summary.health.failed %} class="money-down"{% endif %}>{{ summary.health.failed }}</strong></div>
+</section>
+
+<div class="grid-2 watch-summary">
+    <section><h2>Review gainers</h2><div class="quiet-list">{% for handle, name, gain in summary.review_gainers %}<a href="/discover/apps/{{ handle|urlencode }}"><span>{{ name or handle }}</span><strong class="money-up">+{{ gain }}</strong></a>{% else %}<p class="sub">No measured review growth in this period.</p>{% endfor %}</div></section>
+    <section><h2>Rank gainers</h2><div class="quiet-list">{% for handle, name, gain in summary.rank_gainers %}<a href="/discover/apps/{{ handle|urlencode }}"><span>{{ name or handle }}</span><strong class="money-up">+{{ gain }}</strong></a>{% else %}<p class="sub">No measured rank improvement in this period.</p>{% endfor %}</div></section>
+</div>
+
+<div class="grid-2 watch-summary">
+    <section><h2>New follows</h2><div class="quiet-list">{% for handle, name, source, followed_at in summary.new_follows %}<a href="/discover/apps/{{ handle|urlencode }}"><span>{{ name or handle }}</span><span class="sub">{{ source|replace('_',' ')|title }} · {{ followed_at|local_time("%-d %b") }}</span></a>{% else %}<p class="sub">No apps were followed in this period.</p>{% endfor %}</div></section>
+    <section><h2>Recurring patterns</h2><div class="quiet-list">{% for field, count in summary.patterns %}<div><span>{{ field|replace('_',' ')|title }}</span><strong>{{ count }} changes</strong></div>{% else %}<p class="sub">Patterns appear after listing changes have been captured.</p>{% endfor %}</div></section>
+</div>
+
+<section><h2>Listing changes</h2><div class="table-card"><table class="watch-table"><thead><tr><th>App</th><th>When</th><th>Field</th></tr></thead><tbody>{% for handle, name, changed_at, field in summary.listing_changes %}<tr><td><a href="/discover/apps/{{ handle|urlencode }}?view=history">{{ name or handle }}</a></td><td>{{ changed_at|local_time("%-d %b %H:%M") }}</td><td>{{ field|replace('_',' ')|title }}</td></tr>{% else %}<tr><td colspan="3">No listing changes in this period.</td></tr>{% endfor %}</tbody></table></div></section>
+
+<section><h2>Followed apps</h2><div class="table-card"><table class="watch-table"><thead><tr><th>App</th><th>Reason</th><th>Reviews</th><th>Best rank</th><th>Last listing change</th><th>Last scan</th><th>Status</th></tr></thead><tbody>{% for row in watched.rows %}<tr><td><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name or row.handle }}</strong></a></td><td>{{ row.follow_source|replace('_',' ')|title }}</td><td>{{ row.reviews if row.reviews is not none else "—" }}</td><td>{% if row.best_rank %}#{{ row.best_rank }}{% else %}—{% endif %}</td><td>{% if row.last_change_at %}{{ row.last_change_field|replace('_',' ')|title }} · {{ row.last_change_at|local_time("%-d %b") }}{% else %}—{% endif %}</td><td>{{ row.last_success_at|local_time("%-d %b %H:%M") if row.last_success_at else "Pending" }}</td><td>{% if row.last_error_code %}<span class="money-down">{{ row.last_error_code }}</span>{% else %}Ready{% endif %}</td></tr>{% else %}<tr><td colspan="7">No apps followed yet. Search Discover or wait for automatic candidates.</td></tr>{% endfor %}</tbody></table></div><div class="pager"><span class="sub">{{ watched.total }} followed apps</span><span class="pager-links">{% if watched.page > 1 %}<a href="/discover/watchlist?period={{ period }}&amp;page={{ watched.page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}<span class="sub">Page {{ watched.page }} of {{ watched.pages }}</span>{% if watched.page < watched.pages %}<a href="/discover/watchlist?period={{ period }}&amp;page={{ watched.page + 1 }}">Next</a>{% else %}<span class="disabled">Next</span>{% endif %}</span></div></section>
+{% endblock %}
