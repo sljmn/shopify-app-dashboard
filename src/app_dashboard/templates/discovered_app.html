@@ -40,16 +40,30 @@
 </section>
 {% else %}<p class="empty-state">Follow this app to capture its first full listing version during the next daily scan.</p>{% endif %}
 {% elif view == "growth" %}
-<section>
+{% if history.reviews or history.ranks %}
+<section class="growth-history">
+    {% if history.reviews %}
     <h2>Review history</h2>
     <div class="table-card"><table><thead><tr><th>Date</th><th>Reviews</th><th>Rating</th><th>Best rank</th></tr></thead><tbody>
-    {% for observed_on, reviews, rating, rank in history.reviews %}<tr><td>{{ observed_on.strftime("%-d %b %Y") }}</td><td>{{ reviews if reviews is not none else "—" }}</td><td>{{ rating if rating is not none else "—" }}</td><td>{% if rank %}#{{ rank }}{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="4">No growth observations yet.</td></tr>{% endfor %}
+    {% for observed_on, reviews, rating, rank in history.reviews %}<tr><td>{{ observed_on.strftime("%-d %b %Y") }}</td><td>{{ reviews if reviews is not none else "—" }}</td><td>{{ rating if rating is not none else "—" }}</td><td>{% if rank %}#{{ rank }}{% else %}—{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
+    {% endif %}
+    {% if history.ranks %}
     <h2>Category positions</h2>
     <div class="table-card"><table><thead><tr><th>Date</th><th>Category</th><th>Position</th></tr></thead><tbody>
-    {% for observed_on, category, position in history.ranks %}<tr><td>{{ observed_on.strftime("%-d %b %Y") }}</td><td>{{ category }}</td><td>#{{ position }}</td></tr>{% else %}<tr><td colspan="3">No category history yet.</td></tr>{% endfor %}
+    {% for observed_on, category, position in history.ranks %}<tr><td>{{ observed_on.strftime("%-d %b %Y") }}</td><td>{{ category }}</td><td>#{{ position }}</td></tr>{% endfor %}
     </tbody></table></div>
+    {% endif %}
 </section>
+{% else %}
+<section class="growth-empty-state">
+    <span class="status-dot" aria-hidden="true"></span>
+    <div>
+        <h2>No growth history yet</h2>
+        <p>Shopify has not returned this app in a measured category scan. Review and category-rank history will appear here after its first measured listing.</p>
+    </div>
+</section>
+{% endif %}
 {% elif view == "history" %}
 <section><h2>Immutable listing versions</h2><p class="sub">Growth movement is measured at the first category scan after a listing change. It shows correlation, not causation.</p><div class="table-card"><table><thead><tr><th>Captured</th><th>Changed fields</th><th>Next review movement</th><th>Next rank movement</th><th>Archived media</th></tr></thead><tbody>
 {% for version in versions %}<tr><td>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</td><td>{{ version.changed_fields|join(", ") or "Baseline" }}</td><td{% if version.review_movement and version.review_movement > 0 %} class="money-up"{% endif %}>{% if version.review_movement is not none %}{{ signed(version.review_movement) }}{% else %}—{% endif %}</td><td{% if version.rank_movement and version.rank_movement > 0 %} class="money-up"{% endif %}>{% if version.rank_movement is not none %}{{ signed(version.rank_movement) }}{% else %}—{% endif %}</td><td>{{ version.media_count }}</td></tr>{% else %}<tr><td colspan="5">No listing versions captured yet.</td></tr>{% endfor %}

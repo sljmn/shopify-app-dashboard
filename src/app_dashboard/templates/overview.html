@@ -82,28 +82,30 @@
 </div>
 
 {% if app_comparison %}
-<h2>Portfolio</h2>
-<p class="sub">Current subscription state plus 90-day unit economics. Active trials stay outside MRR and paying shops.</p>
-<div class="table-card">
-    <table>
-        <thead><tr><th>App</th><th class="num">MRR</th><th class="num">Installed</th><th class="num">Paying</th><th class="num">Paid share</th><th class="num">Monthly churn</th><th class="num">LTV</th><th class="num">Current trials</th><th class="num">Trial MRR</th></tr></thead>
-        <tbody>
-            {% for row in app_comparison %}
-            <tr>
-                <td><a href="/?app={{ row.app.slug|urlencode }}">{{ row.app.name }}</a></td>
-                <td class="num">${{ "%.2f"|format(row.stats.active_mrr) }}</td>
-                <td class="num">{{ row.stats.installed }}</td>
-                <td class="num">{{ row.stats.paying }}</td>
-                <td class="num">{% if row.paid_share is not none %}{{ row.paid_share }}%{% else %}&mdash;{% endif %}</td>
-                <td class="num{% if row.monthly_churn_pct > 10 %} money-down{% endif %}">{{ row.monthly_churn_pct }}%</td>
-                <td class="num">{% if row.ltv is not none %}${{ "%.0f"|format(row.ltv) }}{% else %}&mdash;{% endif %}</td>
-                <td class="num">{{ row.current_trials }}</td>
-                <td class="num">${{ "%.2f"|format(row.trial_mrr) }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+<section class="overview-section portfolio-section">
+    <h2>Portfolio</h2>
+    <p class="sub">Current subscription state plus 90-day unit economics. Active trials stay outside MRR and paying shops.</p>
+    <div class="table-card">
+        <table>
+            <thead><tr><th>App</th><th class="num">MRR</th><th class="num">Installed</th><th class="num">Paying</th><th class="num">Paid share</th><th class="num">Monthly churn</th><th class="num">LTV</th><th class="num">Current trials</th><th class="num">Trial MRR</th></tr></thead>
+            <tbody>
+                {% for row in app_comparison %}
+                <tr>
+                    <td><a href="/?app={{ row.app.slug|urlencode }}">{{ row.app.name }}</a></td>
+                    <td class="num">${{ "%.2f"|format(row.stats.active_mrr) }}</td>
+                    <td class="num">{{ row.stats.installed }}</td>
+                    <td class="num">{{ row.stats.paying }}</td>
+                    <td class="num">{% if row.paid_share is not none %}{{ row.paid_share }}%{% else %}&mdash;{% endif %}</td>
+                    <td class="num{% if row.monthly_churn_pct > 10 %} money-down{% endif %}">{{ row.monthly_churn_pct }}%</td>
+                    <td class="num">{% if row.ltv is not none %}${{ "%.0f"|format(row.ltv) }}{% else %}&mdash;{% endif %}</td>
+                    <td class="num">{{ row.current_trials }}</td>
+                    <td class="num">${{ "%.2f"|format(row.trial_mrr) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
 {% endif %}
 
 <div class="card">
@@ -281,13 +283,11 @@
     </div>
 </div>
 
-<div class="card">
-    <h2 id="annotations">Annotations</h2>
-    <p class="sub">MRR moved in March and this product used to have no way of saying why. A note
-    here marks its month on the charts above, so the reason survives the people who remember it.
-    A note that turned out to be wrong can be deleted. There is no edit: delete it and write it
-    again, which is one line of typing and leaves no half-corrected record behind.</p>
-
+<section class="table-card annotation-panel">
+    <header class="panel-heading">
+        <h2 id="annotations">Annotations</h2>
+    </header>
+    <div class="annotation-content">
     {% if note_error %}<p class="form-error">{{ note_error }}</p>{% endif %}
     {% if can_annotate %}
     <form class="anno-form" method="post" action="/annotations">
@@ -306,10 +306,9 @@
         <button type="submit">Add note</button>
     </form>
     {% elif not selected_app %}
-    <p class="sub">Select an app to add a note.</p>
+    <p class="annotation-empty">Select an app to view and add chart notes.</p>
     {% else %}
-    <p class="sub">Adding a note needs a browser session. This request authenticated some other
-    way.</p>
+    <p class="annotation-empty">Sign in with a browser session to add a note.</p>
     {% endif %}
 
     {% if notes %}
@@ -334,7 +333,8 @@
         {% endfor %}
     </div>
     {% endif %}
-</div>
+    </div>
+</section>
 
 <div class="table-card">
     <table>

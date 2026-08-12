@@ -266,6 +266,26 @@ def test_discover_catalog_can_follow_baseline_app_and_open_watchlist(db):
     ).status_code == 404
 
 
+def test_discovered_app_growth_uses_one_compact_empty_state(db):
+    observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('quiet-app','Quiet App',%s,%s,true)""",
+        (observed_at, observed_at),
+    )
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    page = client.get("/discover/apps/quiet-app?view=growth")
+
+    assert page.status_code == 200
+    assert "No growth history yet" in page.text
+    assert "No growth observations yet" not in page.text
+    assert "No category history yet" not in page.text
+    assert "Review history" not in page.text
+    assert "Category positions" not in page.text
+
+
 def test_discovery_media_requires_known_digest_and_serves_archive(
     db, tmp_path, monkeypatch,
 ):
@@ -1257,6 +1277,9 @@ def test_all_apps_overview_shows_portfolio_unit_economics_and_live_trials(
     assert "Beta" in body
     assert "$30.00" in body
     assert "Trial conversion" not in body
+    assert 'class="overview-section portfolio-section"' in body
+    assert 'class="table-card annotation-panel"' in body
+    assert "MRR moved in March" not in body
 
 
 # --- Definitions and deltas ---------------------------------------------------
