@@ -10,6 +10,7 @@ from app_dashboard.scheduler import (
     run_rank_tracker_job,
     run_payouts_job,
     run_review_collection_job,
+    run_lifecycle_cycle,
     run_sync_job,
     run_watchlist_job,
 )
@@ -74,6 +75,48 @@ def test_active_subscription_job_closes_each_app_connection(monkeypatch, test_ap
 
     run_active_subscriptions_job(lambda: conn, [test_app], object())
 
+    assert conn.closed_count == 1
+
+
+def test_lifecycle_cycle_immediately_refreshes_changed_subscription_state(
+    monkeypatch, test_app
+):
+    calls = []
+    monkeypatch.setattr(
+        "app_dashboard.scheduler.run_sync_job",
+        lambda *args, **kwargs: calls.append(("lifecycle", kwargs)) or [{"ok": True}],
+    )
+    monkeypatch.setattr(
+        "app_dashboard.scheduler.run_active_subscriptions_job",
+        lambda *args, **kwargs: calls.append(("subscriptions", kwargs))
+        or [{"trials": 1}],
+    )
+
+    result = run_lifecycle_cycle(object(), [test_app], object())
+
+    assert result == {
+        "lifecycle": [{"ok": True}],
+        "active_subscriptions": [{"trials": 1}],
+    }
+    assert calls == [
+        ("lifecycle", {}),
+        ("subscriptions", {"full_refresh": False}),
+    ]
+
+
+def test_active_subscription_job_forwards_incremental_mode(monkeypatch, test_app):
+    conn = FakeConn()
+    seen = []
+    monkeypatch.setattr(
+        "app_dashboard.scheduler.sync_active_subscriptions",
+        lambda *args, **kwargs: seen.append(kwargs) or {"queried": 0},
+    )
+
+    run_active_subscriptions_job(
+        lambda: conn, [test_app], object(), full_refresh=False
+    )
+
+    assert seen == [{"full_refresh": False}]
     assert conn.closed_count == 1
 
 

@@ -88,22 +88,52 @@ def run_payouts_job(conn_factory, apps: list[AppConfig], settings) -> list[dict]
     return results
 
 
-def _sync_one_active_subscriptions(conn_factory, client, app, settings) -> dict:
+def _sync_one_active_subscriptions(
+    conn_factory, client, app, settings, *, full_refresh: bool = True
+) -> dict:
     conn = conn_factory()
     try:
-        return sync_active_subscriptions(conn, client, app)
+        return sync_active_subscriptions(
+            conn, client, app, full_refresh=full_refresh
+        )
     finally:
         conn.close()
 
 
 def run_active_subscriptions_job(
-    conn_factory, apps: list[AppConfig], settings
+    conn_factory, apps: list[AppConfig], settings, *, full_refresh: bool = True
 ) -> list[dict]:
+    def sync_one(conn_factory, client, app, settings):
+        return _sync_one_active_subscriptions(
+            conn_factory,
+            client,
+            app,
+            settings,
+            full_refresh=full_refresh,
+        )
+
     results = run_all_apps(
-        conn_factory, apps, settings, _sync_one_active_subscriptions
+        conn_factory, apps, settings, sync_one
     )
     logger.info("all active subscription syncs completed: %s", results)
     return results
+
+
+def run_lifecycle_cycle(
+    conn_factory, apps: list[AppConfig], settings
+) -> dict[str, list[dict]]:
+    """Ingest lifecycle events, then resolve current trial state immediately.
+
+    Shopify's event feed contains the plan price but not ``trialEndsAt``. The
+    incremental snapshot pass only revisits shops changed by the lifecycle
+    sync, preventing a new trial from appearing as paid MRR until the separate
+    six-hour full refresh runs.
+    """
+    lifecycle = run_sync_job(conn_factory, apps, settings)
+    subscriptions = run_active_subscriptions_job(
+        conn_factory, apps, settings, full_refresh=False
+    )
+    return {"lifecycle": lifecycle, "active_subscriptions": subscriptions}
 
 
 def run_stale_check_job(conn_factory, apps: list[AppConfig], settings) -> None:
@@ -434,7 +464,7 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
     scheduler = BackgroundScheduler()
     current_apps = apps if callable(apps) else lambda: apps
     scheduler.add_job(
-        lambda: run_sync_job(conn_factory, current_apps(), settings),
+        lambda: run_lifecycle_cycle(conn_factory, current_apps(), settings),
         "interval",
         minutes=settings.poll_interval_minutes,
         # First run at boot, not boot+interval: a fresh deploy should sync
