@@ -24,6 +24,39 @@ def test_core_tables_exist(db):
         "discovery_listing_changes", "discovery_media_objects",
         "discovery_snapshot_media",
     } <= names
+    assert {
+        "research_lists", "research_list_apps", "discovered_developers",
+        "discovered_app_developers", "research_notes",
+        "research_attachment_objects", "research_note_attachments",
+    } <= names
+
+
+def test_research_note_requires_exactly_one_target(db):
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,first_seen_at,last_seen_at,is_baseline)
+           values ('research-target',now(),now(),false) returning id"""
+    ).fetchone()[0]
+    list_id = db.execute(
+        "insert into research_lists (title) values ('Targets') returning id"
+    ).fetchone()[0]
+    db.execute(
+        """insert into research_notes
+             (title,body,discovered_app_id,author)
+           values ('App note','Body',%s,'tester')""",
+        (app_id,),
+    )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        db.execute(
+            "insert into research_notes (title,body,author) values ('None','','tester')"
+        )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        db.execute(
+            """insert into research_notes
+                 (title,body,research_list_id,discovered_app_id,author)
+               values ('Two','',%s,%s,'tester')""",
+            (list_id, app_id),
+        )
 
 
 def test_every_app_owned_table_has_a_required_app_id(db):

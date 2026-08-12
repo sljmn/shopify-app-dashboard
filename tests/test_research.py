@@ -1,0 +1,78 @@
+from datetime import datetime, timezone
+
+from app_dashboard.research import (
+    add_app_to_list,
+    attach_object,
+    create_list,
+    create_note,
+    delete_note,
+    get_list,
+    research_index,
+    remove_app_from_list,
+    target_research,
+)
+
+
+def discovered(db, handle="research-app", name="Research App"):
+    return db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values (%s,%s,now(),now(),false) returning id""",
+        (handle, name),
+    ).fetchone()[0]
+
+
+def test_app_can_join_multiple_lists_and_membership_starts_tracking(db):
+    discovered(db)
+    first = create_list(db, "Acquisition")
+    second = create_list(db, "ASO examples")
+    assert add_app_to_list(db, first["id"], "research-app") is True
+    assert add_app_to_list(db, first["id"], "research-app") is False
+    assert add_app_to_list(db, second["id"], "research-app") is True
+    assert len(get_list(db, first["id"])["apps"]) == 1
+    assert db.execute("select count(*) from discovery_watchlist").fetchone()[0] == 1
+    assert remove_app_from_list(db, first["id"], "research-app") is True
+    assert db.execute(
+        "select active from discovery_watchlist"
+    ).fetchone()[0] is True
+
+
+def test_targeted_notes_and_index_search_include_context_and_filename(db):
+    app_id = discovered(db, "contentpilot", "ContentPilot")
+    research_list = create_list(db, "AI content tools")
+    add_app_to_list(db, research_list["id"], "contentpilot")
+    note = create_note(
+        db, target_kind="app", target_id=app_id, title="Pricing experiment",
+        body="Watch the annual plan", author="sulejman",
+        now=datetime(2026, 8, 12, 10, tzinfo=timezone.utc),
+    )
+    digest = "a" * 64
+    attach_object(
+        db, note["id"], digest=digest, object_key=f"research/aa/{digest}",
+        mime_type="application/pdf", byte_size=20,
+        original_filename="pricing-notes.pdf",
+    )
+    rows = research_index(db, query="pricing")
+    assert {row["type"] for row in rows} == {"note", "attachment"}
+    assert next(row for row in rows if row["type"] == "note")["context_title"] == "ContentPilot"
+    context = target_research(db, target_kind="app", target_id=app_id)
+    assert [item["title"] for item in context["lists"]] == ["AI content tools"]
+    assert context["notes"][0]["attachment_count"] == 1
+
+
+def test_deleting_last_note_reference_marks_physical_object_for_deletion(db):
+    app_id = discovered(db)
+    note = create_note(
+        db, target_kind="app", target_id=app_id, title="Evidence", body="",
+        author="tester",
+    )
+    digest = "b" * 64
+    attach_object(
+        db, note["id"], digest=digest, object_key=f"research/bb/{digest}",
+        mime_type="text/plain", byte_size=4, original_filename="note.txt",
+    )
+    detached = delete_note(db, note["id"])
+    assert detached[0].delete_physical is True
+    assert db.execute(
+        "select count(*) from research_attachment_objects"
+    ).fetchone()[0] == 0
