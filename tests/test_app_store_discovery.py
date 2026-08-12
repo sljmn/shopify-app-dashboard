@@ -11,6 +11,7 @@ from app_dashboard.app_store_discovery import (
     CATEGORY_SITEMAP_URL,
     collect_categories,
     category_opportunities,
+    category_dashboard,
     discovery_report,
     growth_signals,
     parse_app_sitemap,
@@ -341,6 +342,59 @@ def test_category_opportunities_expose_coverage_instead_of_guessing_prices(db):
     assert row["pricing_covered"] == 1
     assert row["paid_share"] == 100
     assert row["average_monthly_price"] == Decimal("24")
+
+
+def test_category_dashboard_starts_with_inventory_and_filters_signals(db):
+    now = datetime(2026, 8, 12, 8, tzinfo=timezone.utc)
+    sync_discovered_apps(db, [
+        SitemapApp("ranked", None), SitemapApp("unmeasured", None),
+    ], now - timedelta(days=40))
+    sync_discovery_categories(db, [CategoryResult("anti-theft", "Anti theft", (
+        CategoryApp("ranked", "Ranked", 10, Decimal("4.8"), 1, True),
+        CategoryApp("unmeasured", "Unmeasured", None, None, 2, False),
+    ))], now - timedelta(days=30))
+    sync_discovery_categories(db, [CategoryResult("anti-theft", "Anti theft", (
+        CategoryApp("ranked", "Ranked", 15, Decimal("4.8"), 1, True),
+        CategoryApp("unmeasured", "Unmeasured", None, None, 2, False),
+    ))], now - timedelta(days=7))
+    sync_discovery_categories(db, [CategoryResult("anti-theft", "Anti theft", (
+        CategoryApp("ranked", "Ranked", 18, Decimal("4.9"), 1, True),
+        CategoryApp("unmeasured", "Unmeasured", None, None, 2, False),
+    ))], now)
+    ranked_id = db.execute(
+        "select id from discovered_apps where handle='ranked'"
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,%s,'category-listing',%s)""",
+        (ranked_id, now, Jsonb({
+            "developer": {"name": "Ranked Labs"},
+            "pricing": ["Pro $12 / month"],
+        })),
+    )
+
+    report = category_dashboard(db, "anti-theft", now=now)
+
+    assert report["category_name"] == "Anti theft"
+    assert report["total_apps"] == 2
+    assert report["measured_apps"] == 1
+    assert report["bfs_apps"] == 1
+    assert [row["handle"] for row in report["rows"]] == [
+        "ranked", "unmeasured",
+    ]
+    assert report["rows"][0]["delta7"] == 3
+    assert report["rows"][0]["delta30"] == 8
+    assert report["rows"][0]["developer"] == "Ranked Labs"
+    assert report["rows"][0]["pricing"]["monthly"] == [Decimal("12")]
+    assert report["rows"][1]["reviews"] is None
+    assert [row["handle"] for row in category_dashboard(
+        db, "anti-theft", signal="reviews", now=now,
+    )["rows"]] == ["ranked"]
+    assert category_dashboard(db, "anti-theft", bfs="bfs", now=now)[
+        "total"
+    ] == 1
+    assert category_dashboard(db, "missing", now=now) is None
 
 
 def test_growth_signals_separate_baseline_growers_and_new_contenders(db):

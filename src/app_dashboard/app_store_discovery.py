@@ -664,6 +664,172 @@ def next_category_scan(now=None) -> datetime:
     raise RuntimeError("category-scan-calendar")
 
 
+def category_dashboard(
+    conn, slug: str, *, search: str = "", signal: str = "all",
+    bfs: str = "", page: int = 1, per_page: int = 100, now=None,
+) -> dict | None:
+    category = conn.execute(
+        """select id,name,observed_at from discovery_categories
+           where slug=%s""",
+        (slug.strip(),),
+    ).fetchone()
+    if not category:
+        return None
+    category_id, category_name, observed_at = category
+    current = now or datetime.now(timezone.utc)
+    today = current.astimezone(DISPLAY_TZ).date()
+    cutoff7 = today - timedelta(days=7)
+    cutoff30 = today - timedelta(days=30)
+    signal = signal if signal in {
+        "all", "new", "reviews", "fastest", "listing", "delisted",
+    } else "all"
+
+    where = ["member.category_id=%s"]
+    params: list = [cutoff7, cutoff30, category_id]
+    if signal == "delisted":
+        where.append("app.delisted_at is not null")
+    else:
+        where.append("app.delisted_at is null")
+    if signal == "new":
+        where.append(
+            "exists (select 1 from discovery_app_events event "
+            "where event.discovered_app_id=app.id "
+            "and event.event_type='discovered' and event.occurred_at >= %s)"
+        )
+        params.append(current - timedelta(days=30))
+    elif signal in {"reviews", "fastest"}:
+        where.append(
+            "latest.review_count is not null and prior30.review_count is not null "
+            "and latest.review_count > prior30.review_count"
+        )
+    elif signal == "listing":
+        where.append("verified.changed_at >= %s")
+        params.append(current - timedelta(days=30))
+    if search.strip():
+        term = f"%{search.strip()}%"
+        where.append(
+            "(app.handle ilike %s or coalesce(app.display_name,'') ilike %s "
+            "or coalesce(snapshot.listing->'developer'->>'name','') ilike %s)"
+        )
+        params.extend([term, term, term])
+    if bfs == "bfs":
+        where.append("app.built_for_shopify is true")
+    elif bfs == "not_bfs":
+        where.append("app.built_for_shopify is false")
+    elif bfs == "unknown":
+        where.append("app.built_for_shopify is null")
+
+    filtered = " and ".join(where)
+    base = f"""from discovered_app_categories member
+        join discovered_apps app on app.id=member.discovered_app_id
+        left join lateral (
+          select review_count,rating,best_category_rank,observed_on
+          from discovery_app_observations
+          where discovered_app_id=app.id order by observed_on desc limit 1
+        ) latest on true
+        left join lateral (
+          select review_count from discovery_app_observations
+          where discovered_app_id=app.id and observed_on <= %s
+          order by observed_on desc limit 1
+        ) prior7 on true
+        left join lateral (
+          select review_count from discovery_app_observations
+          where discovered_app_id=app.id and observed_on <= %s
+          order by observed_on desc limit 1
+        ) prior30 on true
+        left join lateral (
+          select position from discovery_category_observations
+          where discovered_app_id=app.id and category_id=member.category_id
+          order by observed_on desc limit 1
+        ) category_rank on true
+        left join lateral (
+          select listing from discovery_listing_snapshots
+          where discovered_app_id=app.id order by captured_at desc,id desc limit 1
+        ) snapshot on true
+        left join lateral (
+          select changed_at from discovery_listing_changes
+          where discovered_app_id=app.id order by changed_at desc,id desc limit 1
+        ) verified on true
+        where {filtered}"""
+    total = conn.execute(f"select count(*) {base}", params).fetchone()[0]
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, pages))
+    order = (
+        "(latest.review_count-prior30.review_count) desc nulls last, "
+        if signal == "fastest" else
+        "category_rank.position asc nulls last, "
+    )
+    raw_rows = conn.execute(
+        f"""select app.handle,app.display_name,category_rank.position,
+                   latest.review_count,latest.rating,
+                   case when latest.review_count is not null
+                          and prior7.review_count is not null
+                        then latest.review_count-prior7.review_count end delta7,
+                   case when latest.review_count is not null
+                          and prior30.review_count is not null
+                        then latest.review_count-prior30.review_count end delta30,
+                   app.built_for_shopify,app.bfs_checked_at,snapshot.listing,
+                   verified.changed_at,app.first_seen_at,app.delisted_at
+            {base}
+            order by {order}coalesce(app.display_name,app.handle),app.handle
+            limit %s offset %s""",
+        [*params, per_page, (page - 1) * per_page],
+    ).fetchall()
+    keys = (
+        "handle", "name", "rank", "reviews", "rating", "delta7", "delta30",
+        "built_for_shopify", "bfs_checked_at", "listing", "listing_changed_at",
+        "first_seen_at", "delisted_at",
+    )
+    rows = []
+    for raw in raw_rows:
+        row = dict(zip(keys, raw, strict=True))
+        row["name"] = row["name"] or row["handle"].replace("-", " ").title()
+        row["developer"] = (
+            ((row["listing"] or {}).get("developer") or {}).get("name") or ""
+        )
+        row["pricing"] = pricing_profile(row["listing"])
+        rows.append(row)
+
+    summary = conn.execute(
+        """select
+             count(*) filter (where app.delisted_at is null) total_apps,
+             count(*) filter (where app.delisted_at is null
+                              and latest.review_count is not null) measured_apps,
+             count(*) filter (where app.delisted_at is null
+                              and app.built_for_shopify is true) bfs_apps,
+             count(*) filter (where app.delisted_at is null and exists (
+               select 1 from discovery_app_events event
+               where event.discovered_app_id=app.id
+                 and event.event_type='discovered' and event.occurred_at >= %s
+             )) new_30d,
+             count(*) filter (where app.delisted_at is null
+                              and latest.review_count is not null
+                              and prior.review_count is not null
+                              and latest.review_count > prior.review_count)
+               review_gainers_30d
+           from discovered_app_categories member
+           join discovered_apps app on app.id=member.discovered_app_id
+           left join lateral (
+             select review_count from discovery_app_observations
+             where discovered_app_id=app.id order by observed_on desc limit 1
+           ) latest on true
+           left join lateral (
+             select review_count from discovery_app_observations
+             where discovered_app_id=app.id and observed_on <= %s
+             order by observed_on desc limit 1
+           ) prior on true
+           where member.category_id=%s""",
+        (current - timedelta(days=30), cutoff30, category_id),
+    ).fetchone()
+    return {
+        "category_name": category_name, "last_scan": observed_at,
+        "total_apps": summary[0], "measured_apps": summary[1],
+        "bfs_apps": summary[2], "new_30d": summary[3],
+        "review_gainers_30d": summary[4], "rows": rows, "total": total,
+        "page": page, "pages": pages, "signal": signal,
+    }
+
+
 def category_opportunities(conn, *, now=None) -> list[dict]:
     current = now or datetime.now(timezone.utc)
     core = conn.execute(
