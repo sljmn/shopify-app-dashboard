@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app_dashboard.review_collection import (
-    issue_review_decision, parse_contact, parse_outcome, record_outcome,
+    app_summary, issue_review_decision, parse_contact, parse_outcome,
+    recent_app_attempts, record_outcome,
     redact_contacts, upsert_contact,
 )
 from app_dashboard.usage import UsageError, ingest
@@ -158,6 +159,35 @@ def test_cancelled_retry_uses_the_app_setting(db, test_app):
         "success": False, "code": "cancelled", "message": "Later"}).encode())
     record_outcome(db, app.id, outcome, NOW)
     assert db.execute("select next_eligible_at from review_prompt_decisions").fetchone()[0] == NOW + timedelta(days=21)
+
+
+def test_app_audit_distinguishes_opened_expired_and_waiting_requests(db, test_app):
+    install(db, test_app)
+    db.execute(
+        """insert into review_prompt_decisions
+           (decision_id, app_id, shop_gid, event_id, event_type, issued_at,
+            expires_at, outcome, response_code, responded_at)
+           values
+           ('shown', %s, %s, 'e1', 'book_import_succeeded', %s, %s,
+            'shown', 'success', %s),
+           ('expired', %s, %s, 'e2', 'book_import_succeeded', %s, %s,
+            'issued', null, null),
+           ('waiting', %s, %s, 'e3', 'book_import_succeeded', %s, %s,
+            'issued', null, null)""",
+        (
+            test_app.id, GID, NOW - timedelta(hours=1), NOW + timedelta(minutes=5), NOW,
+            test_app.id, GID, NOW - timedelta(hours=2), NOW - timedelta(minutes=1),
+            test_app.id, GID, NOW, NOW + timedelta(minutes=15),
+        ),
+    )
+    db.commit()
+
+    assert app_summary(db, test_app.id, NOW) == {
+        "requests": 3, "shown": 1, "not_opened": 1, "awaiting": 1,
+    }
+    attempts = recent_app_attempts(db, test_app.id, now=NOW)
+    assert [attempt["outcome"] for attempt in attempts] == ["issued", "shown", "expired"]
+    assert attempts[0]["shop"] == "Books"
 
 
 def test_redaction_removes_contacts_but_keeps_decision(db, test_app):

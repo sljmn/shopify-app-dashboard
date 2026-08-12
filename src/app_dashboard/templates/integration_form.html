@@ -59,16 +59,48 @@
         </div>
         {% if review_summary %}
         <dl class="review-policy-metrics" aria-label="Review prompt outcomes">
-            <div><dt>Shown</dt><dd>{{ review_summary.shown }}</dd></div>
-            <div><dt>Retry later</dt><dd>{{ review_summary.temporarily_declined }}</dd></div>
-            <div><dt>Stopped</dt><dd>{{ review_summary.stopped }}</dd></div>
-            <div><dt>Pending</dt><dd>{{ review_summary.scheduled }}</dd></div>
+            <div><dt>Requests</dt><dd>{{ review_summary.requests }}</dd></div>
+            <div><dt>Modal opened</dt><dd>{{ review_summary.shown }}</dd></div>
+            <div><dt>Not opened</dt><dd>{{ review_summary.not_opened }}</dd></div>
+            <div><dt>Awaiting result</dt><dd>{{ review_summary.awaiting }}</dd></div>
         </dl>
         {% endif %}
     </section>
     {% endif %}
     <div class="form-actions manage-save-actions"><button type="submit">Save changes</button></div>
 </form>
+
+{% if kind == 'app' and values.id %}
+<section class="card review-request-log" aria-labelledby="review-request-log-title">
+    <div class="card-head">
+        <div>
+            <h2 id="review-request-log-title">Recent review requests</h2>
+            <p>“Modal opened” confirms Shopify displayed the native prompt. It does not confirm that the merchant submitted a public review.</p>
+        </div>
+    </div>
+    {% if review_attempts %}
+    <div class="manage-table-wrap">
+        <table class="manage-table">
+            <thead><tr><th>Issued</th><th>Merchant</th><th>Trigger</th><th>Result</th><th>Shopify response</th><th>Reported</th></tr></thead>
+            <tbody>
+            {% for attempt in review_attempts %}
+            <tr>
+                <td data-label="Issued">{{ attempt.issued_at|local_time("%-d %b %Y %H:%M") }}</td>
+                <td data-label="Merchant"><a href="/customers/{{ attempt.shop_gid|urlencode }}?app={{ values.slug|urlencode }}">{{ attempt.shop }}</a>{% if attempt.domain and attempt.domain != attempt.shop %}<small>{{ attempt.domain }}</small>{% endif %}</td>
+                <td data-label="Trigger"><code>{{ attempt.event_type }}</code></td>
+                <td data-label="Result"><span class="status {% if attempt.outcome == 'shown' %}ok{% elif attempt.outcome == 'issued' %}neutral{% else %}bad{% endif %}">{{ 'Modal opened' if attempt.outcome == 'shown' else ('Awaiting app' if attempt.outcome == 'issued' else attempt.outcome|replace('_', ' ')|title) }}</span></td>
+                <td data-label="Shopify response">{{ attempt.response_code or '—' }}{% if attempt.response_message %}<small>{{ attempt.response_message }}</small>{% endif %}</td>
+                <td data-label="Reported">{{ attempt.responded_at|local_time("%-d %b %Y %H:%M") if attempt.responded_at else '—' }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="review-request-empty">No review request has been issued for this app yet.</p>
+    {% endif %}
+</section>
+{% endif %}
 
 {% if values.id and not values.archived_at and not values.archived %}
 <details class="danger-zone card"><summary>Archive {{ kind }}</summary><p>Historical analytics remain available. The {{ kind }} stops syncing and disappears from active selectors.</p><form action="/management/{{ 'organizations' if kind == 'organization' else 'apps' }}/{{ values.id }}/archive" method="post"><button class="danger" type="submit">Archive {{ kind }}</button></form></details>

@@ -102,6 +102,7 @@ from app_dashboard.review_collection import (
     issue_review_decision,
     parse_contact,
     parse_outcome,
+    recent_app_attempts as recent_review_app_attempts,
     record_outcome,
     redact_contacts,
     upsert_contact,
@@ -1958,6 +1959,10 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         try:
             organizations = [org for org in list_organizations(conn) if not org.archived]
             summary = review_app_summary(conn, int(values["id"])) if values.get("id") else None
+            attempts = (
+                recent_review_app_attempts(conn, int(values["id"]))
+                if values.get("id") else []
+            )
         finally:
             conn.close()
         return templates.TemplateResponse(
@@ -1969,6 +1974,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 listing_statuses=LISTING_STATUSES,
                 tracking_statuses=TRACKING_STATUSES,
                 review_summary=summary,
+                review_attempts=attempts,
             ),
             status_code=422 if error else 200,
         )

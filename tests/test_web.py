@@ -140,6 +140,9 @@ def test_integration_management_is_authenticated_and_never_renders_secrets(db):
     assert 'class="review-policy-fields"' in app_form.text
     assert 'class="review-policy-metrics"' in app_form.text
     assert "Development stores are excluded" in app_form.text
+    assert "Recent review requests" in app_form.text
+    assert "Modal opened" in app_form.text
+    assert "No review request has been issued" in app_form.text
 
 
 def test_research_workspace_is_authenticated_and_can_create_a_list(db):

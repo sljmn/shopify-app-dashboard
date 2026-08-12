@@ -294,15 +294,54 @@ def record_outcome(
     return status
 
 
-def app_summary(conn: psycopg.Connection, app_id: int) -> dict:
+def app_summary(
+    conn: psycopg.Connection, app_id: int, now: datetime | None = None,
+) -> dict:
+    now = now or datetime.now(timezone.utc)
     rows = conn.execute(
-        """select outcome, count(*) from review_prompt_decisions
-           where app_id=%s group by outcome""", (app_id,),
+        """select case when outcome='issued' and expires_at <= %s
+                       then 'expired' else outcome end as effective_outcome,
+                  count(*)
+           from review_prompt_decisions
+           where app_id=%s
+           group by effective_outcome""", (now, app_id),
     ).fetchall()
     counts = dict(rows)
+    requests = sum(counts.values())
+    awaiting = counts.get("issued", 0)
+    shown = counts.get("shown", 0)
     return {
-        "shown": counts.get("shown", 0),
-        "temporarily_declined": counts.get("temporarily_declined", 0) + counts.get("cancelled", 0),
-        "stopped": counts.get("already_reviewed", 0) + counts.get("ineligible", 0),
-        "scheduled": counts.get("issued", 0),
+        "requests": requests,
+        "shown": shown,
+        "not_opened": requests - shown - awaiting,
+        "awaiting": awaiting,
     }
+
+
+def recent_app_attempts(
+    conn: psycopg.Connection, app_id: int, *, limit: int = 25,
+    now: datetime | None = None,
+) -> list[dict]:
+    now = now or datetime.now(timezone.utc)
+    rows = conn.execute(
+        """select d.shop_gid, coalesce(s.shop_name, s.shop_domain, d.shop_gid),
+                  s.shop_domain, d.event_type, d.issued_at,
+                  case when d.outcome='issued' and d.expires_at <= %s
+                       then 'expired' else d.outcome end as effective_outcome,
+                  d.response_code, d.response_message, d.responded_at
+           from review_prompt_decisions d
+           left join shops s on s.app_id=d.app_id and s.shop_gid=d.shop_gid
+           where d.app_id=%s
+           order by d.issued_at desc
+           limit %s""",
+        (now, app_id, limit),
+    ).fetchall()
+    return [
+        {
+            "shop_gid": row[0], "shop": row[1], "domain": row[2],
+            "event_type": row[3], "issued_at": row[4], "outcome": row[5],
+            "response_code": row[6], "response_message": row[7],
+            "responded_at": row[8],
+        }
+        for row in rows
+    ]
