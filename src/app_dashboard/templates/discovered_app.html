@@ -113,11 +113,20 @@
 </section>
 {% else %}
 <section class="research-app-view">
-    <div class="section-heading"><div><h2>Research</h2><p class="sub">Keep this app in multiple lists and record decisions or evidence.</p></div><a href="/research/notes/new?target=app&amp;target_id={{ detail.id }}">New note</a></div>
-    <form class="filters research-add-app" method="post" action="/discover/apps/{{ detail.handle|urlencode }}/lists"><select name="list_id" required><option value="">Add to a list…</option>{% for list in research_lists %}<option value="{{ list.id }}">{{ list.title }}</option>{% endfor %}</select><button type="submit">Add</button><a class="ghost" href="/research/lists/new">New list</a></form>
-    {% if research.lists %}<div class="research-memberships">{% for list in research.lists %}<a class="category-pill" href="/research/lists/{{ list.id }}">{{ list.title }}</a>{% endfor %}</div>{% endif %}
-    {% if detail.developer_id %}<p>Developer: <a href="/research/developers/{{ detail.developer_id }}"><strong>{{ detail.developer_name }}</strong></a></p>{% endif %}
-    <div class="research-notes">{% for note in research.notes %}<article class="card research-note"><header><div><h3>{{ note.title }}</h3><span class="sub">{{ note.updated_at|local_time("%-d %b %Y %H:%M") }} · {{ note.author }}</span></div><form method="post" action="/research/notes/{{ note.id }}/delete"><button class="ghost" type="submit">Delete</button></form></header><p>{{ note.body }}</p>{% if note.attachments %}<div class="attachment-list">{% for attachment in note.attachments %}<a href="/research/attachments/{{ attachment.id }}">{{ attachment.filename }}</a>{% endfor %}</div>{% endif %}</article>{% else %}<p class="empty-state">No app notes yet.</p>{% endfor %}</div>
+    <div class="section-heading research-app-heading"><div><h2>Research</h2><p class="sub">Keep this app in lists and capture decisions or evidence.</p></div><a class="ghost" href="/research/notes/new?target=app&amp;target_id={{ detail.id }}">New note</a></div>
+    <div class="research-app-block">
+        <div class="research-app-block-head"><div><h3>Lists</h3><p class="sub">Group this app with the other products you are researching.</p></div><span class="section-count">{{ research.lists|length }}</span></div>
+        <form class="research-app-toolbar" method="post" action="/discover/apps/{{ detail.handle|urlencode }}/lists">
+            <label for="research-list-select">Research list</label>
+            <div><select id="research-list-select" name="list_id" required><option value="">Choose a list…</option>{% for list in research_lists %}<option value="{{ list.id }}">{{ list.title }}</option>{% endfor %}</select><button type="submit">Add to list</button><a class="ghost" href="/research/lists/new">New list</a></div>
+        </form>
+        {% if research.lists %}<div class="research-app-memberships" aria-label="Lists containing this app">{% for list in research.lists %}<a href="/research/lists/{{ list.id }}"><span>{{ list.title }}</span><small>Open list</small></a>{% endfor %}</div>{% else %}<p class="research-inline-empty">This app is not in a research list yet.</p>{% endif %}
+        {% if detail.developer_id %}<p class="research-developer">Developer <a href="/research/developers/{{ detail.developer_id }}"><strong>{{ detail.developer_name }}</strong></a></p>{% endif %}
+    </div>
+    <div class="research-app-block">
+        <div class="research-app-block-head"><div><h3>Notes for this app</h3><p class="sub">Decisions, findings and supporting files.</p></div><a class="ghost" href="/research/notes/new?target=app&amp;target_id={{ detail.id }}">New note</a></div>
+        <div class="research-notes">{% for note in research.notes %}<article class="card research-note"><header><div><h3>{{ note.title }}</h3><span class="sub">{{ note.updated_at|local_time("%-d %b %Y %H:%M") }} · {{ note.author }}</span></div><form method="post" action="/research/notes/{{ note.id }}/delete"><button class="ghost" type="submit">Delete</button></form></header><p>{{ note.body }}</p>{% if note.attachments %}<div class="attachment-list">{% for attachment in note.attachments %}<a href="/research/attachments/{{ attachment.id }}">{{ attachment.filename }}</a>{% endfor %}</div>{% endif %}</article>{% else %}<div class="empty-state research-app-empty"><strong>No notes yet.</strong><span>Add a note when you find something worth keeping.</span><a href="/research/notes/new?target=app&amp;target_id={{ detail.id }}">Create the first note</a></div>{% endfor %}</div>
+    </div>
 </section>
 {% endif %}
 

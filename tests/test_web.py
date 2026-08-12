@@ -203,6 +203,9 @@ def test_discover_app_can_join_a_research_list_and_opens_research_tab(db):
     assert response.headers["location"].endswith("?view=research")
     page = client.get(response.headers["location"])
     assert page.status_code == 200 and "Route list" in page.text
+    assert "research-app-toolbar" in page.text
+    assert "research-app-memberships" in page.text
+    assert "Notes for this app" in page.text
     assert db.execute(
         "select count(*) from research_list_apps where discovered_app_id=%s", (app_id,),
     ).fetchone()[0] == 1
