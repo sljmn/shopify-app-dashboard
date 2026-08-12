@@ -231,7 +231,18 @@ def app_detail(conn, handle: str) -> dict | None:
         "last_error_code", "reviews", "rating", "best_rank", "snapshot_id",
         "snapshot_at", "listing", "categories",
     )
-    return dict(zip(keys, row, strict=True))
+    detail = dict(zip(keys, row, strict=True))
+    detail["media"] = []
+    if detail["snapshot_id"] is not None:
+        detail["media"] = [
+            {"role": role, "position": position, "digest": digest}
+            for role, position, digest in conn.execute(
+                """select role,position,digest from discovery_snapshot_media
+                   where snapshot_id=%s order by role,position""",
+                (detail["snapshot_id"],),
+            ).fetchall()
+        ]
+    return detail
 
 
 def growth_history(conn, discovered_app_id: int) -> dict:

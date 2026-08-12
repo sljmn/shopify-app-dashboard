@@ -36,7 +36,8 @@
         {% if detail.listing.features %}<h3>Features</h3><ul>{% for item in detail.listing.features %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
         {% if detail.listing.pricing %}<h3>Pricing</h3><ul>{% for item in detail.listing.pricing %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
     </div>
-    {% if detail.listing.screenshots %}<div class="listing-gallery">{% for source in detail.listing.screenshots %}<img src="{{ source }}" alt="Listing screenshot {{ loop.index }}" loading="lazy">{% endfor %}</div>{% endif %}
+    {% set screenshots = detail.media|selectattr("role", "equalto", "screenshot")|list %}
+    {% if screenshots %}<div class="listing-gallery">{% for media in screenshots %}<img src="/discover/media/{{ media.digest }}" alt="Listing screenshot {{ loop.index }}" loading="lazy">{% endfor %}</div>{% endif %}
 </section>
 {% else %}<p class="empty-state">Follow this app to capture its first full listing version during the next daily scan.</p>{% endif %}
 {% elif view == "growth" %}

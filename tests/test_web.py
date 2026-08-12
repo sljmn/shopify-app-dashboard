@@ -311,6 +311,50 @@ def test_discovery_media_requires_known_digest_and_serves_archive(
     assert client.get("/discover/media/not-a-digest").status_code == 404
 
 
+def test_discovered_app_renders_archived_media_instead_of_remote_sources(
+    db, tmp_path, monkeypatch,
+):
+    digest = "b" * 64
+    target = tmp_path / digest[:2] / digest
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"archived-screenshot")
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('media-app','Media App',now(),now(),true) returning id"""
+    ).fetchone()[0]
+    snapshot_id = db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,now(),%s,%s) returning id""",
+        (app_id, "c" * 64, Jsonb({
+            "name": "Media App",
+            "screenshots": ["https://cdn.shopify.com/remote.png"],
+        })),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_media_objects
+             (digest,object_key,mime_type,byte_size,created_at)
+           values (%s,%s,'image/png',%s,now())""",
+        (digest, f"{digest[:2]}/{digest}", len(b"archived-screenshot")),
+    )
+    db.execute(
+        """insert into discovery_snapshot_media
+             (snapshot_id,digest,role,position,source_url)
+           values (%s,%s,'screenshot',0,'https://cdn.shopify.com/remote.png')""",
+        (snapshot_id, digest),
+    )
+    monkeypatch.setenv("WATCHLIST_MEDIA_PATH", str(tmp_path))
+
+    page = dashboard_client(create_app(conn_factory=lambda: keep_open(db))).get(
+        "/discover/apps/media-app"
+    )
+
+    assert page.status_code == 200
+    assert f'src="/discover/media/{digest}"' in page.text
+    assert 'src="https://cdn.shopify.com/remote.png"' not in page.text
+
+
 def test_selected_aso_app_has_views_and_csv(db, test_app):
     db.execute(
         """insert into aso_keyword_daily
