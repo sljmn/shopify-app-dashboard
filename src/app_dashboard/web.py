@@ -1198,7 +1198,67 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "filter_qs": urlencode(query),
                 "catalog_filter_qs": urlencode(catalog_query_values),
                 "research_lists": research_lists,
+                "discover_view": "overview",
             },
+        )
+
+    def _focused_discovery_response(
+        request: Request, user: str, *, activity: str, q: str,
+        category: str, bfs: str, pricing: str, period: str, page: int,
+    ):
+        bfs = bfs if bfs in {"bfs", "not_bfs", "unknown"} else ""
+        pricing = pricing if pricing in {"free", "paid", "unknown"} else ""
+        period = period if period in {"7d", "30d", "90d", "all"} else "30d"
+        period_days = {"7d": 7, "30d": 30, "90d": 90, "all": None}[period]
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+            report = discovery_report(
+                conn, search=q, category=category, page=page, per_page=50,
+                activity=activity, bfs=bfs, pricing=pricing,
+                period_days=period_days,
+            )
+        finally:
+            conn.close()
+        query_values = {
+            "q": q.strip(), "category": category.strip(), "bfs": bfs,
+            "pricing": pricing, "period": period,
+        }
+        query_values = {
+            key: value for key, value in query_values.items() if value
+        }
+        return templates.TemplateResponse(
+            request, "discover_activity.html", {
+                **page_context(request, user, "discover", None, apps),
+                **report,
+                "query": q.strip(), "selected_category": category.strip(),
+                "selected_bfs": bfs, "selected_pricing": pricing,
+                "selected_period": period,
+                "discover_view": "new" if activity == "new" else "updates",
+                "filter_qs": urlencode(query_values),
+            },
+        )
+
+    @app.get("/discover/new")
+    def discover_new_apps(
+        request: Request, q: str = "", category: str = "", bfs: str = "",
+        pricing: str = "", period: str = "30d", page: int = 1,
+        user: str = Depends(verify_creds),
+    ):
+        return _focused_discovery_response(
+            request, user, activity="new", q=q, category=category, bfs=bfs,
+            pricing=pricing, period=period, page=page,
+        )
+
+    @app.get("/discover/updates")
+    def discover_listing_updates(
+        request: Request, q: str = "", category: str = "", bfs: str = "",
+        pricing: str = "", period: str = "30d", page: int = 1,
+        user: str = Depends(verify_creds),
+    ):
+        return _focused_discovery_response(
+            request, user, activity="updated", q=q, category=category, bfs=bfs,
+            pricing=pricing, period=period, page=page,
         )
 
     @app.post("/discover/apps/{handle}/follow")

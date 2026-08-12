@@ -1,4 +1,9 @@
 {% extends "base.html" %}
+{% macro gallery_image(src, alt, gallery) -%}
+<button class="listing-gallery-item" type="button" data-gallery-item data-gallery="{{ gallery }}" data-src="{{ src }}" data-caption="{{ alt }}" aria-label="Open {{ alt|lower }} full size">
+    <img src="{{ src }}" alt="{{ alt }}" loading="lazy">
+</button>
+{%- endmacro %}
 {% block content %}
 <div class="page-heading">
     <div>
@@ -39,7 +44,7 @@
         {% if detail.listing.pricing %}<h3>Pricing</h3><ul>{% for item in detail.listing.pricing %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
     </div>
     {% set screenshots = detail.media|selectattr("role", "equalto", "screenshot")|list %}
-    {% if screenshots %}<div class="listing-gallery">{% for media in screenshots %}<img src="/discover/media/{{ media.digest }}" alt="Listing screenshot {{ loop.index }}" loading="lazy">{% endfor %}</div>{% endif %}
+    {% if screenshots %}<div class="listing-gallery">{% for media in screenshots %}{{ gallery_image("/discover/media/" ~ media.digest, "Listing screenshot " ~ loop.index, "current") }}{% endfor %}</div>{% endif %}
 </section>
 {% else %}<p class="empty-state">Follow this app to capture its first full listing version during the next daily scan.</p>{% endif %}
 {% elif view == "reviews" %}
@@ -104,7 +109,7 @@
 <section><h2>Compare listing versions</h2>
 <form class="filters compare-picker" method="get"><input type="hidden" name="view" value="compare"><select name="before" aria-label="Before version">{% for version in versions %}<option value="{{ version.id }}"{% if version.id == before_id %} selected{% endif %}>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</option>{% endfor %}</select><select name="after" aria-label="After version">{% for version in versions %}<option value="{{ version.id }}"{% if version.id == after_id %} selected{% endif %}>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</option>{% endfor %}</select><button type="submit">Compare</button></form>
 {% if comparison %}<div class="version-diff">{% for change in comparison.fields %}<article><h3>{{ change.field|replace('_',' ')|title }}</h3><div class="diff-pair"><div><span class="sub">Before</span><pre>{{ change.before }}</pre></div><div><span class="sub">After</span><pre>{{ change.after }}</pre></div></div></article>{% else %}<p>No differences between these versions.</p>{% endfor %}
-<article><h3>Archived media</h3><div class="diff-pair"><div><span class="sub">Before</span><div class="listing-gallery">{% for role, position, digest, source in comparison.before.media if role == "screenshot" %}<img src="/discover/media/{{ digest }}" alt="Before screenshot {{ position + 1 }}" loading="lazy">{% else %}<span>—</span>{% endfor %}</div></div><div><span class="sub">After</span><div class="listing-gallery">{% for role, position, digest, source in comparison.after.media if role == "screenshot" %}<img src="/discover/media/{{ digest }}" alt="After screenshot {{ position + 1 }}" loading="lazy">{% else %}<span>—</span>{% endfor %}</div></div></div></article></div>{% elif versions|length < 2 %}<p class="empty-state">Two changed listing versions are required for comparison.</p>{% endif %}
+<article><h3>Archived media</h3><div class="diff-pair"><div><span class="sub">Before</span><div class="listing-gallery">{% for role, position, digest, source in comparison.before.media if role == "screenshot" %}{{ gallery_image("/discover/media/" ~ digest, "Before screenshot " ~ (position + 1), "before") }}{% else %}<span>—</span>{% endfor %}</div></div><div><span class="sub">After</span><div class="listing-gallery">{% for role, position, digest, source in comparison.after.media if role == "screenshot" %}{{ gallery_image("/discover/media/" ~ digest, "After screenshot " ~ (position + 1), "after") }}{% else %}<span>—</span>{% endfor %}</div></div></div></article></div>{% elif versions|length < 2 %}<p class="empty-state">Two changed listing versions are required for comparison.</p>{% endif %}
 </section>
 {% else %}
 <section class="research-app-view">
@@ -115,4 +120,78 @@
     <div class="research-notes">{% for note in research.notes %}<article class="card research-note"><header><div><h3>{{ note.title }}</h3><span class="sub">{{ note.updated_at|local_time("%-d %b %Y %H:%M") }} · {{ note.author }}</span></div><form method="post" action="/research/notes/{{ note.id }}/delete"><button class="ghost" type="submit">Delete</button></form></header><p>{{ note.body }}</p>{% if note.attachments %}<div class="attachment-list">{% for attachment in note.attachments %}<a href="/research/attachments/{{ attachment.id }}">{{ attachment.filename }}</a>{% endfor %}</div>{% endif %}</article>{% else %}<p class="empty-state">No app notes yet.</p>{% endfor %}</div>
 </section>
 {% endif %}
+
+<dialog class="media-lightbox" data-media-lightbox aria-labelledby="media-lightbox-caption">
+    <div class="media-lightbox-shell">
+        <button class="media-lightbox-close" type="button" data-lightbox-close aria-label="Close screenshot viewer" title="Close">×</button>
+        <div class="media-lightbox-stage">
+            <button class="media-lightbox-nav previous" type="button" data-lightbox-previous aria-label="Previous screenshot" title="Previous">‹</button>
+            <img data-lightbox-image src="" alt="">
+            <button class="media-lightbox-nav next" type="button" data-lightbox-next aria-label="Next screenshot" title="Next">›</button>
+        </div>
+        <div class="media-lightbox-meta"><span id="media-lightbox-caption" data-lightbox-caption></span><span data-lightbox-counter></span></div>
+    </div>
+</dialog>
+<script nonce="{{ request.state.nonce }}">
+(() => {
+    const dialog = document.querySelector("[data-media-lightbox]");
+    const allItems = [...document.querySelectorAll("[data-gallery-item]")];
+    if (!dialog || !allItems.length || typeof dialog.showModal !== "function") return;
+    const image = dialog.querySelector("[data-lightbox-image]");
+    const caption = dialog.querySelector("[data-lightbox-caption]");
+    const counter = dialog.querySelector("[data-lightbox-counter]");
+    const previous = dialog.querySelector("[data-lightbox-previous]");
+    const next = dialog.querySelector("[data-lightbox-next]");
+    let items = [];
+    let index = 0;
+    let opener = null;
+    let touchStart = null;
+
+    const render = () => {
+        const item = items[index];
+        image.src = item.dataset.src;
+        image.alt = item.dataset.caption;
+        caption.textContent = item.dataset.caption;
+        counter.textContent = `${index + 1} / ${items.length}`;
+        previous.disabled = items.length < 2;
+        next.disabled = items.length < 2;
+    };
+    const move = (direction) => {
+        index = (index + direction + items.length) % items.length;
+        render();
+    };
+    allItems.forEach((item) => item.addEventListener("click", () => {
+        opener = item;
+        items = allItems.filter((candidate) => candidate.dataset.gallery === item.dataset.gallery);
+        index = items.indexOf(item);
+        render();
+        document.body.classList.add("lightbox-open");
+        dialog.showModal();
+    }));
+    previous.addEventListener("click", () => move(-1));
+    next.addEventListener("click", () => move(1));
+    dialog.querySelector("[data-lightbox-close]").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowLeft") move(-1);
+        if (event.key === "ArrowRight") move(1);
+    });
+    dialog.addEventListener("close", () => {
+        document.body.classList.remove("lightbox-open");
+        image.removeAttribute("src");
+        opener?.focus();
+    });
+    image.addEventListener("touchstart", (event) => {
+        touchStart = event.changedTouches[0].clientX;
+    }, { passive: true });
+    image.addEventListener("touchend", (event) => {
+        if (touchStart === null) return;
+        const distance = event.changedTouches[0].clientX - touchStart;
+        if (Math.abs(distance) > 45 && items.length > 1) move(distance > 0 ? -1 : 1);
+        touchStart = null;
+    }, { passive: true });
+})();
+</script>
 {% endblock %}

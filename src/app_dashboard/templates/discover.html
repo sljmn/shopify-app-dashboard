@@ -5,6 +5,7 @@
 {% else %}
 <h1>Discover</h1>
 <p class="sub">New apps observed across every Shopify App Store category.</p>
+{% include "_discover_nav.html" %}
 
 <section class="catalog-search" aria-labelledby="catalog-search-title">
     <div class="section-heading">
@@ -98,8 +99,8 @@
             <p class="sub">First appearance, Shopify sitemap updates and confirmed removals are separate signals. Verified change means Mantle captured an actual listing diff.</p>
         </div>
         <nav class="aso-tabs growth-tabs" aria-label="App Store activity type">
-            <a href="/discover?activity=new{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "new" %} aria-current="page"{% endif %}>New apps</a>
-            <a href="/discover?activity=updated{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "updated" %} aria-current="page"{% endif %}>Listing updates</a>
+            <a href="/discover/new">New launches</a>
+            <a href="/discover/updates">Listing updates</a>
             <a href="/discover?activity=delisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "delisted" %} aria-current="page"{% endif %}>Delisted</a>
             <a href="/discover?activity=relisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "relisted" %} aria-current="page"{% endif %}>Relisted</a>
         </nav>
@@ -128,7 +129,7 @@
         <table class="discover-table activity-table">
             <thead><tr><th>App</th><th>BFS</th><th>Signal</th><th>Categories</th><th>Pricing</th><th>Developer</th><th>Reviews</th><th>Observed</th><th>Verified change</th><th></th></tr></thead>
             <tbody>
-            {% for row in rows %}
+            {% for row in rows[:5] %}
             <tr>
                 <td><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><span class="sub">/{{ row.handle }}</span></td>
                 <td>{% if row.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% elif row.bfs_checked_at %}<span class="sub">Not BFS</span>{% else %}<span class="sub">Not checked</span>{% endif %}</td>
@@ -148,14 +149,7 @@
         </table>
     </div>
 
-    <div class="pager">
-        <span class="sub">{{ total }} {{ activity|replace('_',' ') }} events</span>
-        <span class="pager-links">
-            {% if page > 1 %}<a href="/discover?{% if filter_qs %}{{ filter_qs }}&amp;{% endif %}page={{ page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}
-            <span class="sub">Page {{ page }} of {{ pages }}</span>
-            {% if page < pages %}<a href="/discover?{% if filter_qs %}{{ filter_qs }}&amp;{% endif %}page={{ page + 1 }}">Next</a>{% else %}<span class="disabled">Next</span>{% endif %}
-        </span>
-    </div>
+    <div class="pager"><span class="sub">Showing {{ rows[:5]|length }} of {{ total }} recent events</span><span class="pager-links"><a href="{% if activity == 'updated' %}/discover/updates{% elif activity == 'new' %}/discover/new{% else %}/discover?activity={{ activity }}{% endif %}">View all</a></span></div>
 </section>
 
 <section class="growth-signals" aria-labelledby="growth-signals-title">

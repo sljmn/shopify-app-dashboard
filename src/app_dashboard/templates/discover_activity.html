@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{% if discover_view == "new" %}New Shopify launches{% else %}Listing updates{% endif %} · Shopify Apps Analytics{% endblock %}
+{% block content %}
+<div class="page-heading">
+    <div>
+        <p class="sub"><a href="/discover">Discover</a> / {% if discover_view == "new" %}New launches{% else %}Listing updates{% endif %}</p>
+        <h1>{% if discover_view == "new" %}New Shopify launches{% else %}Listing updates{% endif %}</h1>
+        <p class="sub">{% if discover_view == "new" %}Apps first observed after Mantle's baseline import. Sitemap updates never count as launches.{% else %}Shopify sitemap signals separated from listing changes Mantle verified in an archived snapshot.{% endif %}</p>
+    </div>
+</div>
+
+{% include "_discover_nav.html" %}
+
+<div class="cards discover-focused-metrics">
+    <div class="card stat"><div class="label">Matching events</div><div class="num">{{ total }}</div><div class="sub">{{ selected_period|replace("d", " days")|replace("all", "All time") }}</div></div>
+    <div class="card stat"><div class="label">New in 7 days</div><div class="num">{{ new_last_7_days }}</div></div>
+    <div class="card stat"><div class="label">Updated in 7 days</div><div class="num">{{ updated_last_7_days }}</div></div>
+    <div class="card stat"><div class="label">Last app scan</div><div class="num"><small>{{ last_scan|local_time("%-d %b %H:%M") if last_scan else "Not run yet" }}</small></div></div>
+</div>
+
+<form class="filters discover-filters focused-discover-filters" method="get">
+    <input type="search" name="q" value="{{ query }}" placeholder="Search app name or handle" aria-label="Search app name or handle">
+    <select name="period" aria-label="Period">
+        {% for value, label in [("7d","Last 7 days"),("30d","Last 30 days"),("90d","Last 90 days"),("all","All time")] %}<option value="{{ value }}"{% if selected_period == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <select name="category" aria-label="Category">
+        <option value="">All categories</option>
+        {% for slug, name, count in categories %}<option value="{{ slug }}"{% if selected_category == slug %} selected{% endif %}>{{ name }} ({{ count }})</option>{% endfor %}
+    </select>
+    <select name="bfs" aria-label="Built for Shopify status">
+        <option value="">All BFS statuses</option><option value="bfs"{% if selected_bfs == "bfs" %} selected{% endif %}>Built for Shopify</option><option value="not_bfs"{% if selected_bfs == "not_bfs" %} selected{% endif %}>Not BFS</option><option value="unknown"{% if selected_bfs == "unknown" %} selected{% endif %}>Not checked</option>
+    </select>
+    <select name="pricing" aria-label="Pricing">
+        <option value="">All pricing</option><option value="free"{% if selected_pricing == "free" %} selected{% endif %}>Free available</option><option value="paid"{% if selected_pricing == "paid" %} selected{% endif %}>Paid available</option><option value="unknown"{% if selected_pricing == "unknown" %} selected{% endif %}>Pricing unknown</option>
+    </select>
+    <button type="submit">Filter</button>
+    {% if query or selected_category or selected_bfs or selected_pricing or selected_period != "30d" %}<a class="ghost" href="{% if discover_view == 'new' %}/discover/new{% else %}/discover/updates{% endif %}">Clear</a>{% endif %}
+</form>
+
+<div class="table-card focused-discover-table">
+    <table class="discover-table activity-table">
+        <thead><tr><th>App</th><th>Observed</th>{% if discover_view == "updates" %}<th>Change</th>{% endif %}<th>Category</th><th>BFS</th><th>Pricing</th><th>Developer</th><th>Reviews</th><th></th></tr></thead>
+        <tbody>
+        {% for row in rows %}
+        <tr>
+            <td><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><span class="sub">/{{ row.handle }}</span></td>
+            <td>{{ row.event_at|local_time("%-d %b %Y %H:%M") }}{% if discover_view == "updates" %}<br><span class="sub">Shopify: {{ row.previous_updated_on or "—" }} → {{ row.event_updated_on or "—" }}</span>{% endif %}</td>
+            {% if discover_view == "updates" %}<td>{% if row.changed_fields %}<div class="change-badges">{% for field in row.changed_fields %}<span>{{ field|replace('_',' ')|title }}</span>{% endfor %}</div>{% if row.before_id and row.after_id %}<a href="/discover/apps/{{ row.handle|urlencode }}?view=compare&amp;before={{ row.before_id }}&amp;after={{ row.after_id }}">View verified diff</a>{% endif %}{% else %}<span class="sub">Change not captured yet</span>{% endif %}</td>{% endif %}
+            <td class="category-list">{{ row.categories or "Not categorized yet" }}</td>
+            <td>{% if row.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% elif row.bfs_checked_at %}<span class="sub">Not BFS</span>{% else %}<span class="sub">Not checked</span>{% endif %}</td>
+            <td><strong>{{ row.pricing.label }}</strong>{% if row.pricing.monthly %}<br><span class="sub">from ${{ row.pricing.monthly[0] }}/mo</span>{% elif row.pricing.annual %}<br><span class="sub">from ${{ row.pricing.annual[0] }}/yr</span>{% endif %}</td>
+            <td>{{ row.developer or "—" }}{% if row.developer_app_count %}<br><span class="sub">{{ row.developer_app_count }} indexed app{% if row.developer_app_count != 1 %}s{% endif %}</span>{% endif %}</td>
+            <td>{{ row.reviews if row.reviews is not none else "—" }}</td>
+            <td><a href="/discover/apps/{{ row.handle|urlencode }}?view=research">Research</a><br><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
+        </tr>
+        {% else %}<tr><td colspan="{% if discover_view == 'updates' %}9{% else %}8{% endif %}">No {% if discover_view == "new" %}new Shopify launches{% else %}listing updates{% endif %} match these filters.</td></tr>{% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="pager"><span class="sub">{{ total }} events</span><span class="pager-links">{% if page > 1 %}<a href="?{{ filter_qs }}&amp;page={{ page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}<span class="sub">Page {{ page }} of {{ pages }}</span>{% if page < pages %}<a href="?{{ filter_qs }}&amp;page={{ page + 1 }}">Next</a>{% else %}<span class="disabled">Next</span>{% endif %}</span></div>
+{% endblock %}

@@ -1,0 +1,5 @@
+<nav class="aso-tabs discover-view-tabs" aria-label="Discover views">
+    <a href="/discover"{% if discover_view == "overview" %} aria-current="page"{% endif %}>Overview</a>
+    <a href="/discover/new"{% if discover_view == "new" %} aria-current="page"{% endif %}>New launches</a>
+    <a href="/discover/updates"{% if discover_view == "updates" %} aria-current="page"{% endif %}>Listing updates</a>
+</nav>

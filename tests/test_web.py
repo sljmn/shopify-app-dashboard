@@ -174,6 +174,70 @@ def test_discover_app_can_join_a_research_list_and_opens_research_tab(db):
     ).fetchone()[0] == 1
 
 
+def test_discover_has_focused_launch_and_listing_update_views(db):
+    observed_at = datetime(2026, 8, 12, 10, tzinfo=timezone.utc)
+    baseline_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('old-baseline','Old Baseline',%s,%s,true) returning id""",
+        (observed_at, observed_at),
+    ).fetchone()[0]
+    launched_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('new-launch','New Launch',%s,%s,false) returning id""",
+        (observed_at, observed_at),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_app_events
+             (discovered_app_id,event_type,occurred_at)
+           values (%s,'discovered',%s),(%s,'discovered',%s),
+                  (%s,'listing_updated',%s)""",
+        (baseline_id, observed_at, launched_id, observed_at,
+         launched_id, observed_at),
+    )
+    before_id = db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,%s,'route-before',%s) returning id""",
+        (launched_id, observed_at - timedelta(hours=1), Jsonb({
+            "name": "New Launch", "pricing": ["Free"],
+        })),
+    ).fetchone()[0]
+    after_id = db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,%s,'route-after',%s) returning id""",
+        (launched_id, observed_at + timedelta(hours=1), Jsonb({
+            "name": "New Launch Pro", "pricing": ["Pro $9 / month"],
+        })),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_listing_changes
+             (discovered_app_id,snapshot_id,changed_at,field,
+              before_value,after_value)
+           values (%s,%s,%s,'pricing',%s,%s)""",
+        (launched_id, after_id, observed_at + timedelta(hours=1),
+         Jsonb(["Free"]), Jsonb(["Pro $9 / month"])),
+    )
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    launches = client.get("/discover/new?period=all")
+    updates = client.get("/discover/updates?period=all")
+
+    assert launches.status_code == 200
+    assert "New Shopify launches" in launches.text
+    assert "New Launch" in launches.text
+    assert "Old Baseline" not in launches.text
+    assert updates.status_code == 200
+    assert "Listing updates" in updates.text
+    assert "Pricing" in updates.text
+    assert (
+        f"view=compare&amp;before={before_id}&amp;after={after_id}"
+        in updates.text
+    )
+
+
 def test_research_write_refuses_cross_origin_requests(db):
     client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
     response = client.post(
@@ -558,6 +622,10 @@ def test_discovered_app_renders_archived_media_instead_of_remote_sources(
     assert page.status_code == 200
     assert f'src="/discover/media/{digest}"' in page.text
     assert 'src="https://cdn.shopify.com/remote.png"' not in page.text
+    assert 'data-gallery-item' in page.text
+    assert 'dialog class="media-lightbox"' in page.text
+    assert 'aria-label="Previous screenshot"' in page.text
+    assert 'aria-label="Next screenshot"' in page.text
 
 
 def test_selected_aso_app_has_views_and_csv(db, test_app):

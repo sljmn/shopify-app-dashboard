@@ -908,6 +908,18 @@
         }
         .discover-filters { margin: 18px 0 12px; }
         .discover-filters input[type="search"] { flex: 1 1 320px; }
+        .discover-view-tabs { margin: 24px 0; }
+        .discover-focused-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .focused-discover-filters { align-items: center; }
+        .focused-discover-filters input[type="search"] { min-width: 240px; }
+        .focused-discover-table { margin-top: 14px; }
+        .focused-discover-table .activity-table { min-width: 1180px; }
+        .change-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
+        .change-badges span {
+            display: inline-flex; padding: 3px 7px; border-radius: 999px;
+            background: var(--brand-soft); color: var(--brand);
+            font-size: 11px; font-weight: 700;
+        }
         .discover-table { min-width: 920px; }
         .category-list { max-width: 320px; white-space: normal; }
         .catalog-search { margin: 24px 0 30px; }
@@ -961,7 +973,33 @@
         }
         .listing-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .8fr); gap: 32px; }
         .listing-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-        .listing-gallery img { display: block; width: 100%; border: 1px solid var(--border); border-radius: 6px; }
+        .listing-gallery-item {
+            display: block; width: 100%; padding: 0; border: 1px solid var(--border);
+            border-radius: 6px; overflow: hidden; background: var(--card);
+            cursor: zoom-in; box-shadow: none;
+        }
+        .listing-gallery-item:hover { border-color: var(--brand); transform: none; box-shadow: var(--control-shadow); }
+        .listing-gallery-item:focus-visible { outline: 3px solid color-mix(in srgb, var(--brand) 32%, transparent); outline-offset: 2px; }
+        .listing-gallery-item img { display: block; width: 100%; }
+        body.lightbox-open { overflow: hidden; }
+        .media-lightbox {
+            width: min(96vw, 1500px); height: min(94vh, 1000px); max-width: none;
+            max-height: none; padding: 0; border: 1px solid color-mix(in srgb, white 18%, transparent);
+            border-radius: 8px; background: #111018; color: white; overflow: hidden;
+        }
+        .media-lightbox::backdrop { background: rgb(9 7 15 / .88); }
+        .media-lightbox-shell { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100%; }
+        .media-lightbox-stage { min-height: 0; display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; align-items: center; gap: 12px; padding: 24px 16px 8px; }
+        .media-lightbox-stage img { display: block; max-width: 100%; max-height: calc(94vh - 92px); margin: auto; object-fit: contain; touch-action: pan-y; }
+        .media-lightbox-close, .media-lightbox-nav {
+            display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%;
+            background: rgb(255 255 255 / .11); color: white; box-shadow: none;
+        }
+        .media-lightbox-close:hover, .media-lightbox-nav:hover { background: rgb(255 255 255 / .2); transform: none; }
+        .media-lightbox-close { position: absolute; z-index: 2; top: 12px; right: 12px; width: 38px; height: 38px; font-size: 28px; }
+        .media-lightbox-nav { width: 44px; height: 44px; font-size: 34px; }
+        .media-lightbox-nav:disabled { opacity: .28; cursor: default; }
+        .media-lightbox-meta { display: flex; justify-content: space-between; gap: 20px; padding: 12px 24px 16px; color: rgb(255 255 255 / .76); font-size: 13px; }
         .empty-state { padding: 20px 0; color: var(--muted); }
         .version-diff { display: grid; gap: 14px; margin-top: 18px; }
         .version-diff article { border-top: 1px solid var(--border); padding-top: 14px; }
@@ -1022,6 +1060,9 @@
         }
         @media (max-width: 620px) {
             .discovery-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .discover-focused-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .discover-view-tabs { width: 100%; overflow-x: auto; }
+            .discover-view-tabs a { white-space: nowrap; }
             .discovery-metrics .card { min-width: 0; padding: 15px; }
             .discovery-metrics .stat .num { font-size: 24px; overflow-wrap: anywhere; }
             .review-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1054,6 +1095,11 @@
             .listing-overview, .diff-pair { grid-template-columns: 1fr; }
             .review-item header { display: grid; gap: 6px; }
             .listing-gallery { grid-template-columns: 1fr; }
+            .media-lightbox { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+            .media-lightbox-stage { grid-template-columns: 38px minmax(0, 1fr) 38px; gap: 4px; padding-inline: 6px; }
+            .media-lightbox-stage img { max-height: calc(100dvh - 90px); }
+            .media-lightbox-nav { width: 36px; height: 44px; background: transparent; }
+            .media-lightbox-meta { padding-inline: 16px; }
             .page-heading .segment-control { align-self: flex-start; }
             .watch-movement {
                 display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));

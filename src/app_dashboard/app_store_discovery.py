@@ -1073,7 +1073,9 @@ def discovery_report(
         """select (date_trunc('week', event.occurred_at at time zone
                      'Europe/Amsterdam'))::date week,event.event_type,count(*)
            from discovery_app_events event
+           join discovered_apps app on app.id=event.discovered_app_id
            where event.occurred_at >= %s
+             and (event.event_type<>'discovered' or app.is_baseline is false)
            group by week,event.event_type order by week,event.event_type""",
         (chart_start.astimezone(timezone.utc),),
     ).fetchall()
@@ -1098,8 +1100,11 @@ def discovery_report(
         "select last_success_at from discovery_state where source='apps'"
     ).fetchone()
     recent_counts = dict(conn.execute(
-        """select event_type,count(*) from discovery_app_events
-           where occurred_at >= %s group by event_type""",
+        """select event.event_type,count(*) from discovery_app_events event
+           join discovered_apps app on app.id=event.discovered_app_id
+           where event.occurred_at >= %s
+             and (event.event_type<>'discovered' or app.is_baseline is false)
+           group by event.event_type""",
         (current - timedelta(days=7),),
     ).fetchall())
     return {
@@ -1110,8 +1115,10 @@ def discovery_report(
             "select count(*) from discovered_apps where delisted_at is null"
         ).fetchone()[0],
         "new_this_week": conn.execute(
-            """select count(*) from discovery_app_events
-               where event_type='discovered' and occurred_at >= %s""",
+            """select count(*) from discovery_app_events event
+               join discovered_apps app on app.id=event.discovered_app_id
+               where event.event_type='discovered'
+                 and app.is_baseline is false and event.occurred_at >= %s""",
             (this_week.astimezone(timezone.utc),),
         ).fetchone()[0],
         "new_last_7_days": recent_counts.get("discovered", 0),
