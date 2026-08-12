@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ record.keyword }} · Rank tracker{% endblock %}
+{% block content %}
+<nav class="breadcrumb"><a href="/rank-tracker">Rank tracker</a><span>/</span><a href="/rank-tracker/lists/{{ record.list_id }}">{{ record.list_name }}</a></nav>
+<div class="page-heading rank-heading">
+    <div><h1>{{ record.keyword }}</h1><p class="sub">Shopify App Store · {{ rank_locales[record.locale] }}{% if record.country %} · {{ record.country }}{% endif %}</p></div>
+    <form method="post" action="/rank-tracker/keywords/{{ record.id }}/scan"><button type="submit">Scan now</button></form>
+</div>
+{% if request.query_params.get('scan') == 'ready' %}<div class="notice success">Fresh top results recorded.</div>{% elif request.query_params.get('scan') == 'failed' or record.error %}<div class="notice error">The latest scan failed{% if record.error %}: {{ record.error }}{% endif %}. The last valid snapshot is still shown.</div>{% endif %}
+
+<section class="rank-summary">
+    <div><span>Results</span><strong>{{ record.rows|length }}</strong></div>
+    <div><span>Last measured</span><strong>{{ record.last_scanned_at|local_time("%-d %b %Y %H:%M") if record.last_scanned_at else "Not yet" }}</strong></div>
+    <div><span>Schedule</span><strong>Daily</strong></div>
+</section>
+
+<section>
+    <div class="section-heading"><div><h2>Organic results</h2><p class="sub">Movement is previous position minus current position. Positive means the app moved up.</p></div></div>
+    <div class="table-card"><table class="rank-results"><thead><tr><th>Position</th><th>App</th><th>Reviews</th><th>1 day</th><th>7 days</th><th>30 days</th><th>BFS</th></tr></thead><tbody>
+    {% for row in record.rows %}<tr><td><strong>#{{ row.position }}</strong></td><td><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><a class="sub" href="https://apps.shopify.com/{{ row.handle }}?locale={{ record.locale }}" target="_blank" rel="noopener">/{{ row.handle }} · listing</a></td><td>{{ row.reviews if row.reviews is not none else '—' }}{% if row.rating is not none %}<br><span class="sub">{{ row.rating }} rating</span>{% endif %}</td>{% for prior in [row.prior_1, row.prior_7, row.prior_30] %}<td>{% if prior is none %}<span class="sub">—</span>{% elif prior - row.position > 0 %}<span class="money-up">+{{ prior - row.position }}</span>{% elif prior - row.position < 0 %}<span class="money-down">{{ prior - row.position }}</span>{% else %}0{% endif %}</td>{% endfor %}<td>{% if row.bfs %}<span class="bfs-pill">BFS</span>{% else %}—{% endif %}</td></tr>
+    {% else %}<tr><td colspan="7"><div class="empty-state"><strong>No measurement yet.</strong><span>Run the first scan to record Shopify's current organic results.</span></div></td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endblock %}

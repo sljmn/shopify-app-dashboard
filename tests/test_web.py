@@ -430,6 +430,39 @@ def test_aso_requires_login_and_portfolio_lists_every_app(db):
     assert "Organic users" in response.text
 
 
+def test_rank_tracker_workflow_creates_list_keyword_and_renders_results(db):
+    app = create_app(conn_factory=lambda: keep_open(db))
+    client = dashboard_client(app)
+    created = client.post(
+        "/rank-tracker/lists", data={"name": "Competitor searches"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    assert created.headers["location"] == "/rank-tracker/lists/1"
+
+    keyword = client.post(
+        "/rank-tracker/lists/1/keywords",
+        data={"keyword": "product reviews", "locale": "nl", "country": "NL"},
+        follow_redirects=False,
+    )
+    assert keyword.status_code == 303
+    assert keyword.headers["location"] == "/rank-tracker/keywords/1"
+    response = client.get("/rank-tracker/keywords/1")
+    assert response.status_code == 200
+    assert "product reviews" in response.text
+    assert "No measurement yet" in response.text
+    assert "Rank tracker" in client.get("/rank-tracker").text
+
+
+def test_rank_tracker_rejects_cross_origin_writes(db):
+    app = create_app(conn_factory=lambda: keep_open(db))
+    response = dashboard_client(app).post(
+        "/rank-tracker/lists", data={"name": "Nope"},
+        headers={"origin": "https://attacker.test"},
+    )
+    assert response.status_code == 403
+
+
 def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db):
     baseline = datetime(2026, 8, 1, tzinfo=timezone.utc)
     fresh = datetime(2026, 8, 12, 8, 0, tzinfo=timezone.utc)

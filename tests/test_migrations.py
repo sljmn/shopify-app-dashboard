@@ -29,6 +29,9 @@ def test_core_tables_exist(db):
         "discovered_app_developers", "research_notes",
         "research_attachment_objects", "research_note_attachments",
     } <= names
+    assert {
+        "aso_rank_lists", "aso_rank_keywords", "aso_rank_scans", "aso_rank_results",
+    } <= names
 
 
 def test_research_note_requires_exactly_one_target(db):

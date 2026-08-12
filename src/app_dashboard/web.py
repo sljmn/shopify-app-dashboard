@@ -91,6 +91,16 @@ from app_dashboard.research import (
     update_list as update_research_list,
 )
 from app_dashboard.review_collector import review_report
+from app_dashboard.rank_collector import sync_keyword_rankings
+from app_dashboard.rank_tracker import (
+    LOCALES as RANK_LOCALES,
+    add_rank_keyword,
+    archive_rank_keyword,
+    create_rank_list,
+    keyword_detail,
+    rank_list_detail,
+    rank_lists,
+)
 from app_dashboard.watchlist_collector import media_path
 from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.integrations import (
@@ -795,6 +805,18 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             **extra,
         }
 
+    def _rank_context(request: Request, user: str, **extra) -> dict:
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+        finally:
+            conn.close()
+        return {
+            **page_context(request, user, "rank_tracker", None, apps),
+            "rank_locales": RANK_LOCALES,
+            **extra,
+        }
+
     async def _research_form(request: Request) -> tuple[str, dict]:
         """Same-origin multipart boundary for notes with bounded attachments."""
         email = _session_email(request)
@@ -841,6 +863,126 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 selected_status=selected_status or "", start=start, end=end,
             ),
         )
+
+    @app.get("/rank-tracker")
+    def rank_tracker_workspace(
+        request: Request, user: str = Depends(verify_creds),
+    ):
+        conn = conn_factory()
+        try:
+            rows = rank_lists(conn)
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request, "rank_tracker.html",
+            _rank_context(request, user, lists=rows),
+        )
+
+    @app.post("/rank-tracker/lists")
+    async def store_rank_list(
+        request: Request, user: str = Depends(verify_creds),
+    ):
+        del user
+        _, raw = await _browser_form(request)
+        conn = conn_factory()
+        try:
+            list_id = create_rank_list(conn, _flat_form(raw).get("name", ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        finally:
+            conn.close()
+        return RedirectResponse(f"/rank-tracker/lists/{list_id}", status_code=303)
+
+    @app.get("/rank-tracker/lists/{list_id}")
+    def rank_tracker_list(
+        request: Request, list_id: int, user: str = Depends(verify_creds),
+    ):
+        conn = conn_factory()
+        try:
+            record = rank_list_detail(conn, list_id)
+        finally:
+            conn.close()
+        if not record:
+            raise HTTPException(status_code=404, detail="Unknown rank list")
+        return templates.TemplateResponse(
+            request, "rank_tracker_list.html",
+            _rank_context(request, user, record=record),
+        )
+
+    @app.post("/rank-tracker/lists/{list_id}/keywords")
+    async def store_rank_keyword(
+        request: Request, list_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        _, raw = await _browser_form(request)
+        values = _flat_form(raw)
+        conn = conn_factory()
+        try:
+            keyword_id = add_rank_keyword(
+                conn, list_id, values.get("keyword", ""),
+                values.get("locale", "en"), values.get("country", ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        finally:
+            conn.close()
+        destination = (
+            f"/rank-tracker/keywords/{keyword_id}"
+            if keyword_id else f"/rank-tracker/lists/{list_id}"
+        )
+        return RedirectResponse(destination, status_code=303)
+
+    @app.get("/rank-tracker/keywords/{keyword_id}")
+    def rank_tracker_keyword(
+        request: Request, keyword_id: int, user: str = Depends(verify_creds),
+    ):
+        conn = conn_factory()
+        try:
+            record = keyword_detail(conn, keyword_id)
+        finally:
+            conn.close()
+        if not record:
+            raise HTTPException(status_code=404, detail="Unknown rank keyword")
+        return templates.TemplateResponse(
+            request, "rank_tracker_keyword.html",
+            _rank_context(request, user, record=record),
+        )
+
+    @app.post("/rank-tracker/keywords/{keyword_id}/scan")
+    async def scan_rank_keyword(
+        request: Request, keyword_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            result = sync_keyword_rankings(conn, keyword_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown rank keyword") from None
+        finally:
+            conn.close()
+        suffix = "scan=ready" if result["status"] == "ready" else "scan=failed"
+        return RedirectResponse(
+            f"/rank-tracker/keywords/{keyword_id}?{suffix}", status_code=303,
+        )
+
+    @app.post("/rank-tracker/keywords/{keyword_id}/archive")
+    async def remove_rank_keyword(
+        request: Request, keyword_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            row = conn.execute(
+                "select rank_list_id from aso_rank_keywords where id=%s", (keyword_id,)
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Unknown rank keyword")
+            archive_rank_keyword(conn, keyword_id)
+        finally:
+            conn.close()
+        return RedirectResponse(f"/rank-tracker/lists/{row[0]}", status_code=303)
 
     @app.get("/research/lists/new")
     def new_research_list(request: Request, user: str = Depends(verify_creds)):

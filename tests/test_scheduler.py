@@ -7,6 +7,7 @@ from app_dashboard.scheduler import (
     run_aso_job,
     run_category_discovery_job,
     run_developer_catalog_job,
+    run_rank_tracker_job,
     run_review_collection_job,
     run_sync_job,
     run_watchlist_job,
@@ -25,6 +26,29 @@ def test_run_sync_job_closes_connection_on_success(monkeypatch, test_app):
     conn = FakeConn()
     monkeypatch.setattr("app_dashboard.scheduler.run_sync", lambda *a, **k: {"raw_inserted": 0})
     run_sync_job(lambda: conn, apps=[test_app], settings=object())
+    assert conn.closed_count == 1
+
+
+def test_rank_tracker_job_contains_keyword_failures_and_closes(monkeypatch):
+    class RankConn(FakeConn):
+        def execute(self, sql):
+            class Rows:
+                def fetchall(self):
+                    return [(1,), (2,)]
+            return Rows()
+
+    conn = RankConn()
+
+    def sync(_conn, keyword_id):
+        if keyword_id == 2:
+            raise RuntimeError("bad keyword")
+        return {"status": "ready", "results": 100}
+
+    monkeypatch.setattr("app_dashboard.rank_collector.sync_keyword_rankings", sync)
+    assert run_rank_tracker_job(lambda: conn) == [
+        {"keyword_id": 1, "status": "ready", "results": 100},
+        {"keyword_id": 2, "status": "failed", "error": "RuntimeError"},
+    ]
     assert conn.closed_count == 1
 
 
@@ -187,6 +211,9 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, t
     assert len(watchlist) == 1 and watchlist[0]["hours"] == 24
     reviews = [kw for trigger, kw in fake.jobs if kw.get("id") == "watchlist_reviews"]
     assert len(reviews) == 1 and reviews[0]["hours"] == 24
+    rank_tracker = [kw for trigger, kw in fake.jobs if kw.get("id") == "aso_rank_tracker"]
+    assert len(rank_tracker) == 1
+    assert rank_tracker[0]["hour"] == 6 and rank_tracker[0]["minute"] == 15
     assert started["yes"] is True
 
 

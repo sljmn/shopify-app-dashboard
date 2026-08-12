@@ -347,6 +347,36 @@ def run_discovery_alerts_job(conn_factory, settings) -> dict:
         conn.close()
 
 
+def run_rank_tracker_job(conn_factory) -> list[dict]:
+    """Measure active keywords independently so one search cannot stop a list."""
+    from app_dashboard.rank_collector import sync_keyword_rankings
+
+    conn = conn_factory()
+    try:
+        keyword_ids = [
+            row[0] for row in conn.execute(
+                """select k.id from aso_rank_keywords k
+                   join aso_rank_lists l on l.id=k.rank_list_id
+                   where k.active and l.status='active' order by k.id"""
+            ).fetchall()
+        ]
+        results = []
+        for keyword_id in keyword_ids:
+            try:
+                result = sync_keyword_rankings(conn, keyword_id)
+                results.append({"keyword_id": keyword_id, **result})
+            except Exception as exc:
+                logger.exception("rank keyword %s failed", keyword_id)
+                results.append({
+                    "keyword_id": keyword_id,
+                    "status": "failed",
+                    "error": type(exc).__name__,
+                })
+        return results
+    finally:
+        conn.close()
+
+
 def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
     """Poll the Partner API on an interval via run_sync. Caller owns shutdown()."""
     scheduler = BackgroundScheduler()
@@ -449,6 +479,12 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         "interval", minutes=15,
         next_run_time=datetime.now() + timedelta(minutes=65),
         id="discovery_alerts",
+    )
+    scheduler.add_job(
+        lambda: run_rank_tracker_job(conn_factory),
+        "cron", hour=6, minute=15, timezone="Europe/Amsterdam",
+        next_run_time=datetime.now() + timedelta(minutes=105),
+        id="aso_rank_tracker",
     )
     # Every 15 minutes, but it only posts once per stale episode. Deliberately
     # a separate job from run_sync: a check that lives inside the thing it is

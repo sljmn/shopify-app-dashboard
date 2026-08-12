@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ record.name }} · Rank tracker{% endblock %}
+{% block content %}
+<nav class="breadcrumb"><a href="/rank-tracker">Rank tracker</a><span>/</span><span>List</span></nav>
+<div class="page-heading rank-heading"><div><h1>{{ record.name }}</h1><p class="sub">{{ record.keywords|length }} active keyword{{ '' if record.keywords|length == 1 else 's' }}</p></div></div>
+
+<section class="rank-add-panel">
+    <div><h2>Add a keyword</h2><p class="sub">Locale changes the App Store language. Country is stored as reporting context; Shopify does not guarantee country geolocation without a regional proxy.</p></div>
+    <form method="post" action="/rank-tracker/lists/{{ record.id }}/keywords">
+        <label>Keyword<input name="keyword" required placeholder="e.g. product reviews"></label>
+        <label>Store language<select name="locale">{% for code, label in rank_locales.items() %}<option value="{{ code }}">{{ label }} ({{ code }})</option>{% endfor %}</select></label>
+        <label>Market<input name="country" maxlength="2" placeholder="NL" autocapitalize="characters"></label>
+        <button type="submit">Add keyword</button>
+    </form>
+</section>
+
+<section>
+    <div class="section-heading"><div><h2>Tracked keywords</h2><p class="sub">Scans run daily. Use Scan now from a keyword when you need a fresh measurement.</p></div></div>
+    <div class="table-card"><table class="rank-list-table"><thead><tr><th>Keyword</th><th>Store</th><th>Results</th><th>Last scan</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
+    {% for row in record.keywords %}<tr><td><a href="/rank-tracker/keywords/{{ row.id }}"><strong>{{ row.keyword }}</strong></a></td><td>{{ row.locale }}{% if row.country %} · {{ row.country }}{% endif %}</td><td>{{ row.results or '—' }}</td><td>{{ row.last_scanned_at|local_time("%-d %b %Y %H:%M") if row.last_scanned_at else "Pending" }}</td><td>{% if row.error %}<span class="money-down">{{ row.error }}</span>{% elif row.last_scanned_at %}<span class="money-up">Ready</span>{% else %}<span class="sub">Awaiting first scan</span>{% endif %}</td><td class="row-action"><form method="post" action="/rank-tracker/keywords/{{ row.id }}/archive"><button class="ghost" type="submit">Remove</button></form></td></tr>
+    {% else %}<tr><td colspan="6"><div class="empty-state"><strong>No keywords in this list.</strong><span>Add the first keyword above.</span></div></td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endblock %}

@@ -1573,6 +1573,41 @@
             .research-app-toolbar > div, .research-app-memberships { grid-template-columns: 1fr; }
             .research-app-toolbar > div > * { width: 100%; }
         }
+
+        /* Rank tracking is an operational measurement surface: compact input
+           at list level, then a dense, stable result table for comparison. */
+        .rank-heading { align-items: flex-start; margin-bottom: 24px; }
+        .rank-create { display: grid; grid-template-columns: minmax(210px, 280px) auto; gap: 8px; }
+        .rank-create input { width: 100%; border: 1px solid var(--control-border); border-radius: 7px; background: var(--control-bg); color: var(--ink); padding: 9px 11px; font: 14px var(--body); }
+        .rank-intro { display: flex; align-items: baseline; gap: 14px; margin-bottom: 30px; padding: 13px 15px; border-left: 3px solid var(--brand); background: var(--brand-wash); color: var(--ink-2); }
+        .rank-intro strong { flex: 0 0 auto; color: var(--ink); }
+        .rank-add-panel { margin-bottom: 34px; padding: 20px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); }
+        .rank-add-panel h2 { margin: 0 0 4px; }
+        .rank-add-panel > div { margin-bottom: 17px; }
+        .rank-add-panel form { display: grid; grid-template-columns: minmax(240px, 2fr) minmax(190px, 1fr) minmax(100px, .5fr) auto; gap: 10px; align-items: end; }
+        .rank-add-panel label { display: grid; gap: 6px; color: var(--ink-2); font-size: 12px; font-weight: 650; }
+        .rank-add-panel input, .rank-add-panel select { width: 100%; }
+        .rank-list-table td, .rank-results td { vertical-align: top; }
+        .rank-list-table .row-action { width: 1%; text-align: right; }
+        .rank-list-table .row-action form { margin: 0; }
+        .rank-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 32px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+        .rank-summary div { display: grid; gap: 3px; padding: 16px 20px; border-right: 1px solid var(--border); }
+        .rank-summary div:last-child { border: 0; }
+        .rank-summary span { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+        .rank-summary strong { font: 650 17px var(--mono); }
+        .bfs-pill { display: inline-flex; border: 1px solid color-mix(in srgb, var(--brand) 35%, var(--border)); border-radius: 999px; padding: 3px 7px; color: var(--brand); background: var(--brand-wash); font-size: 11px; font-weight: 700; }
+        @media (max-width: 800px) {
+            .rank-create, .rank-add-panel form { grid-template-columns: 1fr 1fr; width: 100%; }
+            .rank-create input { min-width: 0; }
+            .rank-add-panel label:first-child { grid-column: 1 / -1; }
+        }
+        @media (max-width: 560px) {
+            .rank-create, .rank-add-panel form { grid-template-columns: 1fr; }
+            .rank-create button, .rank-add-panel button { width: 100%; }
+            .rank-intro { align-items: flex-start; flex-direction: column; }
+            .rank-summary { grid-template-columns: 1fr; }
+            .rank-summary div { border-right: 0; border-bottom: 1px solid var(--border); }
+        }
     </style>
     <!-- Arms the bar-grow animation, and only if this document is on screen
          right now. In the head so the class is set before first paint; without
@@ -1637,6 +1672,9 @@
           ("What GA4 missed", "reconciliation")]),
         ("/aso", "aso", "ASO",
          '<path d="M4 15.5 8 11l3 2 5-7"/><path d="M12.5 6H16v3.5"/><circle cx="5" cy="6" r="2"/>',
+         []),
+        ("/rank-tracker", "rank_tracker", "Rank tracker",
+         '<path d="M3 16V9M8 16V5M13 16v-4M17 16V3"/><path d="M2 16.5h16"/>',
          []),
         ("/discover", "discover", "Discover",
          '<circle cx="8" cy="8" r="4.5"/><path d="m11.5 11.5 4 4"/><path d="M15 3v4M13 5h4"/>',

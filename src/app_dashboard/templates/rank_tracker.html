@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Rank tracker · {{ DASHBOARD_NAME }}{% endblock %}
+{% block content %}
+<div class="page-heading rank-heading">
+    <div><h1>Rank tracker</h1><p class="sub">Daily organic Shopify App Store positions for the keywords you choose.</p></div>
+    <form class="rank-create" method="post" action="/rank-tracker/lists">
+        <label class="sr-only" for="rank-list-name">List name</label>
+        <input id="rank-list-name" name="name" required placeholder="New list name">
+        <button type="submit">Create list</button>
+    </form>
+</div>
+
+<section class="rank-intro" aria-label="How ranking works">
+    <strong>Measured, not estimated</strong>
+    <span>Mantle records up to 100 organic results per keyword. Daily snapshots make 1, 7 and 30-day movement comparable.</span>
+</section>
+
+<section>
+    <div class="section-heading"><div><h2>Keyword lists</h2><p class="sub">Group keywords by app, market or research question.</p></div></div>
+    <div class="table-card"><table class="rank-list-table"><thead><tr><th>List</th><th>Keywords</th><th>Last scan</th><th>Health</th></tr></thead><tbody>
+    {% for list in lists %}<tr><td><a href="/rank-tracker/lists/{{ list.id }}"><strong>{{ list.name }}</strong></a></td><td>{{ list.keywords }}</td><td>{{ list.last_scanned_at|local_time("%-d %b %Y %H:%M") if list.last_scanned_at else "Not scanned yet" }}</td><td>{% if list.failures %}<span class="money-down">{{ list.failures }} failed</span>{% elif list.keywords %}<span class="money-up">Ready</span>{% else %}<span class="sub">Empty</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="4"><div class="empty-state"><strong>No keyword lists yet.</strong><span>Create one above, then add the terms you want Mantle to measure.</span></div></td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endblock %}
