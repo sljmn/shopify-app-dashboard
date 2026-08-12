@@ -80,6 +80,85 @@ class ResearchRow:
     in_traffic: bool
 
 
+ASO_SORTS = {
+    "portfolio": {
+        "app": (lambda row: row.app.name.casefold(), "asc"),
+        "status": (lambda row: row.status.casefold(), "asc"),
+        "users": (lambda row: row.users, "desc"),
+        "clicks": (lambda row: row.install_clicks, "desc"),
+        "conversion": (lambda row: row.conversion_pct, "desc"),
+        "keyword": (
+            lambda row: row.top_keyword.casefold() if row.top_keyword else None,
+            "asc",
+        ),
+    },
+    "keywords": {
+        "keyword": (lambda row: row.keyword.casefold(), "asc"),
+        "users": (lambda row: row.users, "desc"),
+        "clicks": (lambda row: row.install_clicks, "desc"),
+        "conversion": (lambda row: row.conversion_pct, "desc"),
+        "latest": (lambda row: row.latest_position, "asc"),
+        "movement": (lambda row: row.position_change, "desc"),
+        "opportunity": (lambda row: row.opportunity_score, "desc"),
+    },
+    "history": {
+        "date": (lambda row: row[0], "asc"),
+        "position": (lambda row: row[1], "asc"),
+    },
+    "sources": {
+        "date": (lambda row: row.installed_on, "desc"),
+        "shop": (lambda row: row.shop_domain.casefold(), "asc"),
+        "source": (lambda row: row.source.casefold(), "asc"),
+        "type": (lambda row: row.source_type.casefold(), "asc"),
+        "value": (lambda row: row.source_value.casefold() if row.source_value else None, "asc"),
+        "locale": (lambda row: row.locale.casefold() if row.locale else None, "asc"),
+        "country": (lambda row: row.country.casefold() if row.country else None, "asc"),
+        "device": (lambda row: row.device.casefold(), "asc"),
+    },
+    "listing": {
+        "when": (lambda row: row.changed_at, "desc"),
+        "locale": (lambda row: row.locale.casefold(), "asc"),
+        "field": (lambda row: row.field.casefold(), "asc"),
+        "before": (lambda row: str(row.before_value).casefold(), "asc"),
+        "after": (lambda row: str(row.after_value).casefold(), "asc"),
+        "movement": (
+            lambda row: (row.improved - row.declined, row.unchanged), "desc",
+        ),
+    },
+    "research": {
+        "keyword": (lambda row: row.keyword.casefold(), "asc"),
+        "source": (lambda row: row.source.casefold(), "asc"),
+        "first_seen": (lambda row: row.first_seen_at, "desc"),
+        "last_seen": (lambda row: row.last_seen_at, "desc"),
+        "listing": (lambda row: row.in_listing, "desc"),
+        "traffic": (lambda row: row.in_traffic, "desc"),
+    },
+}
+
+
+def sort_aso_rows(
+    rows, table: str, sort: str | None, direction: str | None, *,
+    return_state: bool = False,
+):
+    definitions = ASO_SORTS[table]
+    default_key = next(iter(definitions))
+    key = sort if sort in definitions else default_key
+    getter, default_direction = definitions[key]
+    selected_direction = direction if direction in {"asc", "desc"} else default_direction
+    present = [row for row in rows if getter(row) is not None]
+    missing = [row for row in rows if getter(row) is None]
+    ordered = tuple(sorted(
+        present, key=getter, reverse=selected_direction == "desc",
+    ) + missing)
+    if return_state:
+        return ordered, key, selected_direction
+    return ordered
+
+
+def aso_sort_direction(table: str, key: str) -> str:
+    return ASO_SORTS[table][key][1]
+
+
 def opportunity_score(clicks: int, latest_position: int | None) -> int:
     if not clicks or latest_position is None or latest_position <= 1:
         return 0

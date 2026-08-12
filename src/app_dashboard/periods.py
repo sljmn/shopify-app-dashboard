@@ -6,8 +6,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from app_dashboard.display_time import DISPLAY_TIMEZONE, local_day_bounds
 
 
-PRESETS = ("7d", "30d", "90d", "this_month", "last_month", "custom")
+PRESETS = (
+    "today", "7d", "30d", "90d", "this_month", "last_month", "custom",
+)
 PRESET_LABELS = {
+    "today": "Today",
     "7d": "7 days",
     "30d": "30 days",
     "90d": "90 days",
@@ -100,6 +103,10 @@ def resolve_period(
         raise ValueError("now must be timezone-aware")
     local_now = now.astimezone(DISPLAY_TIMEZONE)
     key = preset if preset in PRESETS else "30d"
+
+    if key == "today":
+        start_utc, _ = local_day_bounds(local_now.date())
+        return _selection(key, start_utc, now, now)
 
     if key in {"7d", "30d", "90d"}:
         days = int(key[:-1])

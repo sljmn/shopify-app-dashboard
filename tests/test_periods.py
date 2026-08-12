@@ -24,6 +24,17 @@ def test_rolling_presets_have_the_requested_duration():
     assert resolve_period("90d", None, None, now=NOW).duration.days == 90
 
 
+def test_today_uses_the_amsterdam_calendar_day_until_now():
+    selected = resolve_period("today", None, None, now=NOW)
+
+    assert selected.preset == "today"
+    assert selected.start == datetime(2026, 8, 10, 22, 0, tzinfo=timezone.utc)
+    assert selected.end == NOW
+    assert selected.display_start.isoformat() == "2026-08-11"
+    assert selected.display_end.isoformat() == "2026-08-11"
+    assert selected.query_items() == (("period", "today"),)
+
+
 def test_custom_dates_are_inclusive_amsterdam_calendar_days():
     selected = resolve_period("custom", "2026-03-29", "2026-03-29", now=NOW)
 

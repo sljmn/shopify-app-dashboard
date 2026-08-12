@@ -1,4 +1,7 @@
 {% extends "base.html" %}
+{% macro sortable(key, label) -%}
+<th><a class="sort-link" href="{{ sort_links[key] }}">{{ label }}{% if sort_key == key %}<span aria-hidden="true">{{ "&#8593;"|safe if sort_direction == "asc" else "&#8595;"|safe }}</span>{% endif %}</a></th>
+{%- endmacro %}
 {% block title %}{% if discover_view == "new" %}New Shopify launches{% else %}Listing updates{% endif %} · Shopify Apps Analytics{% endblock %}
 {% block content %}
 <div class="page-heading">
@@ -19,6 +22,7 @@
 </div>
 
 <form class="filters discover-filters focused-discover-filters" method="get">
+    <input type="hidden" name="sort" value="{{ sort_key }}"><input type="hidden" name="direction" value="{{ sort_direction }}">
     <input type="search" name="q" value="{{ query }}" placeholder="Search app name or handle" aria-label="Search app name or handle">
     <select name="period" aria-label="Period">
         {% for value, label in [("7d","Last 7 days"),("30d","Last 30 days"),("90d","Last 90 days"),("all","All time")] %}<option value="{{ value }}"{% if selected_period == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
@@ -39,7 +43,7 @@
 
 <div class="table-card focused-discover-table">
     <table class="discover-table activity-table">
-        <thead><tr><th>App</th><th>Observed</th>{% if discover_view == "updates" %}<th>Change</th>{% endif %}<th>Category</th><th>BFS</th><th>Pricing</th><th>Developer</th><th>Reviews</th><th class="discover-actions">Actions</th></tr></thead>
+        <thead><tr>{{ sortable("app", "App") }}{{ sortable("observed", "Observed") }}{% if discover_view == "updates" %}{{ sortable("change", "Change") }}{% endif %}{{ sortable("category", "Category") }}{{ sortable("bfs", "BFS") }}{{ sortable("pricing", "Pricing") }}{{ sortable("developer", "Developer") }}{{ sortable("reviews", "Reviews") }}<th class="discover-actions">Actions</th></tr></thead>
         <tbody>
         {% for row in rows %}
         <tr>

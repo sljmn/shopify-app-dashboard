@@ -931,13 +931,54 @@ def category_opportunities(conn, *, now=None) -> list[dict]:
     return sorted(result, key=lambda row: (-row["score"], row["name"]))
 
 
+DISCOVERY_SORTS = {
+    "app": ("lower(coalesce(app.display_name,app.handle))", "asc"),
+    "observed": ("event.occurred_at", "desc"),
+    "change": ("verified.changed_at", "desc"),
+    "category": ("nullif(lower(category_names.names),'')", "asc"),
+    "bfs": ("app.built_for_shopify", "desc"),
+    "pricing": (
+        """case
+             when lower(coalesce(snapshot.listing->'pricing','[]'::jsonb)::text)
+                    like '%%free%%'
+              and lower(coalesce(snapshot.listing->'pricing','[]'::jsonb)::text)
+                    ~ '\\$[^]]*(month|mo|year|yr)' then 1
+             when lower(coalesce(snapshot.listing->'pricing','[]'::jsonb)::text)
+                    like '%%free%%' then 0
+             when lower(coalesce(snapshot.listing->'pricing','[]'::jsonb)::text)
+                    ~ '\\$[^]]*(month|mo|year|yr)' then 2
+           end""",
+        "asc",
+    ),
+    "developer": (
+        "lower(snapshot.listing->'developer'->>'name')", "asc",
+    ),
+    "reviews": ("observation.review_count", "desc"),
+}
+
+
+def normalize_discovery_sort(
+    sort: str | None, direction: str | None,
+) -> tuple[str, str]:
+    key = sort if sort in DISCOVERY_SORTS else "observed"
+    default_direction = DISCOVERY_SORTS[key][1]
+    return key, direction if direction in {"asc", "desc"} else default_direction
+
+
+def discovery_sort_direction(key: str) -> str:
+    return DISCOVERY_SORTS[key][1]
+
+
 def discovery_report(
     conn, *, search: str = "", category: str = "", page: int = 1,
     per_page: int = 100, activity: str = "all", bfs: str = "",
     pricing: str = "", period_days: int | None = None, now=None,
+    sort: str | None = None, direction: str | None = None,
 ) -> dict:
     current = now or datetime.now(timezone.utc)
     local_now = current.astimezone(DISPLAY_TZ)
+    sort_key, sort_direction = normalize_discovery_sort(sort, direction)
+    sort_expression = DISCOVERY_SORTS[sort_key][0]
     this_week = (local_now - timedelta(days=local_now.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
@@ -1045,7 +1086,8 @@ def discovery_report(
                    verified.before_id,verified.after_id,category_names.names,
                    app.built_for_shopify,app.bfs_checked_at
             {base}
-            order by event.occurred_at desc,event.id desc
+            order by {sort_expression} {sort_direction} nulls last,
+                     event.occurred_at desc,event.id desc
             limit %s offset %s""",
         [*params, per_page, (page - 1) * per_page],
     ).fetchall()
@@ -1149,6 +1191,8 @@ def discovery_report(
         "total": total_filtered,
         "page": page,
         "pages": max(1, (total_filtered + per_page - 1) // per_page),
+        "sort_key": sort_key,
+        "sort_direction": sort_direction,
     }
 
 

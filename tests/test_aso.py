@@ -2,12 +2,15 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from app_dashboard.aso import (
+    KeywordRow,
+    PortfolioRow,
     keyword_report,
     keyword_research,
     listing_history,
     opportunity_score,
     position_history,
     portfolio_report,
+    sort_aso_rows,
 )
 from psycopg.types.json import Jsonb
 from app_dashboard.periods import resolve_period
@@ -58,6 +61,36 @@ def test_opportunity_score_is_bounded_and_transparent():
     assert opportunity_score(5, 1) == 0
     assert opportunity_score(5, 20) > 0
     assert 0 <= opportunity_score(999, 999) <= 100
+
+
+def test_aso_sorting_supports_text_numbers_and_missing_values(test_app, app_factory):
+    other = app_factory(slug="other", name="Other")
+    portfolio = (
+        PortfolioRow(test_app, "ready", 2, 1, 50.0, None, None),
+        PortfolioRow(other, "unsupported", 10, 2, 20.0, "books", 4),
+    )
+    keywords = (
+        KeywordRow("missing", 5, 1, None, None, None, 20.0, 0),
+        KeywordRow("ranked", 3, 1, Decimal("4"), 4, 2, 33.3, 20),
+    )
+
+    assert [row.app.slug for row in sort_aso_rows(
+        portfolio, "portfolio", "users", "desc",
+    )] == ["other", "test-app"]
+    assert [row.keyword for row in sort_aso_rows(
+        keywords, "keywords", "latest", "asc",
+    )] == ["ranked", "missing"]
+
+
+def test_aso_sorting_normalizes_unknown_keys_and_directions(test_app):
+    rows = (PortfolioRow(test_app, "ready", 2, 1, 50.0, None, None),)
+
+    sorted_rows, key, direction = sort_aso_rows(
+        rows, "portfolio", "not-a-column", "sideways", return_state=True,
+    )
+
+    assert sorted_rows == rows
+    assert (key, direction) == ("app", "asc")
 
 
 def test_portfolio_keeps_apps_without_ga4_rows(db, test_app, app_factory):

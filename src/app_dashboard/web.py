@@ -5,6 +5,7 @@ import os
 import secrets
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from math import ceil
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -35,6 +36,8 @@ from app_dashboard.auth import (
 )
 from app_dashboard import annotations as anno
 from app_dashboard.aso import (
+    ASO_SORTS,
+    aso_sort_direction,
     current_listings,
     install_source_report,
     keyword_report,
@@ -42,11 +45,13 @@ from app_dashboard.aso import (
     listing_history,
     position_history,
     portfolio_report,
+    sort_aso_rows,
 )
 from app_dashboard.app_store_discovery import (
     category_dashboard,
     category_opportunities,
     discovery_report,
+    discovery_sort_direction,
     search_app_catalog,
 )
 from app_dashboard.discovery_watchlist import (
@@ -1487,6 +1492,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     def _focused_discovery_response(
         request: Request, user: str, *, activity: str, q: str,
         category: str, bfs: str, pricing: str, period: str, page: int,
+        sort: str | None, direction: str | None,
     ):
         bfs = bfs if bfs in {"bfs", "not_bfs", "unknown"} else ""
         pricing = pricing if pricing in {"free", "paid", "unknown"} else ""
@@ -1498,17 +1504,32 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             report = discovery_report(
                 conn, search=q, category=category, page=page, per_page=50,
                 activity=activity, bfs=bfs, pricing=pricing,
-                period_days=period_days,
+                period_days=period_days, sort=sort, direction=direction,
             )
         finally:
             conn.close()
         query_values = {
             "q": q.strip(), "category": category.strip(), "bfs": bfs,
             "pricing": pricing, "period": period,
+            "sort": report["sort_key"],
+            "direction": report["sort_direction"],
         }
         query_values = {
             key: value for key, value in query_values.items() if value
         }
+        sort_links = {}
+        columns = (
+            "app", "observed", "change", "category", "bfs", "pricing",
+            "developer", "reviews",
+        )
+        for key in columns:
+            next_direction = discovery_sort_direction(key)
+            if key == report["sort_key"]:
+                next_direction = (
+                    "desc" if report["sort_direction"] == "asc" else "asc"
+                )
+            values = {**query_values, "sort": key, "direction": next_direction}
+            sort_links[key] = "?" + urlencode(values)
         return templates.TemplateResponse(
             request, "discover_activity.html", {
                 **page_context(request, user, "discover", None, apps),
@@ -1518,6 +1539,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "selected_period": period,
                 "discover_view": "new" if activity == "new" else "updates",
                 "filter_qs": urlencode(query_values),
+                "sort_links": sort_links,
             },
         )
 
@@ -1525,22 +1547,26 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     def discover_new_apps(
         request: Request, q: str = "", category: str = "", bfs: str = "",
         pricing: str = "", period: str = "30d", page: int = 1,
+        sort: str | None = None, direction: str | None = None,
         user: str = Depends(verify_creds),
     ):
         return _focused_discovery_response(
             request, user, activity="new", q=q, category=category, bfs=bfs,
             pricing=pricing, period=period, page=page,
+            sort=sort, direction=direction,
         )
 
     @app.get("/discover/updates")
     def discover_listing_updates(
         request: Request, q: str = "", category: str = "", bfs: str = "",
         pricing: str = "", period: str = "30d", page: int = 1,
+        sort: str | None = None, direction: str | None = None,
         user: str = Depends(verify_creds),
     ):
         return _focused_discovery_response(
             request, user, activity="updated", q=q, category=category, bfs=bfs,
             pricing=pricing, period=period, page=page,
+            sort=sort, direction=direction,
         )
 
     @app.get("/discover/reviews")
@@ -2301,6 +2327,10 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         source: str | None = None,
         keyword: str | None = None,
         focus: str | None = None,
+        sort: str | None = None,
+        direction: str | None = None,
+        history_sort: str | None = None,
+        history_direction: str | None = None,
         user: str = Depends(verify_creds),
     ):
         selection = resolve_period(period, start, end)
@@ -2364,18 +2394,70 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         finally:
             conn.close()
 
+        table = safe_view if selected_app else "portfolio"
+        if table == "overview":
+            table = "keywords"
+        if table == "keywords":
+            sorted_rows, sort_key, sort_direction = sort_aso_rows(
+                keywords.rows, table, sort, direction, return_state=True,
+            )
+            keywords = replace(keywords, rows=sorted_rows)
+        elif table == "portfolio":
+            portfolio, sort_key, sort_direction = sort_aso_rows(
+                portfolio, table, sort, direction, return_state=True,
+            )
+        elif table == "sources":
+            sources, sort_key, sort_direction = sort_aso_rows(
+                sources, table, sort, direction, return_state=True,
+            )
+        elif table == "listing":
+            listing_changes, sort_key, sort_direction = sort_aso_rows(
+                listing_changes, table, sort, direction, return_state=True,
+            )
+        else:
+            research, sort_key, sort_direction = sort_aso_rows(
+                research, table, sort, direction, return_state=True,
+            )
+        history_rows, history_sort_key, history_sort_direction = sort_aso_rows(
+            history_rows, "history", history_sort, history_direction,
+            return_state=True,
+        )
+
         def href(**changes):
             values = dict(selection.query_items())
             if selected_app:
                 values["app"] = selected_app.slug
             values.update(facets)
             values["view"] = safe_view
+            values["sort"] = sort_key
+            values["direction"] = sort_direction
+            if focus:
+                values["focus"] = focus
+                values["history_sort"] = history_sort_key
+                values["history_direction"] = history_sort_direction
             for key, value in changes.items():
                 if value is None:
                     values.pop(key, None)
                 else:
                     values[key] = value
             return "/aso?" + urlencode(values)
+
+        sort_links = {}
+        for key in ASO_SORTS[table]:
+            next_direction = aso_sort_direction(table, key)
+            if key == sort_key:
+                next_direction = "desc" if sort_direction == "asc" else "asc"
+            sort_links[key] = href(sort=key, direction=next_direction)
+        history_sort_links = {}
+        for key in ("date", "position"):
+            next_direction = aso_sort_direction("history", key)
+            if key == history_sort_key:
+                next_direction = (
+                    "desc" if history_sort_direction == "asc" else "asc"
+                )
+            history_sort_links[key] = href(
+                history_sort=key, history_direction=next_direction,
+            )
 
         preset_links = [
             {"key": key, "label": label, "href": href(period=key, start=None, end=None),
@@ -2401,7 +2483,15 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "research_rows": research,
                 "history_rows": history_rows, "focus": focus or "",
                 "facet_options": facet_options, "capabilities": capabilities,
-                "tab_url": lambda tab: href(view=tab),
+                "sort_key": sort_key, "sort_direction": sort_direction,
+                "sort_links": sort_links,
+                "history_sort_key": history_sort_key,
+                "history_sort_direction": history_sort_direction,
+                "history_sort_links": history_sort_links,
+                "tab_url": lambda tab: href(
+                    view=tab, sort=None, direction=None, focus=None,
+                    history_sort=None, history_direction=None,
+                ),
             },
         )
 

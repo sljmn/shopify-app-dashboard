@@ -307,6 +307,13 @@ def test_discover_has_focused_launch_and_listing_update_views(db):
         f"view=compare&amp;before={before_id}&amp;after={after_id}"
         in updates.text
     )
+    sorted_updates = client.get(
+        "/discover/updates?period=all&category=design&sort=reviews&direction=asc"
+    )
+    assert 'name="sort" value="reviews"' in sorted_updates.text
+    assert 'name="direction" value="asc"' in sorted_updates.text
+    assert "sort=reviews&amp;direction=desc" in sorted_updates.text
+    assert '<th class="discover-actions">Actions</th>' in sorted_updates.text
 
 
 def test_research_write_refuses_cross_origin_requests(db):
@@ -852,6 +859,29 @@ def test_selected_aso_app_has_views_and_csv(db, test_app):
     assert csv_response.text.startswith("keyword,users,install_clicks")
     assert client.get("/aso?app=test-app&view=listing").status_code == 200
     assert client.get("/aso?app=test-app&view=research").status_code == 200
+
+
+def test_aso_today_and_sort_links_preserve_the_selected_filters(db, test_app):
+    db.execute(
+        """insert into aso_keyword_daily
+           (app_id,date,keyword,search_type,locale,users,install_clicks)
+           values (%s,current_date,'vat exemption','search','en',10,2)""",
+        (test_app.id,),
+    )
+    page = dashboard_client(create_app(conn_factory=lambda: keep_open(db))).get(
+        "/aso?app=test-app&period=today&view=keywords&locale=en"
+        "&sort=users&direction=desc"
+    )
+
+    assert page.status_code == 200
+    assert '>Today</a>' in page.text
+    assert "locale=en" in page.text
+    assert "sort=users&amp;direction=asc" in page.text
+    for label in (
+        "Keyword", "Users", "Clicks", "Conversion", "Latest",
+        "Movement", "Opportunity",
+    ):
+        assert f">{label}" in page.text
 
 
 def test_selected_aso_app_explains_when_ga4_has_no_keyword_values(db, test_app):

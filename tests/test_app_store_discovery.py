@@ -5,6 +5,7 @@ import pytest
 from psycopg.types.json import Jsonb
 
 from app_dashboard.app_store_discovery import (
+    DISCOVERY_SORTS,
     CategoryApp,
     CategoryResult,
     SitemapApp,
@@ -14,6 +15,7 @@ from app_dashboard.app_store_discovery import (
     category_dashboard,
     discovery_report,
     growth_signals,
+    normalize_discovery_sort,
     parse_app_sitemap,
     parse_category_page,
     parse_category_sitemap,
@@ -526,6 +528,73 @@ def test_report_excludes_baseline_and_counts_each_new_app_once(db):
     assert sum(week["new"] for week in report["weeks"]) == 1
     assert report["rows"][0]["handle"] == "new-app"
     assert report["rows"][0]["name"] == "New App"
+
+
+def test_discovery_sorting_happens_before_pagination(db):
+    now = datetime(2026, 8, 12, 12, tzinfo=timezone.utc)
+    for handle, name in (("zulu", "Zulu"), ("alpha", "Alpha")):
+        app_id = db.execute(
+            """insert into discovered_apps
+                 (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+               values (%s,%s,%s,%s,false) returning id""",
+            (handle, name, now, now),
+        ).fetchone()[0]
+        db.execute(
+            """insert into discovery_app_events
+                 (discovered_app_id,event_type,occurred_at)
+               values (%s,'discovered',%s)""",
+            (app_id, now),
+        )
+
+    first = discovery_report(
+        db, activity="new", sort="app", direction="asc", page=1,
+        per_page=1, now=now,
+    )
+    second = discovery_report(
+        db, activity="new", sort="app", direction="asc", page=2,
+        per_page=1, now=now,
+    )
+
+    assert first["rows"][0]["handle"] == "alpha"
+    assert second["rows"][0]["handle"] == "zulu"
+    assert (first["sort_key"], first["sort_direction"]) == ("app", "asc")
+
+
+def test_discovery_sorting_normalizes_unknown_values():
+    assert normalize_discovery_sort("nope", "sideways") == ("observed", "desc")
+    assert normalize_discovery_sort("reviews", "asc") == ("reviews", "asc")
+
+
+def test_every_discovery_data_column_has_a_valid_database_sort(db):
+    now = datetime(2026, 8, 12, 12, tzinfo=timezone.utc)
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('sortable','Sortable',%s,%s,false) returning id""",
+        (now, now),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_app_events
+             (discovered_app_id,event_type,occurred_at)
+           values (%s,'discovered',%s)""",
+        (app_id, now),
+    )
+    db.execute(
+        """insert into discovery_listing_snapshots
+             (discovered_app_id,captured_at,content_hash,listing)
+           values (%s,%s,'sortable-listing',%s)""",
+        (app_id, now, Jsonb({
+            "developer": {"name": "Sort Labs"},
+            "pricing": ["Pro $9 / month"],
+        })),
+    )
+
+    for key in DISCOVERY_SORTS:
+        report = discovery_report(
+            db, activity="new", sort=key, direction="asc", now=now,
+        )
+        assert report["sort_key"] == key
+        assert report["rows"][0]["handle"] == "sortable"
 
 
 def test_focused_discovery_reports_isolate_launches_and_expose_verified_diff(db):
