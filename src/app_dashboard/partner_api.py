@@ -169,7 +169,6 @@ query Earnings($appId: ID!, $after: String, $occurredAtMin: DateTime!,
           settlementDate
           description
           grossAmount {{ amount currencyCode }}
-          shopifyFee {{ amount currencyCode }}
           netAmount {{ amount currencyCode }}
         }}
       }}
@@ -422,7 +421,6 @@ def fetch_earnings(
             node = edge["node"]
             shop = node.get("shop") or {}
             gross, gross_currency = _money(node, "grossAmount")
-            fee, _ = _money(node, "shopifyFee")
             net, net_currency = _money(node, "netAmount")
             rows.append({
                 "id": node["id"],
@@ -435,7 +433,11 @@ def fetch_earnings(
                 "shop_name": shop.get("name"),
                 "description": node.get("description"),
                 "gross_amount": gross,
-                "shopify_fee": fee,
+                # Shopify's historical events endpoint currently returns a
+                # server-side 500 when shopifyFee.amount is selected. Net is
+                # the authoritative settlement value, so do not let this
+                # optional breakdown block payout ingestion.
+                "shopify_fee": None,
                 "net_amount": net,
                 "currency_code": net_currency or gross_currency,
             })
