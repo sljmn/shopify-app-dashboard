@@ -288,6 +288,10 @@ def sync_app_reviews(
             _record_success(
                 conn, discovered_app_id, frontier, completed_at, captured_at,
             )
+    except httpx.HTTPStatusError as exc:
+        code = f"HTTP_{exc.response.status_code}"
+        _record_failure(conn, discovered_app_id, captured_at, code)
+        return {"handle": handle, "ok": False, "error": code}
     except (httpx.HTTPError, ValueError) as exc:
         code = type(exc).__name__
         _record_failure(conn, discovered_app_id, captured_at, code)

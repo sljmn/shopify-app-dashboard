@@ -1,5 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 
+import httpx
+
 from app_dashboard.app_store_discovery import SitemapApp, sync_discovered_apps
 from app_dashboard.discovery_watchlist import follow_app, unfollow_app
 from app_dashboard.review_collector import (
@@ -86,6 +88,26 @@ class Response:
 
     def raise_for_status(self):
         pass
+
+
+def test_review_sync_records_the_http_status_code(db):
+    now = datetime(2026, 8, 12, 8, tzinfo=UTC)
+    sync_discovered_apps(db, [SitemapApp("limited", None)], now)
+    app_id = db.execute(
+        "select id from discovered_apps where handle='limited'"
+    ).fetchone()[0]
+
+    def get(url, **kwargs):
+        request = httpx.Request("GET", url)
+        return httpx.Response(429, request=request)
+
+    result = sync_app_reviews(
+        db, app_id, "limited", http_get=get, now=now, sleep=lambda *_: None,
+    )
+    assert result["error"] == "HTTP_429"
+    assert db.execute(
+        "select last_error_code from discovery_review_sync_state"
+    ).fetchone()[0] == "HTTP_429"
 
 
 def test_review_backfill_resumes_and_upserts_without_duplicates(db):
