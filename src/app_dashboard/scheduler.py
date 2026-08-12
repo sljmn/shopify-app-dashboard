@@ -310,6 +310,37 @@ def run_review_collection_job(conn_factory, settings) -> list[dict]:
     return results
 
 
+def run_icon_collection_job(conn_factory, settings) -> list[dict]:
+    from app_dashboard.icon_collector import icon_sync_targets, sync_app_icon
+
+    conn = conn_factory()
+    try:
+        targets = icon_sync_targets(
+            conn, limit=getattr(settings, "icon_app_batch_size", 500),
+        )
+    finally:
+        conn.close()
+
+    def sync_one(item):
+        discovered_app_id, handle, icon_url = item
+        worker_conn = conn_factory()
+        try:
+            return sync_app_icon(
+                worker_conn, discovered_app_id, handle, icon_url,
+                media_root=settings.watchlist_media_path,
+            )
+        except Exception as exc:
+            logger.exception("icon sync failed for %s", handle)
+            return {"handle": handle, "ok": False, "error": type(exc).__name__}
+        finally:
+            worker_conn.close()
+
+    with ThreadPoolExecutor(max_workers=settings.watchlist_concurrency) as pool:
+        results = list(pool.map(sync_one, targets))
+    logger.info("icon sync completed: %s icons", len(results))
+    return results
+
+
 def run_developer_catalog_job(conn_factory, settings) -> list[dict]:
     from app_dashboard.developer_catalog import (
         developers_due_for_refresh,
@@ -474,6 +505,12 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         "interval", hours=1,
         next_run_time=datetime.now() + timedelta(minutes=75),
         id="watchlist_reviews",
+    )
+    scheduler.add_job(
+        lambda: run_icon_collection_job(conn_factory, settings),
+        "interval", hours=1,
+        next_run_time=datetime.now() + timedelta(minutes=80),
+        id="app_store_icons",
     )
     scheduler.add_job(
         lambda: run_developer_catalog_job(conn_factory, settings),

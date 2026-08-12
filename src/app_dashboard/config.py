@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     watchlist_concurrency: int = 2
     review_app_batch_size: int = 250
     review_backfill_pages_per_run: int = 1
+    icon_app_batch_size: int = 500
     b2_key_id: str | None = None
     b2_application_key: str | None = None
     b2_region: str | None = None
@@ -126,6 +127,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 "REVIEW_BACKFILL_PAGES_PER_RUN must be between 1 and 5"
             )
+        return value
+
+    @field_validator("icon_app_batch_size")
+    @classmethod
+    def _icon_batch_is_bounded(cls, value: int) -> int:
+        if not 1 <= value <= 2_000:
+            raise ValueError("ICON_APP_BATCH_SIZE must be between 1 and 2000")
         return value
 
     @field_validator("research_upload_max_bytes")

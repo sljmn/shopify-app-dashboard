@@ -8,7 +8,7 @@
 <div class="page-heading">
     <div>
         <p class="sub"><a href="/discover">Discover</a> / Public app</p>
-        <div class="title-with-status"><h1>{{ detail.name or detail.handle|replace('-', ' ')|title }}</h1>{% if detail.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% endif %}</div>
+        <div class="app-detail-title">{% if detail.icon_digest %}<img class="app-detail-icon" src="/discover/media/{{ detail.icon_digest }}" alt="">{% endif %}<div class="title-with-status"><h1>{{ detail.name or detail.handle|replace('-', ' ')|title }}</h1>{% if detail.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% endif %}</div></div>
         <p class="sub">/{{ detail.handle }} · {{ detail.categories or "Not categorized" }}</p>
         {% if detail.developer_id %}<div class="app-developer-meta"><span>Developer</span><a href="/research/developers/{{ detail.developer_id }}"><strong>{{ detail.developer_name }}</strong></a><span aria-hidden="true">·</span><a href="{{ detail.developer_url }}" target="_blank" rel="noopener">Shopify profile</a></div>{% endif %}
     </div>

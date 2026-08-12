@@ -72,6 +72,19 @@ def test_category_cards_parse_review_count_and_rating():
     assert apps == [CategoryApp("alpha", "Alpha App", 1234, Decimal("4.8"))]
 
 
+def test_category_cards_capture_public_icon_url():
+    html = """
+      <div data-controller="app-card" data-app-card-handle-value="alpha"
+           data-app-card-name-value="Alpha App"
+           data-app-card-icon-url-value="https://cdn.shopify.com/app/icon.png">
+      </div>
+    """
+    _, apps = parse_category_page(html, "design")
+    assert apps == [CategoryApp(
+        "alpha", "Alpha App", icon_url="https://cdn.shopify.com/app/icon.png",
+    )]
+
+
 def test_category_cards_detect_shopifys_official_bfs_badge():
     html = """
       <div data-controller="app-card" data-app-card-handle-value="alpha"
@@ -267,6 +280,19 @@ def test_category_sync_records_current_bfs_status_and_check_time(db):
     ).fetchall() == [
         ("alpha", True, observed_at), ("beta", False, observed_at),
     ]
+
+
+def test_category_sync_keeps_latest_public_icon_url(db):
+    observed_at = datetime(2026, 8, 12, 8, tzinfo=timezone.utc)
+    sync_discovered_apps(db, [SitemapApp("alpha", None)], observed_at)
+    sync_discovery_categories(db, [CategoryResult("design", "Design", (
+        CategoryApp(
+            "alpha", "Alpha", icon_url="https://cdn.shopify.com/alpha.png",
+        ),
+    ))], observed_at)
+    assert db.execute(
+        "select icon_url from discovered_apps where handle='alpha'"
+    ).fetchone()[0] == "https://cdn.shopify.com/alpha.png"
 
 
 def test_category_crawl_can_be_the_first_source_of_a_new_app(db):

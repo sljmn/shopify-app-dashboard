@@ -238,7 +238,7 @@ def app_detail(conn, handle: str) -> dict | None:
     row = conn.execute(
         """select app.id,app.handle,app.display_name,app.first_seen_at,
                   app.listing_updated_on,app.built_for_shopify,
-                  app.bfs_checked_at,coalesce(watch.active,false),
+                  app.bfs_checked_at,app.icon_digest,coalesce(watch.active,false),
                   watch.follow_source,watch.followed_at,watch.last_success_at,
                   watch.last_error_code,observation.review_count,
                   observation.rating,observation.best_category_rank,
@@ -279,7 +279,7 @@ def app_detail(conn, handle: str) -> dict | None:
         return None
     keys = (
         "id", "handle", "name", "first_seen_at", "listing_updated_on",
-        "built_for_shopify", "bfs_checked_at",
+        "built_for_shopify", "bfs_checked_at", "icon_digest",
         "followed", "follow_source", "followed_at", "last_success_at",
         "last_error_code", "reviews", "rating", "best_rank", "snapshot_id",
         "snapshot_at", "listing", "developer_id", "developer_name",

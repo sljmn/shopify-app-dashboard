@@ -95,84 +95,114 @@ def review_intelligence_report(
              select member.discovered_app_id,category.slug,category.name
              from discovered_app_categories member
              join discovery_categories category on category.id=member.category_id
-           ), latest_listing as (
-             select distinct on (discovered_app_id) discovered_app_id,listing
-             from discovery_listing_snapshots
-             order by discovered_app_id,captured_at desc,id desc
            )
            select app.id,app.handle,coalesce(app.display_name,app.handle),
-                  app.built_for_shopify,latest.review_count,latest.rating,
+                  app.built_for_shopify,app.icon_digest,
+                  latest.review_count,latest.rating,
                   latest.best_category_rank,coalesce(counts.recent,0),
                   coalesce(counts.previous,0),coalesce(depth.observations,0),
                   state.backfill_completed_at is not null,state.last_success_at,
                   coalesce(jsonb_agg(distinct jsonb_build_object(
                     'slug',categories.slug,'name',categories.name))
-                    filter (where categories.slug is not null),'[]'::jsonb),
-                  latest_listing.listing
+                    filter (where categories.slug is not null),'[]'::jsonb)
            from discovered_apps app
            left join latest on latest.discovered_app_id=app.id
            left join counts on counts.discovered_app_id=app.id
            left join observation_depth depth on depth.discovered_app_id=app.id
            left join discovery_review_sync_state state on state.discovered_app_id=app.id
            left join categories on categories.discovered_app_id=app.id
-           left join latest_listing on latest_listing.discovered_app_id=app.id
-           where app.delisted_at is null
+           where app.delisted_at is null and latest.discovered_app_id is not null
            group by app.id,latest.review_count,latest.rating,
                     latest.best_category_rank,counts.recent,counts.previous,
                     depth.observations,state.backfill_completed_at,
-                    state.last_success_at,latest_listing.listing""",
+                    state.last_success_at""",
         (today - timedelta(days=period), today - timedelta(days=period),
          today - timedelta(days=period * 2)),
     ).fetchall()
     keys = (
-        "id", "handle", "name", "bfs", "reviews", "rating", "rank",
+        "id", "handle", "name", "bfs", "icon_digest", "reviews", "rating", "rank",
         "recent", "previous", "observations", "backfill_complete",
-        "last_success_at", "categories", "listing",
+        "last_success_at", "categories",
     )
     rows = [dict(zip(keys, item, strict=True)) for item in raw]
     by_category: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
         for item in row["categories"]:
             by_category[item["slug"]].append(row)
-    for row in rows:
+    category_context = {}
+    for slug, peers in by_category.items():
+        peer_reviews = [peer["reviews"] or 0 for peer in peers]
+        peer_recent = [peer["recent"] for peer in peers]
+        total_reviews = sum(peer_reviews)
+        category_context[slug] = {
+            "peers": peers,
+            "reviews": peer_reviews,
+            "recent": peer_recent,
+            "active_grower_share": (
+                sum(value > 0 for value in peer_recent) / len(peers)
+            ),
+            "top_ten_concentration": (
+                sum(sorted(peer_reviews, reverse=True)[:10]) / total_reviews
+                if total_reviews else 0.0
+            ),
+            "median_reviews": int(median(peer_reviews)),
+        }
+    scoring_rows = (
+        rows if preset in {"all", "established"}
+        else [row for row in rows if row["recent"] > 0]
+    )
+    for row in scoring_rows:
         candidates = []
         score_categories = [
             item for item in row["categories"]
             if not category or item["slug"] == category
         ] or [{"slug": "", "name": "Uncategorized"}]
         for item in score_categories:
-            peers = by_category.get(item["slug"], [row])
-            peer_reviews = [peer["reviews"] or 0 for peer in peers]
-            peer_recent = [peer["recent"] for peer in peers]
-            total_reviews = sum(peer_reviews)
-            top_ten_concentration = (
-                sum(sorted(peer_reviews, reverse=True)[:10]) / total_reviews
-                if total_reviews else 0.0
-            )
+            context = category_context.get(item["slug"])
+            if context is None:
+                context = {
+                    "peers": [row], "reviews": [row["reviews"] or 0],
+                    "recent": [row["recent"]],
+                    "active_grower_share": int(row["recent"] > 0),
+                    "top_ten_concentration": 1.0,
+                    "median_reviews": row["reviews"] or 0,
+                }
             score = score_candidate(
                 reviews=row["reviews"] or 0, recent=row["recent"],
                 previous=row["previous"], rating=float(row["rating"] or 0),
                 rank=row["rank"],
-                category_reviews=peer_reviews, category_recent=peer_recent,
-                category_apps=len(peers),
-                active_grower_share=(
-                    sum(value > 0 for value in peer_recent) / len(peers)
-                ),
-                top_ten_concentration=top_ten_concentration,
+                category_reviews=context["reviews"],
+                category_recent=context["recent"],
+                category_apps=len(context["peers"]),
+                active_grower_share=context["active_grower_share"],
+                top_ten_concentration=context["top_ten_concentration"],
                 observation_count=row["observations"],
                 backfill_complete=row["backfill_complete"],
                 last_success_at=row["last_success_at"], now=current,
             )
             score.update({
                 "category_slug": item["slug"], "category_name": item["name"],
-                "category_apps": len(peers),
-                "category_median_reviews": int(median(
-                    [peer["reviews"] or 0 for peer in peers]
-                )),
+                "category_apps": len(context["peers"]),
+                "category_median_reviews": context["median_reviews"],
             })
             candidates.append(score)
         row.update(max(candidates, key=lambda item: item["gem_score"]))
-        row["pricing"] = pricing_profile(row.pop("listing"))
+        row["pricing"] = {"label": "Unknown"}
+    rows = scoring_rows
+
+    if pricing and rows:
+        listings = {
+            app_id: listing for app_id, listing in conn.execute(
+                """select distinct on (discovered_app_id)
+                         discovered_app_id,listing
+                   from discovery_listing_snapshots
+                   where discovered_app_id=any(%s)
+                   order by discovered_app_id,captured_at desc,id desc""",
+                ([row["id"] for row in rows],),
+            ).fetchall()
+        }
+        for row in rows:
+            row["pricing"] = pricing_profile(listings.get(row["id"]))
 
     def included(row):
         if category and not any(item["slug"] == category for item in row["categories"]):
@@ -219,7 +249,7 @@ def review_intelligence_report(
         f"""select review.shopify_review_id,review.rating,review.reviewed_on,
                     review.merchant_name,review.country,review.body,
                     review.developer_reply,review.source_url,app.handle,
-                    coalesce(app.display_name,app.handle)
+                    coalesce(app.display_name,app.handle),app.icon_digest
              from discovery_reviews review
              join discovered_apps app on app.id=review.discovered_app_id
              where {' and '.join(feed_where)}
@@ -229,7 +259,7 @@ def review_intelligence_report(
     ).fetchall()
     feed_keys = (
         "id", "rating", "reviewed_on", "merchant", "country", "body",
-        "reply", "source_url", "handle", "app_name",
+        "reply", "source_url", "handle", "app_name", "icon_digest",
     )
     categories = conn.execute(
         """select category.slug,category.name,count(*)

@@ -1087,10 +1087,11 @@
         }
         .review-coverage { grid-template-columns: repeat(4, minmax(0, 1fr)); }
         .review-intelligence-filters {
-            margin: 18px 0 30px; display: grid;
+            margin: 18px 0 20px; display: grid;
             grid-template-columns: repeat(5, minmax(150px, 1fr)) auto auto;
         }
-        .review-signal-section, .latest-review-feed { margin-top: 34px; }
+        .review-signal-section { margin-top: 20px; }
+        .latest-review-feed { margin-top: 28px; }
         .review-signal-heading { align-items: end; gap: 24px; }
         .review-intelligence-table { min-width: 1240px; }
         .review-intelligence-table td:first-child,
@@ -1116,6 +1117,18 @@
         .review-feed-item .review-body { margin: 16px 0; line-height: 1.55; }
         .review-feed-item footer { color: var(--ink-2); font-size: 13px; }
         .review-replied { margin: 10px 0 0; color: var(--up); font-size: 12px; }
+        .app-identity { display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
+        .app-identity > div { min-width: 0; }
+        .app-icon {
+            flex: 0 0 38px; width: 38px; height: 38px; object-fit: cover;
+            border: 1px solid var(--border); border-radius: 7px; background: var(--surface);
+        }
+        .app-icon-fallback {
+            display: grid; place-items: center; color: var(--brand); background: var(--brand-soft);
+            font-size: 15px; font-weight: 800;
+        }
+        .app-detail-title { display: flex; align-items: center; gap: 14px; }
+        .app-detail-icon { width: 54px; height: 54px; object-fit: cover; border: 1px solid var(--border); border-radius: 8px; }
         @media (max-width: 620px) {
             .discovery-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .discover-focused-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1175,6 +1188,27 @@
             .review-signal-heading { align-items: stretch; flex-direction: column; }
             .review-feed-grid { grid-template-columns: minmax(0, 1fr); }
             .review-feed-item header { flex-direction: column; gap: 8px; }
+            .review-intelligence-table,
+            .review-intelligence-table tbody,
+            .review-intelligence-table tr,
+            .review-intelligence-table td { display: block; width: 100%; }
+            .review-intelligence-table { min-width: 0; }
+            .review-intelligence-table thead { display: none; }
+            .review-intelligence-table tr {
+                display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px 16px; padding: 15px 16px; border-bottom: 1px solid var(--border);
+            }
+            .review-intelligence-table td { min-width: 0 !important; padding: 0; border: 0; }
+            .review-intelligence-table td:first-child,
+            .review-intelligence-table td:nth-child(2) { grid-column: 1 / -1; }
+            .review-intelligence-table td::before {
+                content: attr(data-label); display: block; margin-bottom: 3px;
+                color: var(--muted); font-size: 10px; font-weight: 750;
+                text-transform: uppercase;
+            }
+            .review-intelligence-table td:first-child::before { display: none; }
+            .review-signal-section { margin-top: 16px; }
+            .latest-review-feed { margin-top: 24px; }
         }
         .bar-pair { display: grid; gap: 2px; }
         /* Wraps rather than squeezing: the store-deaths list is a run of shop

@@ -46,6 +46,7 @@ class CategoryApp:
     rating: Decimal | None = None
     rank: int | None = None
     built_for_shopify: bool = False
+    icon_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -112,9 +113,10 @@ def parse_category_page(html: str, slug: str) -> tuple[str, list[CategoryApp]]:
             int(reviews_match.group(1).replace(",", "")) if reviews_match else None
         )
         rating = Decimal(rating_match.group(1)) if rating_match else None
+        icon_url = (card.get("data-app-card-icon-url-value") or "").strip() or None
         apps.append(CategoryApp(
             handle, display_name, review_count, rating, None,
-            card.select_one(".built-for-shopify-badge") is not None,
+            card.select_one(".built-for-shopify-badge") is not None, icon_url,
         ))
     return name, list({app.handle: app for app in apps}.values())
 
@@ -170,7 +172,7 @@ def collect_categories(
             for app in fresh:
                 found[app.handle] = CategoryApp(
                     app.handle, app.name, app.review_count, app.rating,
-                    len(found) + 1, app.built_for_shopify,
+                    len(found) + 1, app.built_for_shopify, app.icon_url,
                 )
             sleep(page_delay)
         # Umbrella categories have no populated /all page and add no useful tag.
@@ -343,16 +345,17 @@ def sync_discovery_categories(conn, categories: list[CategoryResult], now=None) 
             conn.cursor().executemany(
                 """insert into discovered_apps
                    (handle,display_name,first_seen_at,last_seen_at,is_baseline,
-                    built_for_shopify,bfs_checked_at)
-                   values (%s,%s,%s,%s,%s,%s,%s) on conflict (handle) do update set
+                    built_for_shopify,bfs_checked_at,icon_url)
+                   values (%s,%s,%s,%s,%s,%s,%s,%s) on conflict (handle) do update set
                    display_name=coalesce(
                      excluded.display_name,discovered_apps.display_name
                    ),
                    last_seen_at=greatest(discovered_apps.last_seen_at,excluded.last_seen_at),
                    built_for_shopify=excluded.built_for_shopify,
-                   bfs_checked_at=excluded.bfs_checked_at""",
+                   bfs_checked_at=excluded.bfs_checked_at,
+                   icon_url=coalesce(excluded.icon_url,discovered_apps.icon_url)""",
                 [(app.handle, app.name, observed_at, observed_at, baseline_pending,
-                  app.built_for_shopify, observed_at)
+                  app.built_for_shopify, observed_at, app.icon_url)
                  for app in category.apps],
             )
         if not baseline_pending and new_handles:

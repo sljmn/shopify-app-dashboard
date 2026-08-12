@@ -23,7 +23,15 @@ def test_core_tables_exist(db):
         "discovery_watchlist", "discovery_listing_snapshots",
         "discovery_listing_changes", "discovery_media_objects",
         "discovery_snapshot_media",
+        "discovery_media_objects",
     } <= names
+    app_columns = {
+        row[0] for row in db.execute(
+            """select column_name from information_schema.columns
+               where table_schema='public' and table_name='discovered_apps'"""
+        ).fetchall()
+    }
+    assert {"icon_url", "icon_digest", "icon_checked_at"} <= app_columns
     assert {
         "research_lists", "research_list_apps", "research_list_developers", "discovered_developers",
         "discovered_app_developers", "research_notes",

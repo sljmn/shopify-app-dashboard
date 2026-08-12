@@ -174,10 +174,10 @@ def developer_detail(conn, developer_id: int) -> dict | None:
     result = dict(zip(keys, row, strict=True))
     result["apps"] = [
         {"id": app_id, "handle": handle, "name": name, "followed": followed,
-         "reviews": reviews, "rating": rating}
-        for app_id, handle, name, followed, reviews, rating in conn.execute(
+         "reviews": reviews, "rating": rating, "icon_digest": icon_digest}
+        for app_id, handle, name, followed, reviews, rating, icon_digest in conn.execute(
             """select app.id,app.handle,app.display_name,coalesce(watch.active,false),
-                      observation.review_count,observation.rating
+                      observation.review_count,observation.rating,app.icon_digest
                from discovered_app_developers member
                join discovered_apps app on app.id=member.discovered_app_id
                left join discovery_watchlist watch on watch.discovered_app_id=app.id
