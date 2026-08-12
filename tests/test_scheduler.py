@@ -8,6 +8,7 @@ from app_dashboard.scheduler import (
     run_category_discovery_job,
     run_developer_catalog_job,
     run_rank_tracker_job,
+    run_payouts_job,
     run_review_collection_job,
     run_sync_job,
     run_watchlist_job,
@@ -73,6 +74,16 @@ def test_active_subscription_job_closes_each_app_connection(monkeypatch, test_ap
 
     run_active_subscriptions_job(lambda: conn, [test_app], object())
 
+    assert conn.closed_count == 1
+
+
+def test_payout_job_closes_each_app_connection(monkeypatch, test_app):
+    conn = FakeConn()
+    monkeypatch.setattr(
+        "app_dashboard.scheduler.sync_payout_earnings",
+        lambda *args, **kwargs: {"earnings_inserted": 0},
+    )
+    run_payouts_job(lambda: conn, [test_app], object())
     assert conn.closed_count == 1
 
 
@@ -203,6 +214,8 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, t
     ]
     assert len(active_subscriptions) == 1
     assert active_subscriptions[0]["hours"] == 6
+    payouts = [kw for trigger, kw in fake.jobs if kw.get("id") == "payout_earnings"]
+    assert len(payouts) == 1 and payouts[0]["hours"] == 1
     discovery = {kw["id"]: kw for trigger, kw in fake.jobs
                  if kw.get("id", "").startswith("app_store_")}
     assert discovery["app_store_discovery"]["hour"] == 3

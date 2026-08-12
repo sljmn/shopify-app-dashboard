@@ -17,7 +17,7 @@ def test_core_tables_exist(db):
             "aso_keyword_daily", "aso_install_sources",
             "aso_listing_snapshots", "aso_listing_changes",
             "aso_popular_keywords", "discovered_apps", "discovery_categories",
-            "discovered_app_categories", "discovery_state"} <= names
+            "discovered_app_categories", "discovery_state", "payout_earnings"} <= names
     assert {"discovery_app_observations", "discovery_category_observations"} <= names
     assert {
         "discovery_watchlist", "discovery_listing_snapshots",
@@ -76,7 +76,7 @@ def test_every_app_owned_table_has_a_required_app_id(db):
         "transactions", "sync_state", "usage_events", "ga4_daily",
         "annotations", "tracking_events", "active_subscriptions",
         "aso_source_capabilities", "aso_keyword_daily", "aso_install_sources",
-        "aso_listing_snapshots", "aso_listing_changes",
+        "aso_listing_snapshots", "aso_listing_changes", "payout_earnings",
     }
     rows = db.execute(
         """

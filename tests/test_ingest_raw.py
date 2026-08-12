@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from app_dashboard.ingest_raw import (
+    upsert_payout_earnings,
     upsert_charges,
     upsert_raw_events,
     upsert_transactions,
@@ -138,3 +139,27 @@ def test_external_ids_and_annual_prices_are_isolated_between_apps(db, app_factor
     assert db.execute(
         "select count(*) from transactions where id = 'shared-transaction'"
     ).fetchone()[0] == 2
+
+
+def test_payout_earning_upsert_adds_settlement_later(db, test_app):
+    earning = {
+        "id": "earning-1",
+        "event_type": "EARNING_CHARGE_RECURRING",
+        "earning_type": "APP_SUBSCRIPTION",
+        "occurred_at": "2026-08-07T10:00:00Z",
+        "settlement_date": None,
+        "shop_gid": "shop-1",
+        "description": "Subscription",
+        "gross_amount": "19.00",
+        "shopify_fee": "0.00",
+        "net_amount": "18.45",
+        "currency_code": "USD",
+    }
+    assert upsert_payout_earnings(db, test_app, [earning]) == 1
+    assert upsert_payout_earnings(
+        db, test_app, [{**earning, "settlement_date": "2026-08-12"}]
+    ) == 0
+    assert db.execute(
+        "select settlement_date, net_amount from payout_earnings "
+        "where app_id=%s and id='earning-1'", (test_app.id,),
+    ).fetchone() == (__import__("datetime").date(2026, 8, 12), Decimal("18.45"))

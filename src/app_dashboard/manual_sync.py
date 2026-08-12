@@ -20,7 +20,7 @@ from app_dashboard.aso_ga4 import (
     sync_install_sources,
 )
 from app_dashboard.partner_api import PartnerClient
-from app_dashboard.pipeline import run_sync, sync_transactions
+from app_dashboard.pipeline import run_sync, sync_payout_earnings, sync_transactions
 from app_dashboard.listing_intelligence import sync_listing
 from app_dashboard.listing_intelligence import research_seeds, sync_popular_keywords
 
@@ -76,7 +76,7 @@ class ManualSyncCoordinator:
 
     @staticmethod
     def _sources(app: AppConfig) -> list[str]:
-        sources = ["lifecycle", "transactions", "subscriptions"]
+        sources = ["lifecycle", "transactions", "payouts", "subscriptions"]
         if app.ga4_property_id and app.ga4_credentials_json:
             sources.extend(("ga4", "aso_keywords", "aso_attribution"))
         if app.listing_url:
@@ -186,6 +186,14 @@ class ManualSyncCoordinator:
                 )
             elif source == "transactions":
                 sync_transactions(
+                    conn,
+                    partner_client,
+                    app,
+                    self._settings,
+                    full_history=full_history,
+                )
+            elif source == "payouts":
+                sync_payout_earnings(
                     conn,
                     partner_client,
                     app,

@@ -144,6 +144,7 @@ from app_dashboard.period_report import (
     sort_rows,
 )
 from app_dashboard.periods import PRESET_LABELS, resolve_period
+from app_dashboard.payouts import payout_report
 from app_dashboard.ranges import (
     CHURN_DAYS,
     MONEY_MONTHS,
@@ -2215,6 +2216,56 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "sort_key": sort_key,
                 "sort_direction": sort_direction,
                 "period_qs": urlencode(period_items),
+            },
+        )
+
+    @app.get("/payouts")
+    def payouts(
+        request: Request,
+        start: str | None = None,
+        end: str | None = None,
+        settlement: str | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        today = local_today()
+        default_start = today - timedelta(days=365)
+        error = None
+        try:
+            start_date = date.fromisoformat(start) if start else default_start
+            end_date = date.fromisoformat(end) if end else today
+            if start_date > end_date:
+                raise ValueError
+        except ValueError:
+            start_date, end_date = default_start, today
+            error = "Choose a valid start and end date."
+        try:
+            selected_date = date.fromisoformat(settlement) if settlement else None
+        except ValueError:
+            selected_date = None
+            error = "Choose a valid settlement date."
+
+        conn = conn_factory()
+        try:
+            scope, selected_app, apps = resolve_scope(request, conn)
+            report = payout_report(
+                conn, scope, start_date, end_date, selected_date
+            )
+        finally:
+            conn.close()
+
+        range_values = {"start": start_date.isoformat(), "end": end_date.isoformat()}
+        if selected_app:
+            range_values["app"] = selected_app.slug
+        return templates.TemplateResponse(
+            request,
+            "payouts.html",
+            {
+                **page_context(request, user, "payouts", selected_app, apps),
+                "start": start_date,
+                "end": end_date,
+                "report": report,
+                "error": error,
+                "range_qs": urlencode(range_values),
             },
         )
 

@@ -5,6 +5,7 @@ from app_dashboard.partner_api import (
     PartnerClient,
     fetch_active_subscription,
     fetch_app_events,
+    fetch_earnings,
     fetch_transactions,
 )
 
@@ -192,6 +193,66 @@ def test_transactions_graphql_errors_raise():
     payload = {"data": None, "errors": [{"message": "Access denied"}]}
     with pytest.raises(RuntimeError, match="Access denied"):
         fetch_transactions(_client(payload), app_id="2")
+
+
+def _earnings(*nodes, has_next=False):
+    return {"data": {"events": {
+        "pageInfo": {"hasNextPage": has_next},
+        "edges": [{"cursor": f"earning-{i}", "node": node}
+                  for i, node in enumerate(nodes)],
+    }}}
+
+
+EARNING = {
+    "id": "gid://partners/Earning/11",
+    "eventType": "EARNING_CHARGE_RECURRING",
+    "earningType": "APP_SUBSCRIPTION",
+    "occurredAt": "2026-08-07T07:02:51Z",
+    "settlementDate": "2026-08-12",
+    "description": "App subscription earning",
+    "shop": {"id": "gid://partners/Shop/1", "myshopifyDomain": "x.myshopify.com",
+             "name": "X"},
+    "grossAmount": {"amount": "19.00", "currencyCode": "USD"},
+    "shopifyFee": {"amount": "0.00", "currencyCode": "USD"},
+    "netAmount": {"amount": "18.45", "currencyCode": "USD"},
+}
+
+
+def test_maps_earning_settlement_and_bounded_window():
+    seen = []
+    rows, cursor = fetch_earnings(
+        _client(_earnings(EARNING, has_next=True), seen=seen),
+        app_id="gid://partners/App/2",
+        occurred_at_min="2026-01-01T00:00:00Z",
+        occurred_at_max="2026-08-12T23:59:59Z",
+    )
+
+    assert cursor == "earning-0"
+    assert rows[0]["settlement_date"] == "2026-08-12"
+    assert rows[0]["net_amount"] == "18.45"
+    assert rows[0]["currency_code"] == "USD"
+    assert "subjectType: APP" in seen[0]
+    assert '"occurredAtMax":"2026-08-12T23:59:59Z"' in seen[0]
+
+
+def test_earning_can_be_unsettled():
+    node = {**EARNING, "id": "gid://partners/Earning/12", "settlementDate": None}
+    rows, _ = fetch_earnings(
+        _client(_earnings(node)), app_id="gid://partners/App/2",
+        occurred_at_min="2026-01-01T00:00:00Z",
+        occurred_at_max="2026-08-12T23:59:59Z",
+    )
+    assert rows[0]["settlement_date"] is None
+
+
+def test_earnings_graphql_errors_raise():
+    with pytest.raises(RuntimeError, match="Access denied"):
+        fetch_earnings(
+            _client({"data": None, "errors": [{"message": "Access denied"}]}),
+            app_id="gid://partners/App/2",
+            occurred_at_min="2026-01-01T00:00:00Z",
+            occurred_at_max="2026-08-12T23:59:59Z",
+        )
 
 
 def test_partner_client_retries_429_and_honours_retry_after():

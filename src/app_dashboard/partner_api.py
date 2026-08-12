@@ -134,6 +134,51 @@ query Transactions($appId: ID!, $after: String, $createdAtMin: DateTime) {{
 """
 
 
+# Payout timing lives on historical Earning events, not on app.events and not
+# on transactions. Shopify limits one historical-events request window to 365
+# days; pipeline.sync_payout_earnings owns that windowing.
+EARNING_EVENT_TYPES = (
+    "EARNING_ADJUSTMENT",
+    "EARNING_CHARGE_ONE_TIME",
+    "EARNING_CHARGE_RECURRING",
+    "EARNING_CHARGE_USAGE",
+    "EARNING_CREDIT",
+    "EARNING_REFUND",
+)
+
+_EARNINGS_QUERY = f"""
+query Earnings($appId: ID!, $after: String, $occurredAtMin: DateTime!,
+               $occurredAtMax: DateTime!) {{
+  events(first: 100, after: $after, filter: {{
+    subjectId: $appId
+    subjectType: APP
+    eventTypes: [{", ".join(EARNING_EVENT_TYPES)}]
+    occurredAtMin: $occurredAtMin
+    occurredAtMax: $occurredAtMax
+  }}) {{
+    pageInfo {{ hasNextPage }}
+    edges {{
+      cursor
+      node {{
+        id
+        eventType
+        occurredAt
+        shop {{ id myshopifyDomain name }}
+        ... on Earning {{
+          earningType
+          settlementDate
+          description
+          grossAmount {{ amount currencyCode }}
+          shopifyFee {{ amount currencyCode }}
+          netAmount {{ amount currencyCode }}
+        }}
+      }}
+    }}
+  }}
+}}
+"""
+
+
 # The Partner API version every query here is written against. Bumping it is a
 # deliberate act: the field set this code reads has changed between versions.
 API_VERSION = "2026-07"
@@ -336,5 +381,63 @@ def fetch_transactions(
         except (KeyError, TypeError):
             logger.exception("skipping unmappable transaction node: %r", edge)
 
+    next_cursor = edges[-1]["cursor"] if edges and has_next_page else None
+    return rows, next_cursor
+
+
+def fetch_earnings(
+    client: PartnerClient,
+    *,
+    app_id: str,
+    occurred_at_min: str,
+    occurred_at_max: str,
+    after_cursor: str | None = None,
+) -> tuple[list[dict], str | None]:
+    """Fetch one page of Shopify earning events for one bounded time window."""
+    response = client.post(
+        json={
+            "query": _EARNINGS_QUERY,
+            "variables": {
+                "appId": app_id,
+                "after": after_cursor,
+                "occurredAtMin": occurred_at_min,
+                "occurredAtMax": occurred_at_max,
+            },
+        },
+    )
+    response.raise_for_status()
+    body = response.json()
+    if body.get("errors"):
+        raise RuntimeError(f"Partner API GraphQL errors: {body['errors']}")
+
+    connection = body["data"]["events"]
+    edges = connection["edges"]
+    rows = []
+    for edge in edges:
+        try:
+            node = edge["node"]
+            shop = node.get("shop") or {}
+            gross, gross_currency = _money(node, "grossAmount")
+            fee, _ = _money(node, "shopifyFee")
+            net, net_currency = _money(node, "netAmount")
+            rows.append({
+                "id": node["id"],
+                "event_type": node["eventType"],
+                "earning_type": node["earningType"],
+                "occurred_at": node["occurredAt"],
+                "settlement_date": node.get("settlementDate"),
+                "shop_gid": shop.get("id"),
+                "shop_domain": shop.get("myshopifyDomain"),
+                "shop_name": shop.get("name"),
+                "description": node.get("description"),
+                "gross_amount": gross,
+                "shopify_fee": fee,
+                "net_amount": net,
+                "currency_code": net_currency or gross_currency,
+            })
+        except (KeyError, TypeError):
+            logger.exception("skipping unmappable earning node: %r", edge)
+
+    has_next_page = connection["pageInfo"]["hasNextPage"]
     next_cursor = edges[-1]["cursor"] if edges and has_next_page else None
     return rows, next_cursor

@@ -91,6 +91,44 @@ def upsert_transactions(
     return inserted
 
 
+def upsert_payout_earnings(
+    conn: psycopg.Connection, app: AppConfig, rows: list[dict]
+) -> int:
+    """Store historical earning events and refresh their settlement state."""
+    if not rows:
+        return 0
+    inserted = 0
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                insert into payout_earnings
+                    (app_id, id, event_type, earning_type, occurred_at,
+                     settlement_date, shop_gid, description, gross_amount,
+                     shopify_fee, net_amount, currency_code)
+                values
+                    (%(app_id)s, %(id)s, %(event_type)s, %(earning_type)s,
+                     %(occurred_at)s, %(settlement_date)s, %(shop_gid)s,
+                     %(description)s, %(gross_amount)s, %(shopify_fee)s,
+                     %(net_amount)s, %(currency_code)s)
+                on conflict (app_id, id) do update set
+                    settlement_date = excluded.settlement_date,
+                    description = excluded.description,
+                    gross_amount = excluded.gross_amount,
+                    shopify_fee = excluded.shopify_fee,
+                    net_amount = excluded.net_amount,
+                    currency_code = excluded.currency_code,
+                    ingested_at = now()
+                returning (xmax = 0) as was_inserted
+                """,
+                {**row, "app_id": app.id},
+            )
+            if cur.fetchone()[0]:
+                inserted += 1
+    conn.commit()
+    return inserted
+
+
 def upsert_charges(
     conn: psycopg.Connection, app: AppConfig, events: list[dict]
 ) -> int:

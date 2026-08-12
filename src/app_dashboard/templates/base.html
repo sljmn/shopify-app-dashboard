@@ -559,6 +559,14 @@
         .period-section-head h2, .period-section-head p { margin: 0; }
         .period-section-head p { margin-top: 4px; }
         .period-table { min-width: 980px; }
+        .payout-filter { margin-left: auto; }
+        .payout-cards { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+        .payout-section { margin-top: 34px; }
+        .payout-table-wrap { overflow-x: auto; }
+        .payout-table { min-width: 660px; }
+        .payout-detail-table { min-width: 940px; }
+        .payout-table .row-action { text-align: right; white-space: nowrap; }
+        .payout-table .selected-row td { background: var(--purple-pale); }
         .sort-link { color: inherit; text-decoration: none; white-space: nowrap; }
         .sort-link:hover { color: var(--brand); }
         .sort-link span { margin-left: 3px; color: var(--brand); }
@@ -577,6 +585,8 @@
             .period-presets a { text-align: center; padding-inline: 6px; }
             .period-custom { display: grid; grid-template-columns: 1fr 1fr auto; }
             .period-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .payout-filter { margin-left: 0; }
+            .payout-cards { grid-template-columns: minmax(0, 1fr); }
         }
         @media (max-width: 520px) {
             .period-custom { grid-template-columns: minmax(0, 1fr); }
@@ -1767,6 +1777,9 @@
           ("Annotations", "annotations")]),
         ("/period", "period", "Period",
          '<rect x="3" y="4" width="14" height="13" rx="2"/><path d="M6.5 2.8v3.4M13.5 2.8v3.4M3 8h14"/>',
+         []),
+        ("/payouts", "payouts", "Payouts",
+         '<path d="M3 6h14v10H3z"/><path d="M3 9h14"/><path d="M6 13h3"/><path d="M6 3h8"/>',
          []),
         ("/activity", "activity", "Activity",
          '<path d="M3 10h3l2-5 3.5 10 2-5H17"/>',

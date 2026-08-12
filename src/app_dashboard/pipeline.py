@@ -5,12 +5,18 @@ import psycopg
 
 from app_dashboard.catalog import AppConfig
 from app_dashboard.derive import derive_installations
-from app_dashboard.ingest_raw import upsert_charges, upsert_raw_events, upsert_transactions
-from app_dashboard.partner_api import fetch_app_events, fetch_transactions
+from app_dashboard.ingest_raw import (
+    upsert_charges,
+    upsert_payout_earnings,
+    upsert_raw_events,
+    upsert_transactions,
+)
+from app_dashboard.partner_api import fetch_app_events, fetch_earnings, fetch_transactions
 from app_dashboard.slack import notify_events
 
 SOURCE = "partner_api"
 TRANSACTIONS_SOURCE = "partner_transactions"
+PAYOUT_EARNINGS_SOURCE = "partner_payout_earnings"
 
 # The Partner API rate-limits hard enough to 429 an introspection burst, and the
 # transactions feed is the only place we page in a tight loop. Same 0.3s the
@@ -171,3 +177,77 @@ def sync_transactions(
     return {"app": app.slug, "ok": True,
             "transactions_seen": seen, "transactions_inserted": inserted,
             "pages": pages, "since": created_at_min}
+
+
+def _earning_windows(start: datetime, end: datetime):
+    """Yield inclusive API windows below Shopify's 365-day maximum."""
+    cursor = start
+    while cursor <= end:
+        window_end = min(cursor + timedelta(days=364), end)
+        yield cursor, window_end
+        cursor = window_end + timedelta(microseconds=1)
+
+
+def sync_payout_earnings(
+    conn: psycopg.Connection,
+    client,
+    app: AppConfig,
+    settings,
+    sleep=time.sleep,
+    *,
+    full_history: bool = False,
+) -> dict:
+    """Poll Shopify historical Earning events into the payout ledger."""
+    end = datetime.now(timezone.utc)
+    state = conn.execute(
+        "select last_synced_at from sync_state where app_id=%s and source=%s",
+        (app.id, PAYOUT_EARNINGS_SOURCE),
+    ).fetchone()
+    if state and state[0] is not None and not full_history:
+        start = state[0] - timedelta(minutes=settings.poll_overlap_minutes)
+    else:
+        (first_transaction,) = conn.execute(
+            "select min(created_at) from transactions where app_id=%s", (app.id,)
+        ).fetchone()
+        start = first_transaction or end - timedelta(days=364)
+    start = start.astimezone(timezone.utc)
+
+    inserted = seen = pages = windows = 0
+    for window_start, window_end in _earning_windows(start, end):
+        windows += 1
+        cursor = None
+        while True:
+            rows, next_cursor = fetch_earnings(
+                client,
+                app_id=app.partner_app_id,
+                occurred_at_min=window_start.isoformat(),
+                occurred_at_max=window_end.isoformat(),
+                after_cursor=cursor,
+            )
+            inserted += upsert_payout_earnings(conn, app, rows)
+            seen += len(rows)
+            pages += 1
+            if next_cursor is None:
+                break
+            cursor = next_cursor
+            sleep(THROTTLE_SECONDS)
+
+    conn.execute(
+        """
+        insert into sync_state (app_id, source, cursor, last_synced_at)
+        values (%s, %s, null, %s)
+        on conflict (app_id, source) do update set
+            cursor=null, last_synced_at=excluded.last_synced_at
+        """,
+        (app.id, PAYOUT_EARNINGS_SOURCE, end),
+    )
+    conn.commit()
+    return {
+        "app": app.slug,
+        "ok": True,
+        "earnings_seen": seen,
+        "earnings_inserted": inserted,
+        "pages": pages,
+        "windows": windows,
+        "since": start.isoformat(),
+    }

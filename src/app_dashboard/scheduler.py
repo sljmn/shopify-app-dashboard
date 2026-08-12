@@ -10,7 +10,7 @@ from app_dashboard.catalog import AppConfig
 from app_dashboard.digest import send_weekly_digest
 from app_dashboard.ops import check_stale_sync
 from app_dashboard.partner_api import PartnerClient
-from app_dashboard.pipeline import run_sync, sync_transactions
+from app_dashboard.pipeline import run_sync, sync_payout_earnings, sync_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,20 @@ def run_transactions_job(conn_factory, apps: list[AppConfig], settings) -> list[
     install/uninstall alerts run on."""
     results = run_all_apps(conn_factory, apps, settings, _sync_one_transactions)
     logger.info("all transaction syncs completed: %s", results)
+    return results
+
+
+def _sync_one_payouts(conn_factory, client, app, settings) -> dict:
+    conn = conn_factory()
+    try:
+        return sync_payout_earnings(conn, client, app, settings)
+    finally:
+        conn.close()
+
+
+def run_payouts_job(conn_factory, apps: list[AppConfig], settings) -> list[dict]:
+    results = run_all_apps(conn_factory, apps, settings, _sync_one_payouts)
+    logger.info("all payout earning syncs completed: %s", results)
     return results
 
 
@@ -438,6 +452,13 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         # burst against organizations that own many apps.
         next_run_time=datetime.now() + timedelta(minutes=2),
         id="transactions",
+    )
+    scheduler.add_job(
+        lambda: run_payouts_job(conn_factory, current_apps(), settings),
+        "interval",
+        hours=1,
+        next_run_time=datetime.now() + timedelta(minutes=3),
+        id="payout_earnings",
     )
     # Shopify exposes trial and scheduled-cancellation state only through a
     # per-shop query. Refresh independently so hundreds of calls never delay

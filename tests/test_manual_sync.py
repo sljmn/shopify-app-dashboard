@@ -39,15 +39,17 @@ def test_coordinator_runs_every_source_for_scoped_apps(app_factory):
     assert calls == [
         ("alpha", "lifecycle", True),
         ("alpha", "transactions", True),
+        ("alpha", "payouts", True),
         ("alpha", "subscriptions", True),
         ("beta", "lifecycle", True),
         ("beta", "transactions", True),
+        ("beta", "payouts", True),
         ("beta", "subscriptions", True),
     ]
     status = coordinator.status()
     assert status["state"] == "complete"
     assert status["scope"] == ["alpha", "beta"]
-    assert status["completed_steps"] == status["total_steps"] == 6
+    assert status["completed_steps"] == status["total_steps"] == 8
 
 
 def test_coordinator_includes_ga4_only_when_configured(app_factory):
@@ -64,7 +66,7 @@ def test_coordinator_includes_ga4_only_when_configured(app_factory):
     coordinator.start([app], mode="fresh")
 
     assert calls == [
-        "lifecycle", "transactions", "subscriptions", "ga4",
+        "lifecycle", "transactions", "payouts", "subscriptions", "ga4",
         "aso_keywords", "aso_attribution",
     ]
 
@@ -83,7 +85,7 @@ def test_coordinator_records_failure_and_continues(app_factory):
     )
     coordinator.start([app], mode="fresh")
 
-    assert calls == ["lifecycle", "transactions", "subscriptions"]
+    assert calls == ["lifecycle", "transactions", "payouts", "subscriptions"]
     status = coordinator.status()
     assert status["state"] == "failed"
     assert status["errors"] == [

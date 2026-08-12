@@ -2232,6 +2232,43 @@ def test_a_same_origin_annotation_write_still_works(db):
 
 # --- Period report -----------------------------------------------------------
 
+
+# --- Payouts -----------------------------------------------------------------
+
+def test_payouts_requires_login_and_renders_settlement_details(db, test_app):
+    db.execute(
+        """
+        insert into payout_earnings (
+            app_id, id, event_type, earning_type, occurred_at,
+            settlement_date, gross_amount, shopify_fee, net_amount, currency_code
+        ) values (%s, 'earning-1', 'EARNING_CHARGE_RECURRING', 'APP_SALE',
+                  '2026-08-01T12:00:00Z', '2026-08-08', 12, 2, 10, 'USD')
+        """,
+        (test_app.id,),
+    )
+    signed_out = dashboard_client(create_app(conn_factory=lambda: keep_open(db)), authenticated=False)
+    response = signed_out.get("/payouts", headers={"accept": "text/html"}, follow_redirects=False)
+    assert response.headers["location"] == "/auth/login"
+
+    page = _signed_in().get("/payouts?start=2026-08-01&end=2026-08-12&settlement=2026-08-08")
+    body = unescape(page.text)
+    assert page.status_code == 200
+    assert "<h1>Payouts</h1>" in body
+    assert "USD 10.00" in body
+    assert "8 Aug 2026" in body
+    assert "App Sale" in body
+    assert body.count("data-datepicker") >= 2
+
+
+def test_payouts_preserves_app_scope_and_rejects_bad_dates(db):
+    scoped = _signed_in().get("/payouts?start=2026-08-01&end=2026-08-12&app=test-app")
+    body = unescape(scoped.text)
+    assert 'name="app" value="test-app"' in body
+    assert "for Test App" in body
+
+    invalid = _signed_in().get("/payouts?start=bad&end=2026-08-12")
+    assert "Choose a valid start and end date." in invalid.text
+
 def test_period_requires_login_and_default_report_is_inline(db):
     signed_out = dashboard_client(
         create_app(conn_factory=lambda: keep_open(db)), authenticated=False

@@ -1,4 +1,12 @@
-from app_dashboard.pipeline import TRANSACTIONS_SOURCE, run_sync, sync_transactions
+from decimal import Decimal
+
+from app_dashboard.pipeline import (
+    PAYOUT_EARNINGS_SOURCE,
+    TRANSACTIONS_SOURCE,
+    run_sync,
+    sync_payout_earnings,
+    sync_transactions,
+)
 
 
 class FakeClient: ...
@@ -169,3 +177,57 @@ def test_full_transaction_sync_ignores_latest_transaction(db, test_app, monkeypa
     )
 
     assert seen["created_at_min"] is None
+
+
+def test_payout_sync_pages_and_stores_settlement(db, test_app, monkeypatch):
+    earning = {
+        "id": "earning-1", "event_type": "EARNING_CHARGE_RECURRING",
+        "earning_type": "APP_SUBSCRIPTION", "occurred_at": "2026-08-07T10:00:00Z",
+        "settlement_date": "2026-08-12", "shop_gid": "shop-1",
+        "description": "Subscription", "gross_amount": "19.00",
+        "shopify_fee": "0.00", "net_amount": "18.45", "currency_code": "USD",
+    }
+    pages = [([earning], "next"), ([], None)]
+    monkeypatch.setattr(
+        "app_dashboard.pipeline.fetch_earnings", lambda *a, **k: pages.pop(0)
+    )
+
+    summary = sync_payout_earnings(
+        db, FakeClient(), test_app, _settings(), sleep=lambda _: None
+    )
+
+    assert summary["earnings_inserted"] == 1
+    assert summary["pages"] == 2
+    assert db.execute(
+        "select settlement_date, net_amount from payout_earnings where app_id=%s",
+        (test_app.id,),
+    ).fetchone()[1].as_tuple() == Decimal("18.45").as_tuple()
+    assert db.execute(
+        "select last_synced_at from sync_state where app_id=%s and source=%s",
+        (test_app.id, PAYOUT_EARNINGS_SOURCE),
+    ).fetchone()[0] is not None
+
+
+def test_full_payout_sync_starts_at_first_transaction(db, test_app, monkeypatch):
+    db.execute(
+        """insert into transactions
+               (app_id,id,type,created_at,net_amount,currency_code)
+           values (%s,'first','AppSubscriptionSale','2024-01-02Z',18.45,'USD')""",
+        (test_app.id,),
+    )
+    seen = []
+
+    def fetch(client, **kwargs):
+        seen.append(kwargs)
+        return [], None
+
+    monkeypatch.setattr("app_dashboard.pipeline.fetch_earnings", fetch)
+    sync_payout_earnings(
+        db, FakeClient(), test_app, _settings(), sleep=lambda _: None,
+        full_history=True,
+    )
+
+    assert len(seen) >= 3
+    assert seen[0]["occurred_at_min"].startswith("2024-01-02")
+    assert all(seen[index]["occurred_at_max"] < seen[index + 1]["occurred_at_min"]
+               for index in range(len(seen) - 1))
