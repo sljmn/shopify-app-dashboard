@@ -106,7 +106,6 @@
         </nav>
     </div>
     <form class="filters discover-filters" method="get" action="/discover">
-        <input type="hidden" name="growth" value="{{ selected_growth }}">
         <input type="hidden" name="activity" value="{{ activity }}">
         <input type="search" name="q" value="{{ query }}" placeholder="Search app name or handle" aria-label="Search app name or handle">
         <select name="category" aria-label="Category">
@@ -122,7 +121,7 @@
             <option value="unknown"{% if selected_bfs == "unknown" %} selected{% endif %}>Not checked</option>
         </select>
         <button type="submit">Filter</button>
-        {% if query or selected_category or selected_bfs %}<a class="ghost" href="/discover?growth={{ selected_growth }}&amp;activity={{ activity }}">Clear</a>{% endif %}
+        {% if query or selected_category or selected_bfs %}<a class="ghost" href="/discover?activity={{ activity }}">Clear</a>{% endif %}
     </form>
 
     <div class="table-card">
@@ -155,40 +154,11 @@
 <section class="growth-signals" aria-labelledby="growth-signals-title">
     <div class="section-heading">
         <div>
-            <h2 id="growth-signals-title">Growth signals</h2>
-            <p class="sub">Apps gaining reviews or category position between App Store scans.</p>
+            <h2 id="growth-signals-title">Review intelligence</h2>
+            <p class="sub">Find rising apps relative to competitors in the same category and inspect the newest merchant reviews.</p>
         </div>
-        <nav class="aso-tabs growth-tabs" aria-label="Growth signal">
-            <a href="/discover?growth=gems{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if selected_growth == "gems" %} aria-current="page"{% endif %}>Rising gems</a>
-            <a href="/discover?growth=fastest{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if selected_growth == "fastest" %} aria-current="page"{% endif %}>Fastest growers</a>
-            <a href="/discover?growth=contenders{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if selected_growth == "contenders" %} aria-current="page"{% endif %}>New contenders</a>
-        </nav>
+        <a class="button" href="/discover/reviews">Open review intelligence</a>
     </div>
-    <div class="table-card">
-        <table class="growth-table">
-            <thead><tr><th>App</th><th>Reviews</th><th>Last scan</th><th>7 days</th><th>30 days</th><th>Rating</th><th>Best rank</th><th>Rank change</th><th>Age</th></tr></thead>
-            <tbody>
-            {% for row in growth_rows %}
-            <tr>
-                <td><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><span class="sub">{{ row.categories or "/" ~ row.handle }}</span></td>
-                <td>{{ row.reviews if row.reviews is not none else "—" }}</td>
-                <td class="{% if row.previous_delta and row.previous_delta > 0 %}money-up{% elif row.previous_delta and row.previous_delta < 0 %}money-down{% endif %}">{% if row.previous_delta is not none %}{{ signed(row.previous_delta) }}{% else %}—{% endif %}</td>
-                <td class="{% if row.delta7 and row.delta7 > 0 %}money-up{% elif row.delta7 and row.delta7 < 0 %}money-down{% endif %}">{% if row.delta7 is not none %}{{ signed(row.delta7) }}{% else %}—{% endif %}</td>
-                <td class="{% if row.delta30 and row.delta30 > 0 %}money-up{% elif row.delta30 and row.delta30 < 0 %}money-down{% endif %}">{% if row.delta30 is not none %}{{ signed(row.delta30) }}{% else %}—{% endif %}</td>
-                <td>{{ row.rating if row.rating is not none else "—" }}</td>
-                <td>{% if row.best_rank %}#{{ row.best_rank }}{% else %}—{% endif %}</td>
-                <td class="{% if row.rank_change and row.rank_change > 0 %}money-up{% elif row.rank_change and row.rank_change < 0 %}money-down{% endif %}">{% if row.rank_change is not none %}{% if row.rank_change > 0 %}+{% endif %}{{ row.rank_change }}{% else %}—{% endif %}</td>
-                <td>{{ row.age_days }}d</td>
-            </tr>
-            {% else %}
-            <tr><td colspan="9">No measured apps match this signal yet. Next category scan: {{ next_category_scan|local_time("%a %-d %b %H:%M") }} CET/CEST.</td></tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    <p class="discovery-note">
-        Rising gems are non-baseline apps up to 180 days old with 5–250 reviews and at least 3 new reviews since the previous scan. New contenders are first observed in the last 60 days.
-    </p>
 </section>
 
 <section class="category-opportunities" aria-labelledby="category-opportunities-title">

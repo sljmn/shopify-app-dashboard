@@ -496,16 +496,14 @@ def test_discover_is_authenticated_and_shows_new_apps_without_owned_app_scope(db
     assert page.status_code == 200
     assert "App Store activity per week" in page.text
     assert "App Store activity" in page.text
-    assert "Growth signals" in page.text
-    assert "Rising gems" in page.text
-    assert "Fastest growers" in page.text
-    assert "New contenders" in page.text
+    assert "Review intelligence" in page.text
+    assert "Open review intelligence" in page.text
     assert "Fresh App" in page.text
     assert "Newest App" in page.text
     assert "Old App" not in page.text
     assert "https://apps.shopify.com/fresh-app" in page.text
     assert "12 Aug 2026 11:00" in page.text
-    assert page.text.index("App Store activity") < page.text.index("Growth signals")
+    assert page.text.index("App Store activity") < page.text.index("Review intelligence")
     assert page.text.index("Newest App") < page.text.index("Fresh App")
     assert 'aria-current="page"><svg' in page.text
 
@@ -723,6 +721,37 @@ def test_discovered_app_reviews_show_capture_status_filter_and_reply(db):
     assert "Developer reply" in page.text
     assert "Complete" in page.text
     assert 'href="?view=reviews&amp;rating=5" aria-current="page"' in page.text
+
+
+def test_discover_reviews_renders_intelligence_filters_and_feed(db):
+    now = datetime(2026, 8, 12, 12, tzinfo=timezone.utc)
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('review-gem','Review Gem',%s,%s,false) returning id""",
+        (now, now),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_app_observations
+             (discovered_app_id,observed_on,review_count,rating,
+              best_category_rank,observed_at)
+           values (%s,'2026-08-12',12,4.9,4,%s)""", (app_id, now),
+    )
+    db.execute(
+        """insert into discovery_reviews
+             (discovered_app_id,shopify_review_id,rating,reviewed_on,body,
+              source_url,first_captured_at,last_captured_at)
+           values (%s,991,5,'2026-08-12','A genuinely useful review.',
+                   'https://apps.shopify.com/reviews/991',%s,%s)""",
+        (app_id, now, now),
+    )
+    app = create_app(conn_factory=lambda: keep_open(db))
+    page = dashboard_client(app).get("/discover/reviews?preset=all")
+    assert page.status_code == 200
+    assert "Review intelligence" in page.text
+    assert "Review Gem" in page.text
+    assert "A genuinely useful review." in page.text
+    assert "Unexpected growers" in page.text
 
 
 def test_discovery_media_requires_known_digest_and_serves_archive(

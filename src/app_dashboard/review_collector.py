@@ -113,18 +113,39 @@ def parse_review_page(html: str, _handle: str) -> ReviewPage:
     return ReviewPage(tuple(reviews), soup.select_one('a[rel="next"]') is not None)
 
 
-def review_sync_targets(conn) -> list[tuple[int, str]]:
-    """Apps followed now, plus unfinished one-time enrichment backfills."""
+def review_sync_targets(conn, *, limit: int = 250) -> list[tuple[int, str]]:
+    """Return a fair, bounded queue covering every active discovered app."""
+    limit = max(1, min(limit, 2_000))
     return conn.execute(
         """select app.id,app.handle
-           from discovery_watchlist watch
-           join discovered_apps app on app.id=watch.discovered_app_id
+           from discovered_apps app
+           left join discovery_watchlist watch
+             on watch.discovered_app_id=app.id
            left join discovery_review_sync_state state
              on state.discovered_app_id=app.id
-           where watch.active
-              or (watch.follow_source='new_app'
-                  and state.backfill_completed_at is null)
-           order by app.handle"""
+           left join lateral (
+             select latest.review_count-previous.review_count delta
+             from discovery_app_observations latest
+             left join lateral (
+               select review_count from discovery_app_observations older
+               where older.discovered_app_id=app.id
+                 and older.observed_on < latest.observed_on
+               order by older.observed_on desc limit 1
+             ) previous on true
+             where latest.discovered_app_id=app.id
+             order by latest.observed_on desc limit 1
+           ) growth on true
+           where app.delisted_at is null
+           order by
+             state.last_attempt_at asc nulls first,
+             case
+               when watch.active and watch.follow_source='manual' then 0
+               when coalesce(growth.delta,0)>0 then 1
+               else 2
+             end,
+             app.id
+           limit %s""",
+        (limit,),
     ).fetchall()
 
 

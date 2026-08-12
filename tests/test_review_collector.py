@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from app_dashboard.app_store_discovery import SitemapApp, sync_discovered_apps
 from app_dashboard.discovery_watchlist import follow_app, unfollow_app
@@ -137,7 +137,7 @@ def test_review_backfill_resumes_and_upserts_without_duplicates(db):
     assert db.execute("select count(*) from discovery_reviews").fetchone()[0] == 3
 
 
-def test_review_targets_keep_active_apps_and_incomplete_new_app_backfills(db):
+def test_review_targets_rotate_all_active_apps_and_prioritize_followed(db):
     now = datetime(2026, 8, 12, 8, tzinfo=UTC)
     sync_discovered_apps(db, [SitemapApp("baseline", None)], now)
     sync_discovered_apps(db, [
@@ -149,7 +149,7 @@ def test_review_targets_keep_active_apps_and_incomplete_new_app_backfills(db):
     ).fetchone()[0]
     unfollow_app(db, "new-app", now=now)
     targets = review_sync_targets(db)
-    assert {handle for _, handle in targets} == {"baseline", "new-app"}
+    assert [handle for _, handle in targets] == ["baseline", "new-app"]
 
     db.execute(
         """insert into discovery_review_sync_state
@@ -157,11 +157,68 @@ def test_review_targets_keep_active_apps_and_incomplete_new_app_backfills(db):
            values (%s,1,%s)""",
         (new_id, now),
     )
-    assert review_sync_targets(db) == [
-        (db.execute(
-            "select id from discovered_apps where handle='baseline'"
-        ).fetchone()[0], "baseline")
-    ]
+    assert {handle for _, handle in review_sync_targets(db)} == {
+        "baseline", "new-app",
+    }
+
+
+def test_review_targets_are_bounded_and_exclude_delisted_apps(db):
+    now = datetime(2026, 8, 12, 8, tzinfo=UTC)
+    sync_discovered_apps(db, [
+        SitemapApp("alpha", None), SitemapApp("beta", None),
+        SitemapApp("gamma", None),
+    ], now)
+    db.execute(
+        "update discovered_apps set delisted_at=%s where handle='gamma'", (now,)
+    )
+    targets = review_sync_targets(db, limit=1)
+    assert len(targets) == 1
+    assert targets[0][1] in {"alpha", "beta"}
+
+
+def test_review_targets_prioritize_recent_growers(db):
+    now = datetime(2026, 8, 12, 8, tzinfo=UTC)
+    sync_discovered_apps(db, [
+        SitemapApp("quiet", None), SitemapApp("growing", None),
+    ], now)
+    growing_id = db.execute(
+        "select id from discovered_apps where handle='growing'"
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_app_observations
+             (discovered_app_id,observed_on,review_count,best_category_rank,
+              observed_at)
+           values (%s,%s,2,10,%s),(%s,%s,8,5,%s)""",
+        (growing_id, date(2026, 8, 5), now,
+         growing_id, date(2026, 8, 12), now),
+    )
+    assert review_sync_targets(db, limit=1)[0][1] == "growing"
+
+
+def test_review_targets_do_not_starve_an_older_attempt_for_a_grower(db):
+    now = datetime(2026, 8, 12, 8, tzinfo=UTC)
+    sync_discovered_apps(db, [
+        SitemapApp("overdue", None), SitemapApp("growing", None),
+    ], now)
+    ids = dict(db.execute(
+        "select handle,id from discovered_apps"
+    ).fetchall())
+    db.execute(
+        """insert into discovery_review_sync_state
+             (discovered_app_id,last_attempt_at)
+           values (%s,%s),(%s,%s)""",
+        (ids["overdue"], now - timedelta(days=5),
+         ids["growing"], now - timedelta(hours=1)),
+    )
+    db.execute(
+        """insert into discovery_app_observations
+             (discovered_app_id,observed_on,review_count,best_category_rank,
+              observed_at)
+           values (%s,%s,2,10,%s),(%s,%s,8,5,%s)""",
+        (ids["growing"], date(2026, 8, 5), now,
+         ids["growing"], date(2026, 8, 12), now),
+    )
+    assert review_sync_targets(db, limit=1)[0][1] == "overdue"
 
 
 def test_review_report_filters_and_exposes_backfill_state(db):

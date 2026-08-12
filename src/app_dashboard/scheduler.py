@@ -282,7 +282,9 @@ def run_review_collection_job(conn_factory, settings) -> list[dict]:
 
     conn = conn_factory()
     try:
-        targets = review_sync_targets(conn)
+        targets = review_sync_targets(
+            conn, limit=getattr(settings, "review_app_batch_size", 250),
+        )
     finally:
         conn.close()
 
@@ -290,7 +292,12 @@ def run_review_collection_job(conn_factory, settings) -> list[dict]:
         discovered_app_id, handle = item
         worker_conn = conn_factory()
         try:
-            return sync_app_reviews(worker_conn, discovered_app_id, handle)
+            return sync_app_reviews(
+                worker_conn, discovered_app_id, handle,
+                max_backfill_pages=getattr(
+                    settings, "review_backfill_pages_per_run", 1,
+                ),
+            )
         except Exception as exc:
             logger.exception("review sync failed for %s", handle)
             return {"handle": handle, "ok": False, "error": type(exc).__name__}
@@ -464,7 +471,7 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
     )
     scheduler.add_job(
         lambda: run_review_collection_job(conn_factory, settings),
-        "interval", hours=24,
+        "interval", hours=1,
         next_run_time=datetime.now() + timedelta(minutes=75),
         id="watchlist_reviews",
     )

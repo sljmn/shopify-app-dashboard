@@ -24,6 +24,8 @@ There is no global maximum review count. Each app is compared with active compet
 
 An established app is one in the highest review-count band of its own category. An unexpected grower is outside that incumbent band but in the leading category-relative velocity band. A rising gem combines relative velocity, acceleration, rank movement, quality, and category opportunity. The UI exposes the inputs and confidence so the score remains explainable.
 
+Relative labels require at least five measured competitors. Smaller or uncategorized groups remain visible under All apps but do not claim a gem or unexpected-grower classification.
+
 ## Product Surface
 
 `Discover / Reviews` provides two connected views:

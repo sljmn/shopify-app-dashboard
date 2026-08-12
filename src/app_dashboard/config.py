@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     # Public competitor media is content-addressed on a persistent volume.
     watchlist_media_path: Path = Path("/data/mantle-watchlist")
     watchlist_concurrency: int = 2
+    review_app_batch_size: int = 250
+    review_backfill_pages_per_run: int = 1
     b2_key_id: str | None = None
     b2_application_key: str | None = None
     b2_region: str | None = None
@@ -108,6 +110,22 @@ class Settings(BaseSettings):
     def _watchlist_concurrency_is_bounded(cls, value: int) -> int:
         if not 1 <= value <= 4:
             raise ValueError("WATCHLIST_CONCURRENCY must be between 1 and 4")
+        return value
+
+    @field_validator("review_app_batch_size")
+    @classmethod
+    def _review_batch_is_bounded(cls, value: int) -> int:
+        if not 1 <= value <= 2_000:
+            raise ValueError("REVIEW_APP_BATCH_SIZE must be between 1 and 2000")
+        return value
+
+    @field_validator("review_backfill_pages_per_run")
+    @classmethod
+    def _review_pages_are_bounded(cls, value: int) -> int:
+        if not 1 <= value <= 5:
+            raise ValueError(
+                "REVIEW_BACKFILL_PAGES_PER_RUN must be between 1 and 5"
+            )
         return value
 
     @field_validator("research_upload_max_bytes")

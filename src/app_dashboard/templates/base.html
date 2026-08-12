@@ -1085,6 +1085,37 @@
             display: inline-block; max-width: 300px; overflow: hidden;
             text-overflow: ellipsis; white-space: nowrap;
         }
+        .review-coverage { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .review-intelligence-filters {
+            margin: 18px 0 30px; display: grid;
+            grid-template-columns: repeat(5, minmax(150px, 1fr)) auto auto;
+        }
+        .review-signal-section, .latest-review-feed { margin-top: 34px; }
+        .review-signal-heading { align-items: end; gap: 24px; }
+        .review-intelligence-table { min-width: 1240px; }
+        .review-intelligence-table td:first-child,
+        .review-intelligence-table td:nth-child(2) { min-width: 220px; }
+        .confidence-meter {
+            display: block; width: 76px; height: 6px; margin-bottom: 5px;
+            overflow: hidden; border-radius: 3px; background: var(--border);
+        }
+        .confidence-meter i { display: block; height: 100%; background: var(--brand); }
+        .review-feed-grid {
+            display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .review-feed-item {
+            min-width: 0; padding: 18px; border: 1px solid var(--border);
+            border-radius: 8px; background: var(--card);
+        }
+        .review-feed-item header, .review-feed-item footer {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            gap: 16px;
+        }
+        .review-feed-item header .sub { margin: 4px 0 0; }
+        .review-feed-item .review-body { margin: 16px 0; line-height: 1.55; }
+        .review-feed-item footer { color: var(--ink-2); font-size: 13px; }
+        .review-replied { margin: 10px 0 0; color: var(--up); font-size: 12px; }
         @media (max-width: 620px) {
             .discovery-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .discover-focused-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1136,6 +1167,14 @@
                 gap: 12px; flex-direction: initial;
             }
             .watch-movement strong { font-size: 22px; }
+            .review-coverage, .review-intelligence-filters {
+                grid-template-columns: minmax(0, 1fr);
+            }
+            .review-intelligence-filters button,
+            .review-intelligence-filters .ghost { width: 100%; }
+            .review-signal-heading { align-items: stretch; flex-direction: column; }
+            .review-feed-grid { grid-template-columns: minmax(0, 1fr); }
+            .review-feed-item header { flex-direction: column; gap: 8px; }
         }
         .bar-pair { display: grid; gap: 2px; }
         /* Wraps rather than squeezing: the store-deaths list is a run of shop

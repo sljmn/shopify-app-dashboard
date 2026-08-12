@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<header>
+    <p class="sub"><a href="/discover">Discover</a> / Reviews</p>
+    <h1>Review intelligence</h1>
+    <p class="sub">New merchant reviews and category-relative growth signals across the Shopify App Store.</p>
+</header>
+{% include "_discover_nav.html" %}
+
+<div class="cards discovery-metrics review-coverage">
+    <div class="card stat"><div class="label">Reviews captured</div><div class="num">{{ coverage.reviews }}</div></div>
+    <div class="card stat"><div class="label">Apps checked</div><div class="num">{{ coverage.checked }}</div><div class="sub">of {{ coverage.apps }} active apps</div></div>
+    <div class="card stat"><div class="label">History complete</div><div class="num">{{ coverage.complete }}</div><div class="sub">backfills finished</div></div>
+    <div class="card stat"><div class="label">Period</div><div class="num"><small>{{ period }} days</small></div></div>
+</div>
+
+<form class="filters review-intelligence-filters" method="get" action="/discover/reviews">
+    <select name="period" aria-label="Review period">
+        {% for days in [7,30,90] %}<option value="{{ days }}"{% if period == days %} selected{% endif %}>Last {{ days }} days</option>{% endfor %}
+    </select>
+    <select name="category" aria-label="Category">
+        <option value="">All categories</option>
+        {% for slug, name, count in categories %}<option value="{{ slug }}"{% if category == slug %} selected{% endif %}>{{ name }} ({{ count }})</option>{% endfor %}
+    </select>
+    <select name="rating" aria-label="Review feed rating">
+        <option value="">All review ratings</option>
+        {% for stars in [5,4,3,2,1] %}<option value="{{ stars }}"{% if rating == stars %} selected{% endif %}>{{ stars }} stars</option>{% endfor %}
+    </select>
+    <select name="pricing" aria-label="Pricing model">
+        <option value="">All pricing</option>
+        <option value="free"{% if pricing_filter == "free" %} selected{% endif %}>Free</option>
+        <option value="paid"{% if pricing_filter == "paid" %} selected{% endif %}>Paid</option>
+        <option value="free_paid"{% if pricing_filter == "free_paid" %} selected{% endif %}>Free + paid</option>
+        <option value="unknown"{% if pricing_filter == "unknown" %} selected{% endif %}>Unknown</option>
+    </select>
+    <select name="bfs" aria-label="Built for Shopify status">
+        <option value="">All BFS statuses</option>
+        <option value="bfs"{% if bfs_filter == "bfs" %} selected{% endif %}>Built for Shopify</option>
+        <option value="not_bfs"{% if bfs_filter == "not_bfs" %} selected{% endif %}>Not BFS</option>
+    </select>
+    <input type="hidden" name="preset" value="{{ preset }}">
+    <button type="submit">Filter</button>
+    {% if category or rating or pricing_filter or bfs_filter or period != 30 %}<a class="ghost" href="/discover/reviews?preset={{ preset }}">Clear</a>{% endif %}
+</form>
+
+<section class="review-signal-section" aria-labelledby="review-signals-title">
+    <div class="section-heading review-signal-heading">
+        <div><h2 id="review-signals-title">Apps gaining traction</h2><p class="sub">Compared with competitors in the same category. Scores show signal strength, not estimated revenue.</p></div>
+        <nav class="aso-tabs growth-tabs" aria-label="Review growth preset">
+            {% for key, label in [("gems","Rising gems"),("unexpected","Unexpected growers"),("established","Established"),("all","All apps")] %}
+            <a href="/discover/reviews?preset={{ key }}&amp;period={{ period }}{% if category %}&amp;category={{ category|urlencode }}{% endif %}"{% if preset == key %} aria-current="page"{% endif %}>{{ label }}</a>
+            {% endfor %}
+        </nav>
+    </div>
+    <div class="table-card">
+        <table class="review-intelligence-table">
+            <thead><tr><th>App</th><th>Category context</th><th>Total</th><th>New</th><th>Previous</th><th>Acceleration</th><th>Velocity</th><th>Rating</th><th>Gem score</th><th>Confidence</th></tr></thead>
+            <tbody>
+            {% for row in rows %}<tr>
+                <td data-label="App"><a href="/discover/apps/{{ row.handle|urlencode }}?view=reviews"><strong>{{ row.name }}</strong></a><br><span class="sub">/{{ row.handle }}</span>{% if row.established %}<br><span class="status-badge">Established</span>{% elif row.unexpected %}<br><span class="status-badge installed">Unexpected grower</span>{% endif %}</td>
+                <td data-label="Category"><a href="/discover/reviews?category={{ row.category_slug|urlencode }}&amp;preset={{ preset }}">{{ row.category_name }}</a><br><span class="sub">{{ row.category_apps }} competitors · median {{ row.category_median_reviews }}<br>{{ row.active_grower_share }}% growing · top 10 hold {{ row.top_ten_concentration }}%</span></td>
+                <td data-label="Total">{{ row.reviews if row.reviews is not none else "—" }}<br><span class="sub">P{{ row.review_percentile }}</span></td>
+                <td data-label="New" class="money-up">+{{ row.recent }}</td>
+                <td data-label="Previous">{{ row.previous }}</td>
+                <td data-label="Acceleration" class="{% if row.acceleration > 0 %}money-up{% elif row.acceleration < 0 %}money-down{% endif %}">{{ signed(row.acceleration) }}</td>
+                <td data-label="Velocity">P{{ row.velocity_percentile }}</td>
+                <td data-label="Rating">{{ row.rating if row.rating is not none else "—" }}</td>
+                <td data-label="Gem score"><strong>{{ row.gem_score }}</strong>/100</td>
+                <td data-label="Confidence"><span class="confidence-meter"><i style="width: {{ row.confidence }}%"></i></span><span class="sub">{{ row.confidence }}%</span></td>
+            </tr>{% else %}<tr><td colspan="10">No apps match this category-relative signal yet. Review coverage grows automatically every hour.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if pages > 1 %}<div class="pager"><span class="sub">{{ total }} apps</span><span class="pager-links">{% if page > 1 %}<a href="/discover/reviews?{{ filter_qs }}&amp;page={{ page - 1 }}">Previous</a>{% endif %}<span class="sub">Page {{ page }} of {{ pages }}</span>{% if page < pages %}<a href="/discover/reviews?{{ filter_qs }}&amp;page={{ page + 1 }}">Next</a>{% endif %}</span></div>{% endif %}
+</section>
+
+<section class="latest-review-feed" aria-labelledby="latest-reviews-title">
+    <div class="section-heading"><div><h2 id="latest-reviews-title">Latest reviews</h2><p class="sub">The newest captured merchant feedback for the selected period and category.</p></div></div>
+    <div class="review-feed-grid">
+    {% for review in feed %}<article class="review-feed-item">
+        <header><div><a href="/discover/apps/{{ review.handle|urlencode }}?view=reviews"><strong>{{ review.app_name }}</strong></a><p class="sub">{{ review.merchant or "Shopify merchant" }}{% if review.country %} · {{ review.country }}{% endif %}</p></div><span class="review-stars" aria-label="{{ review.rating }} out of 5 stars">{{ "★" * review.rating }}{{ "☆" * (5 - review.rating) }}</span></header>
+        <p class="review-body">{{ review.body }}</p>
+        <footer><time datetime="{{ review.reviewed_on.isoformat() }}">{{ review.reviewed_on.strftime("%-d %b %Y") }}</time><a href="{{ review.source_url }}" target="_blank" rel="noopener">View on Shopify</a></footer>
+        {% if review.reply %}<p class="review-replied">Developer replied</p>{% endif %}
+    </article>{% else %}<div class="empty-state"><h2>No reviews captured for these filters</h2><p>The rotating collector continues checking every active app.</p></div>{% endfor %}
+    </div>
+</section>
+{% endblock %}

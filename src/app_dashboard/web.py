@@ -47,7 +47,6 @@ from app_dashboard.app_store_discovery import (
     category_dashboard,
     category_opportunities,
     discovery_report,
-    growth_signals,
     search_app_catalog,
 )
 from app_dashboard.discovery_watchlist import (
@@ -91,6 +90,7 @@ from app_dashboard.research import (
     update_list as update_research_list,
 )
 from app_dashboard.review_collector import review_report
+from app_dashboard.review_intelligence import review_intelligence_report
 from app_dashboard.rank_collector import sync_keyword_rankings
 from app_dashboard.rank_tracker import (
     LOCALES as RANK_LOCALES,
@@ -1393,7 +1393,6 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         catalog_category: str = "",
         catalog_bfs: str = "",
         catalog_page: int = 1,
-        growth: str = "gems",
         activity: str = "new",
         bfs: str = "",
         page: int = 1,
@@ -1401,7 +1400,6 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         category_page: int = 1,
         user: str = Depends(verify_creds),
     ):
-        growth = growth if growth in {"gems", "fastest", "contenders"} else "gems"
         signal = signal if signal in {
             "all", "new", "reviews", "fastest", "listing", "delisted",
         } else "all"
@@ -1419,7 +1417,6 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                     page=category_page,
                 )
                 report = {}
-                signals = {"gems": [], "fastest": [], "contenders": []}
                 opportunities = []
                 catalog = {"rows": [], "total": 0, "page": 1, "pages": 1}
                 activity = (
@@ -1433,7 +1430,6 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                     conn, search=q, page=page, activity=activity, bfs=bfs,
                 )
                 activity = report["activity"]
-                signals = growth_signals(conn)
                 opportunities = category_opportunities(conn)
                 catalog = search_app_catalog(
                     conn, search=catalog_q, category=catalog_category,
@@ -1442,7 +1438,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         finally:
             conn.close()
         query = {
-            "q": q.strip(), "category": category.strip(), "growth": growth,
+            "q": q.strip(), "category": category.strip(),
             "activity": activity,
             "bfs": bfs,
         }
@@ -1472,8 +1468,6 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "selected_category": category.strip(),
                 "selected_bfs": bfs,
                 "selected_signal": signal,
-                "selected_growth": growth,
-                "growth_rows": signals[growth],
                 "opportunities": opportunities,
                 "catalog": catalog,
                 "catalog_query": catalog_q.strip(),
@@ -1546,6 +1540,39 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         return _focused_discovery_response(
             request, user, activity="updated", q=q, category=category, bfs=bfs,
             pricing=pricing, period=period, page=page,
+        )
+
+    @app.get("/discover/reviews")
+    def discover_reviews(
+        request: Request, period: int = 30, category: str = "",
+        preset: str = "gems", rating: int | None = None,
+        pricing: str = "", bfs: str = "", page: int = 1,
+        user: str = Depends(verify_creds),
+    ):
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+            report = review_intelligence_report(
+                conn, period=period, category=category, preset=preset,
+                rating=rating, pricing=pricing, bfs=bfs, page=page,
+            )
+        finally:
+            conn.close()
+        values = {
+            "period": report["period"], "category": report["category"],
+            "preset": report["preset"], "rating": report["rating"] or "",
+            "pricing": report["pricing_filter"],
+            "bfs": report["bfs_filter"],
+        }
+        return templates.TemplateResponse(
+            request, "discover_reviews.html", {
+                **page_context(request, user, "discover", None, apps),
+                **report,
+                "filter_qs": urlencode({
+                    key: value for key, value in values.items() if value
+                }),
+                "discover_view": "reviews",
+            },
         )
 
     @app.post("/discover/apps/{handle}/follow")

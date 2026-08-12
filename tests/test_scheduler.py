@@ -210,7 +210,9 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, t
     watchlist = [kw for trigger, kw in fake.jobs if kw.get("id") == "watchlist_listings"]
     assert len(watchlist) == 1 and watchlist[0]["hours"] == 24
     reviews = [kw for trigger, kw in fake.jobs if kw.get("id") == "watchlist_reviews"]
-    assert len(reviews) == 1 and reviews[0]["hours"] == 24
+    assert len(reviews) == 1 and reviews[0]["hours"] == 1
+    listings = [kw for trigger, kw in fake.jobs if kw.get("id") == "aso_listings"]
+    assert len(listings) == 1 and listings[0]["hours"] == 24
     rank_tracker = [kw for trigger, kw in fake.jobs if kw.get("id") == "aso_rank_tracker"]
     assert len(rank_tracker) == 1
     assert rank_tracker[0]["hour"] == 6 and rank_tracker[0]["minute"] == 15
@@ -304,10 +306,10 @@ def test_review_job_isolates_apps_and_closes_connections(monkeypatch):
     connections = iter([index, alpha, beta])
     monkeypatch.setattr(
         "app_dashboard.review_collector.review_sync_targets",
-        lambda conn: [(1, "alpha"), (2, "beta")],
+        lambda conn, **kwargs: [(1, "alpha"), (2, "beta")],
     )
 
-    def sync(conn, app_id, handle):
+    def sync(conn, app_id, handle, **kwargs):
         if handle == "beta":
             raise RuntimeError("failed")
         return {"handle": handle, "ok": True, "captured": 3}
