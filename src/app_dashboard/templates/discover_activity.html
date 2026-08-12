@@ -39,7 +39,7 @@
 
 <div class="table-card focused-discover-table">
     <table class="discover-table activity-table">
-        <thead><tr><th>App</th><th>Observed</th>{% if discover_view == "updates" %}<th>Change</th>{% endif %}<th>Category</th><th>BFS</th><th>Pricing</th><th>Developer</th><th>Reviews</th><th></th></tr></thead>
+        <thead><tr><th>App</th><th>Observed</th>{% if discover_view == "updates" %}<th>Change</th>{% endif %}<th>Category</th><th>BFS</th><th>Pricing</th><th>Developer</th><th>Reviews</th><th class="discover-actions">Actions</th></tr></thead>
         <tbody>
         {% for row in rows %}
         <tr>
@@ -51,7 +51,7 @@
             <td><strong>{{ row.pricing.label }}</strong>{% if row.pricing.monthly %}<br><span class="sub">from ${{ row.pricing.monthly[0] }}/mo</span>{% elif row.pricing.annual %}<br><span class="sub">from ${{ row.pricing.annual[0] }}/yr</span>{% endif %}</td>
             <td>{{ row.developer or "—" }}{% if row.developer_app_count %}<br><span class="sub">{{ row.developer_app_count }} indexed app{% if row.developer_app_count != 1 %}s{% endif %}</span>{% endif %}</td>
             <td>{{ row.reviews if row.reviews is not none else "—" }}</td>
-            <td><a href="/discover/apps/{{ row.handle|urlencode }}?view=research">Research</a><br><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
+            <td class="discover-actions"><div class="discover-row-actions"><a href="/discover/apps/{{ row.handle|urlencode }}?view=research">Research</a><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></div></td>
         </tr>
         {% else %}<tr><td colspan="{% if discover_view == 'updates' %}9{% else %}8{% endif %}">No {% if discover_view == "new" %}new Shopify launches{% else %}listing updates{% endif %} match these filters.</td></tr>{% endfor %}
         </tbody>

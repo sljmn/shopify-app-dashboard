@@ -914,6 +914,30 @@
         .focused-discover-filters input[type="search"] { min-width: 240px; }
         .focused-discover-table { margin-top: 14px; }
         .focused-discover-table .activity-table { min-width: 1180px; }
+        .discover-actions {
+            position: sticky; right: 0; z-index: 2; min-width: 184px;
+            background: var(--card);
+            box-shadow: -12px 0 18px -18px color-mix(in srgb, var(--ink) 55%, transparent);
+        }
+        th.discover-actions { z-index: 3; }
+        tbody tr:hover .discover-actions { background: var(--row-hover); }
+        .discover-row-actions {
+            display: flex; align-items: center; justify-content: flex-end;
+            gap: 7px; white-space: nowrap;
+        }
+        main .discover-row-actions a {
+            display: inline-flex; align-items: center; min-height: 32px;
+            padding: 6px 10px; border: 1px solid var(--border); border-radius: 7px;
+            background: var(--card); color: var(--ink-2); font-size: 12px;
+            font-weight: 600; text-decoration: none;
+        }
+        main .discover-row-actions a:last-child {
+            border-color: color-mix(in srgb, var(--brand) 34%, var(--border));
+            background: var(--brand-soft); color: var(--brand);
+        }
+        main .discover-row-actions a:hover {
+            border-color: var(--brand); color: var(--brand); text-decoration: none;
+        }
         .change-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
         .change-badges span {
             display: inline-flex; padding: 3px 7px; border-radius: 999px;
@@ -1063,6 +1087,9 @@
             .discover-focused-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .discover-view-tabs { width: 100%; overflow-x: auto; }
             .discover-view-tabs a { white-space: nowrap; }
+            .discover-actions { min-width: 154px; }
+            .discover-row-actions { gap: 5px; }
+            main .discover-row-actions a { padding-inline: 8px; }
             .discovery-metrics .card { min-width: 0; padding: 15px; }
             .discovery-metrics .stat .num { font-size: 24px; overflow-wrap: anywhere; }
             .review-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

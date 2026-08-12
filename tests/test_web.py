@@ -229,6 +229,8 @@ def test_discover_has_focused_launch_and_listing_update_views(db):
     assert "New Shopify launches" in launches.text
     assert "New Launch" in launches.text
     assert "Old Baseline" not in launches.text
+    assert 'class="discover-actions"' in launches.text
+    assert 'class="discover-row-actions"' in launches.text
     assert updates.status_code == 200
     assert "Listing updates" in updates.text
     assert "Pricing" in updates.text
