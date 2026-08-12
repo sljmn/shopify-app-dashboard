@@ -42,6 +42,12 @@ class AppSpec:
     ga4_property_id: str | None
     ga4_credentials_env: str | None
     ga4_credentials_json: str | None
+    review_prompt_enabled: bool = False
+    review_trigger_event: str | None = None
+    review_min_success_count: int = 1
+    review_min_install_hours: int = 24
+    review_retry_days: int = 90
+    review_annual_cap: int = 3
     active: bool = True
 
 
@@ -211,6 +217,35 @@ def load_catalog(
                     f"{app_prefix}.ga4 requires both property_id and credentials_env"
                 )
 
+            review = raw_app.get("review_prompt") or {}
+            if not isinstance(review, dict):
+                raise CatalogError(f"{app_prefix}.review_prompt must be a mapping")
+            review_enabled = review.get("enabled", False)
+            if not isinstance(review_enabled, bool):
+                raise CatalogError(f"{app_prefix}.review_prompt.enabled must be true or false")
+            review_trigger = _optional_text(
+                review.get("trigger_event"), f"{app_prefix}.review_prompt.trigger_event"
+            )
+            if review_trigger is not None and review_trigger not in event_types:
+                raise CatalogError(
+                    f"{app_prefix}.review_prompt.trigger_event is not present in usage.event_types"
+                )
+            def review_int(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
+                value = review.get(name, default)
+                if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                    raise CatalogError(f"{app_prefix}.review_prompt.{name} is invalid")
+                if maximum is not None and value > maximum:
+                    raise CatalogError(f"{app_prefix}.review_prompt.{name} is invalid")
+                return value
+            review_min_success = review_int("min_success_count", 1, 1)
+            review_install_hours = review_int("min_install_hours", 24, 24)
+            review_retry_days = review_int("retry_days", 90, 1)
+            review_annual_cap = review_int("annual_cap", 3, 1, 3)
+            if review_enabled and (not usage_token_env or not review_trigger):
+                raise CatalogError(
+                    f"{app_prefix}.review_prompt requires usage.token_env and trigger_event"
+                )
+
             specs.append(
                 AppSpec(
                     slug=slug,
@@ -244,6 +279,12 @@ def load_catalog(
                         environ,
                         f"{app_prefix}.ga4.credentials_env",
                     ),
+                    review_prompt_enabled=review_enabled,
+                    review_trigger_event=review_trigger,
+                    review_min_success_count=review_min_success,
+                    review_min_install_hours=review_install_hours,
+                    review_retry_days=review_retry_days,
+                    review_annual_cap=review_annual_cap,
                     active=active,
                 )
             )
@@ -304,9 +345,12 @@ def reconcile_catalog(
                     organization_id, partner_app_id, slug, name, listing_url,
                     listing_locales, annual_plan_amounts, usage_token_env, usage_event_types,
                     usage_activation_event, usage_live_event, ga4_property_id,
-                    ga4_credentials_env, active
+                    ga4_credentials_env, review_prompt_enabled,
+                    review_trigger_event, review_min_success_count,
+                    review_min_install_hours, review_retry_days, review_annual_cap, active
                 )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s)
                 on conflict (partner_app_id) do update set
                     organization_id = excluded.organization_id,
                     slug = excluded.slug,
@@ -320,6 +364,12 @@ def reconcile_catalog(
                     usage_live_event = excluded.usage_live_event,
                     ga4_property_id = excluded.ga4_property_id,
                     ga4_credentials_env = excluded.ga4_credentials_env,
+                    review_prompt_enabled = excluded.review_prompt_enabled,
+                    review_trigger_event = excluded.review_trigger_event,
+                    review_min_success_count = excluded.review_min_success_count,
+                    review_min_install_hours = excluded.review_min_install_hours,
+                    review_retry_days = excluded.review_retry_days,
+                    review_annual_cap = excluded.review_annual_cap,
                     active = excluded.active,
                     updated_at = now()
                 """,
@@ -337,6 +387,12 @@ def reconcile_catalog(
                     app.usage_live_event,
                     app.ga4_property_id,
                     app.ga4_credentials_env,
+                    app.review_prompt_enabled,
+                    app.review_trigger_event,
+                    app.review_min_success_count,
+                    app.review_min_install_hours,
+                    app.review_retry_days,
+                    app.review_annual_cap,
                     app.active,
                 ),
             )
@@ -381,7 +437,10 @@ def list_apps(
             o.partner_org_id, o.name, o.token_env, a.annual_plan_amounts,
             a.listing_url, a.listing_locales, a.usage_token_env, a.usage_event_types,
             a.usage_activation_event, a.usage_live_event, a.ga4_property_id,
-            a.ga4_credentials_env, a.active
+            a.ga4_credentials_env, a.review_prompt_enabled,
+            a.review_trigger_event, a.review_min_success_count,
+            a.review_min_install_hours, a.review_retry_days, a.review_annual_cap,
+            a.active
         from apps a
         join organizations o on o.id = a.organization_id
         {where}
@@ -428,7 +487,13 @@ def list_apps(
                     if ga4_credentials_env and environ.get(ga4_credentials_env, "").strip()
                     else None
                 ),
-                active=row[17],
+                review_prompt_enabled=row[17],
+                review_trigger_event=row[18],
+                review_min_success_count=row[19],
+                review_min_install_hours=row[20],
+                review_retry_days=row[21],
+                review_annual_cap=row[22],
+                active=row[23],
             )
         )
     return result

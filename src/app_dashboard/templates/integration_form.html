@@ -26,11 +26,32 @@
         <label><span>GA4 property ID</span><input name="ga4_property_id" value="{{ values.ga4_property_id or '' }}" inputmode="numeric"></label>
         <label><span>GA4 credentials ENV</span><input name="ga4_credentials_env" value="{{ values.ga4_credentials_env or '' }}" autocomplete="off"></label>
         <label><span>Annual plan amounts</span><input name="annual_plan_amounts" value="{{ values.annual_plan_amounts|join(', ') if values.annual_plan_amounts is not string else values.annual_plan_amounts }}" placeholder="60.00, 190.00"><small>Full yearly charge amounts, not monthly equivalents.</small></label>
+        <label><span>Usage token ENV</span><input name="usage_token_env" value="{{ values.usage_token_env or '' }}" autocomplete="off"><small>Shared server-to-server secret; its value stays in Dokku.</small></label>
+        <label><span>Usage event types</span><input name="usage_event_types" value="{{ values.usage_event_types|join(', ') if values.usage_event_types is not string else values.usage_event_types }}" placeholder="book_import_succeeded"><small>Comma-separated allowlist sent by the app.</small></label>
         <label><span>App status</span><select name="lifecycle_status">{% for item in lifecycle_statuses %}<option value="{{ item }}" {% if values.lifecycle_status == item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select></label>
         <label><span>Shopify listing status</span><select name="listing_status">{% for item in listing_statuses %}<option value="{{ item }}" {% if values.listing_status == item %}selected{% endif %}>{{ item|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
         <label><span>Measurement Protocol</span><select name="tracking_status">{% for item in tracking_statuses %}<option value="{{ item }}" {% if values.tracking_status == item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select></label>
     </div>
     <label><span>Listing status note</span><textarea name="listing_status_reason" rows="3">{{ values.listing_status_reason or '' }}</textarea></label>
+    <fieldset class="manage-fieldset">
+        <legend>Review collection</legend>
+        <label class="checkbox-row"><input type="checkbox" name="review_prompt_enabled" value="1" {% if values.review_prompt_enabled %}checked{% endif %}><span>Enable native Shopify review prompts</span></label>
+        <div class="form-grid">
+            <label><span>Success event</span><input name="review_trigger_event" value="{{ values.review_trigger_event or '' }}" placeholder="book_import_succeeded"></label>
+            <label><span>Successful events required</span><input type="number" min="1" name="review_min_success_count" value="{{ values.review_min_success_count or 1 }}"></label>
+            <label><span>Minimum hours installed</span><input type="number" min="24" name="review_min_install_hours" value="{{ values.review_min_install_hours or 24 }}"></label>
+            <label><span>Retry after cancellation (days)</span><input type="number" min="1" name="review_retry_days" value="{{ values.review_retry_days or 90 }}"></label>
+            <label><span>Maximum prompts per year</span><input type="number" min="1" max="3" name="review_annual_cap" value="{{ values.review_annual_cap or 3 }}"></label>
+        </div>
+        {% if review_summary %}
+        <div class="metric-strip">
+            <span><b>{{ review_summary.shown }}</b> shown</span>
+            <span><b>{{ review_summary.temporarily_declined }}</b> retry later</span>
+            <span><b>{{ review_summary.stopped }}</b> stopped</span>
+            <span><b>{{ review_summary.scheduled }}</b> pending</span>
+        </div>
+        {% endif %}
+    </fieldset>
     {% endif %}
     <div class="form-actions"><button type="submit">Save</button></div>
 </form>

@@ -76,8 +76,10 @@ def test_every_app_owned_table_has_a_required_app_id(db):
         "transactions", "sync_state", "usage_events", "ga4_daily",
         "annotations", "tracking_events", "active_subscriptions",
         "aso_source_capabilities", "aso_keyword_daily", "aso_install_sources",
-        "aso_listing_snapshots", "aso_listing_changes", "payout_earnings",
-    }
+            "aso_listing_snapshots", "aso_listing_changes", "payout_earnings",
+            "merchant_contacts", "review_prompt_decisions",
+            "review_prompt_suppressions",
+        }
     rows = db.execute(
         """
         select table_name, is_nullable

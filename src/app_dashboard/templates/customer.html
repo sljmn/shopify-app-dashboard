@@ -19,6 +19,10 @@
 {% set payments = installation.payments %}
 {% set usage = installation.usage %}
 {% set attribution = installation.attribution %}
+{% set shop_contact = installation.shop_contact %}
+{% set staff_contacts = installation.staff_contacts %}
+{% set review_attempts = installation.review_attempts %}
+{% set review_suppression = installation.review_suppression %}
 <section class="app-installation">
 <h2>{{ app.name }}</h2>
 <p class="sub">
@@ -91,6 +95,42 @@
     </dl>
     {% else %}<p class="sub">No attribution found in the connected GA4 property.</p>{% endif %}
 </section>
+
+<div class="card merchant-people">
+    <div class="section-heading"><div><h2>Merchant contacts</h2><p class="sub">Shop contact and every Shopify staff session are stored separately.</p></div></div>
+    {% if shop_contact %}
+    <div class="contact-primary"><strong>Shop contact</strong><span>{{ shop_contact.email or "No verified email" }}</span><small class="sub">Last seen {{ shop_contact.last_seen_at|local_time("%b %-d, %Y %H:%M") }}</small></div>
+    {% endif %}
+    {% if staff_contacts %}
+    <div class="contact-grid">
+        {% for person in staff_contacts %}
+        <div class="contact-person">
+            <strong>{{ (person.first_name or '') ~ ' ' ~ (person.last_name or '') or 'Shopify staff member' }}</strong>
+            <span>{{ person.email or "No verified email" }}</span>
+            <span class="sub">{% if person.account_owner %}Owner{% elif person.collaborator %}Collaborator{% else %}{{ person.access_level or "Staff" }}{% endif %}{% if person.locale %} · {{ person.locale }}{% endif %}</span>
+            <small class="sub">First {{ person.first_seen_at|local_time("%b %-d, %Y") }} · last {{ person.last_seen_at|local_time("%b %-d, %Y %H:%M") }}</small>
+        </div>
+        {% endfor %}
+    </div>
+    {% elif not shop_contact %}<p class="sub">No authenticated app session has reported contact data yet.</p>{% endif %}
+</div>
+
+<div class="card review-operations">
+    <div class="section-heading">
+        <div><h2>Review prompt</h2><p class="sub">Native Shopify prompt history. “Shown” means the modal opened, not that a review was posted.</p></div>
+        <div class="inline-actions">
+            {% if review_suppression %}
+            <form method="post" action="/customers/{{ shop.shop_gid|urlencode }}/review-reset"><input type="hidden" name="app_id" value="{{ app.id }}"><input type="hidden" name="app_slug" value="{{ app.slug }}"><button class="secondary" type="submit">Allow prompts again</button></form>
+            {% else %}
+            <form method="post" action="/customers/{{ shop.shop_gid|urlencode }}/review-suppression"><input type="hidden" name="app_id" value="{{ app.id }}"><input type="hidden" name="app_slug" value="{{ app.slug }}"><button class="secondary" type="submit">Never ask</button></form>
+            {% endif %}
+        </div>
+    </div>
+    {% if review_suppression %}<p class="notice">Suppressed {{ review_suppression.at|local_time("%b %-d, %Y") }} by {{ review_suppression.by }}.</p>{% endif %}
+    {% if review_attempts %}
+    <div class="table-card"><table><thead><tr><th>Issued</th><th>Result</th><th>Shopify code</th><th>Next eligible</th></tr></thead><tbody>{% for attempt in review_attempts %}<tr><td>{{ attempt.issued_at|local_time("%b %-d, %Y %H:%M") }}</td><td>{{ attempt.outcome|replace('_', ' ')|title }}</td><td>{{ attempt.code or "—" }}</td><td>{{ attempt.next_eligible_at|local_time("%b %-d, %Y") if attempt.next_eligible_at else "—" }}</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="sub">No review prompt has been issued.</p>{% endif %}
+</div>
 
 <div class="card">
     <h2 id="timeline">Everything that happened</h2>

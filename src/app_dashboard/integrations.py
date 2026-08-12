@@ -146,7 +146,9 @@ def get_app(conn: psycopg.Connection, app_id: int) -> dict:
                usage_event_types, usage_activation_event, usage_live_event,
                ga4_property_id, ga4_credentials_env, lifecycle_status,
                listing_status, listing_status_reason, tracking_status,
-               active, archived_at
+               active, archived_at, review_prompt_enabled, review_trigger_event,
+               review_min_success_count, review_min_install_hours,
+               review_retry_days, review_annual_cap
         from apps where id=%s
         """,
         (app_id,),
@@ -160,6 +162,9 @@ def get_app(conn: psycopg.Connection, app_id: int) -> dict:
         "ga4_property_id", "ga4_credentials_env", "lifecycle_status",
         "listing_status", "listing_status_reason", "tracking_status", "active",
         "archived_at",
+        "review_prompt_enabled", "review_trigger_event",
+        "review_min_success_count", "review_min_install_hours",
+        "review_retry_days", "review_annual_cap",
     )
     return dict(zip(keys, row, strict=True))
 
@@ -236,6 +241,26 @@ def save_app(
     if ga4_credentials_env and not ENV_RE.fullmatch(ga4_credentials_env):
         raise IntegrationError("GA4 credentials ENV must use uppercase letters, numbers, and underscores")
     listing_reason = (data.get("listing_status_reason") or "").strip() or None
+    review_enabled = data.get("review_prompt_enabled") in {"1", "true", "on", "yes"}
+    review_trigger = (data.get("review_trigger_event") or "").strip() or None
+    usage_token_env = (data.get("usage_token_env") or "").strip() or None
+    usage_events = [item.strip() for item in (data.get("usage_event_types") or "").split(",") if item.strip()]
+    def positive_int(field: str, default: int, minimum: int, maximum: int | None = None) -> int:
+        try:
+            value = int(data.get(field) or default)
+        except ValueError:
+            raise IntegrationError(f"{field.replace('_', ' ').title()} must be a number") from None
+        if value < minimum or (maximum is not None and value > maximum):
+            raise IntegrationError(f"{field.replace('_', ' ').title()} is outside its allowed range")
+        return value
+    review_min_success = positive_int("review_min_success_count", 1, 1)
+    review_install_hours = positive_int("review_min_install_hours", 24, 24)
+    review_retry_days = positive_int("review_retry_days", 90, 1)
+    review_annual_cap = positive_int("review_annual_cap", 3, 1, 3)
+    if review_trigger and review_trigger not in usage_events:
+        raise IntegrationError("Review trigger event must be one of the usage event types")
+    if review_enabled and (not usage_token_env or not review_trigger):
+        raise IntegrationError("Review collection requires a usage token ENV and trigger event")
 
     if status in {"ready", "active"}:
         org = conn.execute(
@@ -258,7 +283,9 @@ def save_app(
     values = (
         organization_id, partner_app_id, slug, name, listing_url, Jsonb(locales),
         Jsonb(annual), ga4_property_id, ga4_credentials_env, status, listing_status,
-        listing_reason, tracking_status, status == "active",
+        listing_reason, tracking_status, status == "active", usage_token_env,
+        Jsonb(usage_events), review_enabled, review_trigger, review_min_success,
+        review_install_hours, review_retry_days, review_annual_cap,
     )
     try:
         if app_id is None:
@@ -267,8 +294,11 @@ def save_app(
                     organization_id, partner_app_id, slug, name, listing_url,
                     listing_locales, annual_plan_amounts, ga4_property_id,
                     ga4_credentials_env, lifecycle_status, listing_status,
-                    listing_status_reason, tracking_status, active)
-                   values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    listing_status_reason, tracking_status, active,
+                    usage_token_env, usage_event_types, review_prompt_enabled,
+                    review_trigger_event, review_min_success_count,
+                    review_min_install_hours, review_retry_days, review_annual_cap)
+                   values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    returning id""", values,
             ).fetchone()[0]
         changed = conn.execute(
@@ -276,7 +306,11 @@ def save_app(
                name=%s, listing_url=%s, listing_locales=%s,
                annual_plan_amounts=%s, ga4_property_id=%s, ga4_credentials_env=%s,
                lifecycle_status=%s, listing_status=%s, listing_status_reason=%s,
-               tracking_status=%s, active=%s, updated_at=now()
+               tracking_status=%s, active=%s, updated_at=now(),
+               usage_token_env=%s, usage_event_types=%s,
+               review_prompt_enabled=%s, review_trigger_event=%s,
+               review_min_success_count=%s, review_min_install_hours=%s,
+               review_retry_days=%s, review_annual_cap=%s
                where id=%s and archived_at is null returning id""",
             values + (app_id,),
         ).fetchone()

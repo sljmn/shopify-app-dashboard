@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import logging
 import os
 import secrets
@@ -8,14 +9,14 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from math import ceil
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 # Uvicorn only configures its own loggers; without this, app INFO lines
 # (run_sync summaries, Slack skips) never reach the host's logs.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
@@ -96,6 +97,15 @@ from app_dashboard.research import (
 )
 from app_dashboard.review_collector import review_report
 from app_dashboard.review_intelligence import review_intelligence_report
+from app_dashboard.review_collection import (
+    app_summary as review_app_summary,
+    issue_review_decision,
+    parse_contact,
+    parse_outcome,
+    record_outcome,
+    redact_contacts,
+    upsert_contact,
+)
 from app_dashboard.rank_collector import sync_keyword_rankings
 from app_dashboard.rank_tracker import (
     LOCALES as RANK_LOCALES,
@@ -196,6 +206,7 @@ from app_dashboard.stats import (
 from app_dashboard.trials import current_trials
 from app_dashboard.usage import (
     MAX_BODY_BYTES,
+    SHOP_GID_RE,
     UsageError,
     activation_cohorts,
     at_risk_shops,
@@ -587,10 +598,106 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             raise HTTPException(status_code=exc.status, detail=exc.message) from None
         conn = conn_factory()
         try:
-            result = ingest_usage_events(conn, selected_app.id, events)
+            result = ingest_usage_events(
+                conn, selected_app.id, events, include_stored_events=True
+            )
+            stored_events = result.pop("_stored_events")
+            decision = None
+            for event in stored_events:
+                decision = issue_review_decision(
+                    conn, selected_app, shop_gid=event["shop_gid"],
+                    event_id=event["event_id"], event_type=event["event_type"],
+                )
+                if decision:
+                    break
+            if decision:
+                result["review_prompt"] = {
+                    "decision_id": decision.decision_id,
+                    "expires_at": decision.expires_at.isoformat().replace("+00:00", "Z"),
+                }
         finally:
             conn.close()
         return result
+
+    @app.post("/ingest/contacts/{app_slug}")
+    async def ingest_contact(request: Request, app_slug: str):
+        conn = conn_factory()
+        try:
+            selected_app = next(
+                (candidate for candidate in active_apps(conn) if candidate.slug == app_slug), None
+            )
+        finally:
+            conn.close()
+        if selected_app is None:
+            raise HTTPException(status_code=404, detail="Unknown app")
+        _check_usage_token(request, selected_app)
+        raw = await _read_capped(request)
+        try:
+            contact = parse_contact(raw)
+        except UsageError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.message) from None
+        conn = conn_factory()
+        try:
+            upsert_contact(conn, selected_app.id, contact)
+        finally:
+            conn.close()
+        return {"stored": True}
+
+    @app.post("/ingest/contacts/{app_slug}/redact")
+    async def redact_contact_data(request: Request, app_slug: str):
+        conn = conn_factory()
+        try:
+            selected_app = next(
+                (candidate for candidate in active_apps(conn) if candidate.slug == app_slug), None
+            )
+        finally:
+            conn.close()
+        if selected_app is None:
+            raise HTTPException(status_code=404, detail="Unknown app")
+        _check_usage_token(request, selected_app)
+        raw = await _read_capped(request)
+        try:
+            payload = json.loads(raw)
+            gid = payload.get("shop_gid") if isinstance(payload, dict) else None
+        except Exception:
+            gid = None
+        if not isinstance(gid, str) or not SHOP_GID_RE.fullmatch(gid):
+            raise HTTPException(status_code=422, detail="shop_gid must be a Shopify shop GID")
+        conn = conn_factory()
+        try:
+            deleted = redact_contacts(conn, selected_app.id, gid)
+        finally:
+            conn.close()
+        return {"redacted": deleted}
+
+    @app.post("/ingest/review-outcomes/{app_slug}")
+    async def ingest_review_outcome(request: Request, app_slug: str):
+        conn = conn_factory()
+        try:
+            selected_app = next(
+                (candidate for candidate in active_apps(conn) if candidate.slug == app_slug), None
+            )
+        finally:
+            conn.close()
+        if selected_app is None:
+            raise HTTPException(status_code=404, detail="Unknown app")
+        _check_usage_token(request, selected_app)
+        raw = await _read_capped(request)
+        try:
+            outcome = parse_outcome(raw)
+        except UsageError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.message) from None
+        conn = conn_factory()
+        try:
+            try:
+                status = record_outcome(conn, selected_app.id, outcome)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="Unknown decision") from None
+            except RuntimeError:
+                raise HTTPException(status_code=409, detail="Decision expired") from None
+        finally:
+            conn.close()
+        return {"status": status}
 
     @app.get("/auth/login")
     def auth_login(request: Request):
@@ -1850,6 +1957,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         conn = conn_factory()
         try:
             organizations = [org for org in list_organizations(conn) if not org.archived]
+            summary = review_app_summary(conn, int(values["id"])) if values.get("id") else None
         finally:
             conn.close()
         return templates.TemplateResponse(
@@ -1860,6 +1968,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 error=error, lifecycle_statuses=LIFECYCLE_STATUSES,
                 listing_statuses=LISTING_STATUSES,
                 tracking_statuses=TRACKING_STATUSES,
+                review_summary=summary,
             ),
             status_code=422 if error else 200,
         )
@@ -1870,6 +1979,9 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             "lifecycle_status": "draft", "listing_status": "unknown",
             "tracking_status": "unknown", "listing_locales": ["en"],
             "annual_plan_amounts": [],
+            "usage_event_types": [], "review_prompt_enabled": False,
+            "review_min_success_count": 1, "review_min_install_hours": 24,
+            "review_retry_days": 90, "review_annual_cap": 3,
         })
 
     @app.get("/management/apps/{app_id}/edit")
@@ -2553,6 +2665,53 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             request, "customer.html",
             {**page_context(request, user, "customers", selected_app, apps), **detail},
         )
+
+    @app.post("/customers/{shop_gid:path}/review-suppression")
+    async def suppress_customer_review(
+        request: Request, shop_gid: str, user: str = Depends(verify_creds)
+    ):
+        email, raw = await _browser_form(request)
+        values = _flat_form(raw)
+        if not values.get("app_id", "").isdigit():
+            raise HTTPException(status_code=422, detail="App is required")
+        app_id = int(values["app_id"])
+        conn = conn_factory()
+        try:
+            conn.execute(
+                """insert into review_prompt_suppressions
+                   (app_id, shop_gid, reason, suppressed_by)
+                   values (%s,%s,%s,%s)
+                   on conflict (app_id, shop_gid) do update set
+                     reason=excluded.reason, suppressed_at=now(),
+                     suppressed_by=excluded.suppressed_by""",
+                (app_id, shop_gid, values.get("reason") or "Operator: never ask", email),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        target = f"/customers/{quote(shop_gid, safe='')}?{urlencode({'app': values.get('app_slug', '')})}"
+        return RedirectResponse(target, status_code=303)
+
+    @app.post("/customers/{shop_gid:path}/review-reset")
+    async def reset_customer_review(
+        request: Request, shop_gid: str, user: str = Depends(verify_creds)
+    ):
+        del user
+        _, raw = await _browser_form(request)
+        values = _flat_form(raw)
+        if not values.get("app_id", "").isdigit():
+            raise HTTPException(status_code=422, detail="App is required")
+        conn = conn_factory()
+        try:
+            conn.execute(
+                "delete from review_prompt_suppressions where app_id=%s and shop_gid=%s",
+                (int(values["app_id"]), shop_gid),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        target = f"/customers/{quote(shop_gid, safe='')}?{urlencode({'app': values.get('app_slug', '')})}"
+        return RedirectResponse(target, status_code=303)
 
     @app.get("/actions")
     def actions(request: Request, trial_days: str | None = None,

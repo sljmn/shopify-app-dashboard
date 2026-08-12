@@ -1603,6 +1603,76 @@ def test_ingest_is_safe_to_retry(ingest_client):
     assert second["stored"] == 0 and second["duplicates"] == 1
 
 
+def test_contact_ingest_keeps_each_staff_account(ingest_client, db):
+    headers = {"X-Usage-Token": USAGE_TOKEN}
+    base = {
+        "shop_gid": "gid://shopify/Shop/1",
+        "shop_domain": "books.myshopify.com",
+        "kind": "staff",
+        "email_verified": True,
+        "seen_at": datetime.now(timezone.utc).isoformat(),
+    }
+    for user_id, email in (("11", "owner@example.com"), ("22", "staff@example.com")):
+        response = ingest_client.post(
+            "/ingest/contacts/test-app",
+            json={**base, "shopify_user_id": user_id, "email": email},
+            headers=headers,
+        )
+        assert response.status_code == 200
+    assert db.execute(
+        "select count(*) from merchant_contacts where kind='staff'"
+    ).fetchone()[0] == 2
+
+
+def test_success_event_returns_decision_and_accepts_native_outcome(ingest_client, db):
+    db.execute(
+        """update apps set usage_event_types=%s, review_prompt_enabled=true,
+                  review_trigger_event='book_import_succeeded',
+                  review_min_install_hours=24
+           where slug='test-app'""",
+        (Jsonb(["book_import_succeeded"]),),
+    )
+    db.execute(
+        """insert into shops (shop_gid, shop_name, install_state, installed_at)
+           values ('gid://shopify/Shop/1','Books','installed',now() - interval '2 days')"""
+    )
+    db.commit()
+    response = ingest_client.post(
+        "/ingest/usage/test-app",
+        json=_usage_body(event_type="book_import_succeeded"),
+        headers={"X-Usage-Token": USAGE_TOKEN},
+    )
+    assert response.status_code == 200
+    decision_id = response.json()["review_prompt"]["decision_id"]
+
+    outcome = ingest_client.post(
+        "/ingest/review-outcomes/test-app",
+        json={"decision_id": decision_id, "success": False,
+              "code": "cancelled", "message": "Not now"},
+        headers={"X-Usage-Token": USAGE_TOKEN},
+    )
+    assert outcome.status_code == 200
+    assert outcome.json() == {"status": "cancelled"}
+
+
+def test_contact_redaction_requires_token_and_removes_only_contacts(ingest_client, db):
+    headers = {"X-Usage-Token": USAGE_TOKEN}
+    payload = {"shop_gid": "gid://shopify/Shop/1", "kind": "shop",
+               "email": "owner@example.com", "email_verified": True,
+               "seen_at": datetime.now(timezone.utc).isoformat()}
+    assert ingest_client.post("/ingest/contacts/test-app", json=payload,
+                              headers=headers).status_code == 200
+    assert ingest_client.post(
+        "/ingest/contacts/test-app/redact",
+        json={"shop_gid": "gid://shopify/Shop/1"},
+    ).status_code == 401
+    redacted = ingest_client.post(
+        "/ingest/contacts/test-app/redact",
+        json={"shop_gid": "gid://shopify/Shop/1"}, headers=headers,
+    )
+    assert redacted.json() == {"redacted": 1}
+
+
 def test_usage_tokens_and_event_ids_are_isolated_per_app(
     db, test_app, app_factory, monkeypatch
 ):

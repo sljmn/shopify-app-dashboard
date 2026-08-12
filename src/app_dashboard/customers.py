@@ -360,6 +360,32 @@ def customer_detail(
             """,
             (app_id, installation["shop_domain"]),
         ).fetchone() if installation["shop_domain"] else None
+        contact_rows = conn.execute(
+            """select kind, shopify_user_id, first_name, last_name, email,
+                      email_verified, locale, account_owner, collaborator,
+                      access_level, first_seen_at, last_seen_at
+               from merchant_contacts where app_id=%s and shop_gid=%s
+               order by kind, account_owner desc nulls last, last_seen_at desc""",
+            (app_id, shop_gid),
+        ).fetchall()
+        contacts = [
+            {"kind": row[0], "shopify_user_id": row[1], "first_name": row[2],
+             "last_name": row[3], "email": row[4], "email_verified": row[5],
+             "locale": row[6], "account_owner": row[7], "collaborator": row[8],
+             "access_level": row[9], "first_seen_at": row[10], "last_seen_at": row[11]}
+            for row in contact_rows
+        ]
+        review_rows = conn.execute(
+            """select issued_at, outcome, response_code, next_eligible_at,
+                      event_type, responded_at
+               from review_prompt_decisions where app_id=%s and shop_gid=%s
+               order by issued_at desc""", (app_id, shop_gid),
+        ).fetchall()
+        suppression = conn.execute(
+            """select reason, suppressed_at, suppressed_by
+               from review_prompt_suppressions where app_id=%s and shop_gid=%s""",
+            (app_id, shop_gid),
+        ).fetchone()
         installs = [
             event for event in timeline
             if event["kind"] in ("installed", "reinstalled")
@@ -408,6 +434,17 @@ def customer_detail(
                  "locale": attribution_row[4], "country": attribution_row[5],
                  "device": attribution_row[6]}
                 if attribution_row else None
+            ),
+            "shop_contact": next((row for row in contacts if row["kind"] == "shop"), None),
+            "staff_contacts": [row for row in contacts if row["kind"] == "staff"],
+            "review_attempts": [
+                {"issued_at": row[0], "outcome": row[1], "code": row[2],
+                 "next_eligible_at": row[3], "event_type": row[4],
+                 "responded_at": row[5]} for row in review_rows
+            ],
+            "review_suppression": (
+                {"reason": suppression[0], "at": suppression[1], "by": suppression[2]}
+                if suppression else None
             ),
             "first_install_at": installs[0]["at"] if installs else None,
             "install_count": len(installs),

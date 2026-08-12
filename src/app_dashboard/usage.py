@@ -211,7 +211,10 @@ def _over_cap(
     return {gid for gid, count in rows if count >= PER_SHOP_DAILY_CAP}
 
 
-def ingest(conn: psycopg.Connection, app_id: int, events: list[dict]) -> dict:
+def ingest(
+    conn: psycopg.Connection, app_id: int, events: list[dict], *,
+    include_stored_events: bool = False,
+) -> dict:
     """Store validated events. Idempotent, and never destructive.
 
     ON CONFLICT DO NOTHING rather than DO UPDATE: a retry after a timeout is
@@ -226,13 +229,14 @@ def ingest(conn: psycopg.Connection, app_id: int, events: list[dict]) -> dict:
 
     accepted = [e for e in events if e["shop_gid"] not in capped]
     stored = 0
+    stored_events = []
     # One transaction for the batch. The connection is autocommit, so without
     # this each insert commits on its own and a failure part-way through leaves
     # a partially stored batch behind -- which contradicts the all-or-nothing
     # contract the caller retries against.
     with conn.transaction():
         for event in accepted:
-            stored += conn.execute(
+            inserted = conn.execute(
                 """insert into usage_events
                        (app_id, shop_gid, event_id, event_type, occurred_at, properties)
                    values (%s, %s, %s, %s, %s, %s)
@@ -240,12 +244,18 @@ def ingest(conn: psycopg.Connection, app_id: int, events: list[dict]) -> dict:
                 (app_id, event["shop_gid"], event["event_id"], event["event_type"],
                  event["occurred_at"], Jsonb(event["properties"])),
             ).rowcount
-    return {
+            stored += inserted
+            if inserted:
+                stored_events.append(event)
+    result = {
         "received": len(events),
         "stored": stored,
         "duplicates": len(accepted) - stored,
         "rate_limited": len(events) - len(accepted),
     }
+    if include_stored_events:
+        result["_stored_events"] = stored_events
+    return result
 
 
 # --- reports ---------------------------------------------------------------
