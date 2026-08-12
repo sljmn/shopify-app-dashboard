@@ -560,6 +560,32 @@
         .period-section-head p { margin-top: 4px; }
         .period-table { min-width: 980px; }
         .payout-filter { margin-left: auto; }
+        .payout-cashflow { margin-top: 28px; padding: 26px 30px; }
+        .payout-cashflow-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+        .payout-cashflow-head h2 { margin: 0; }
+        .payout-cashflow-chart { display: grid; grid-template-columns: 72px minmax(0, 1fr); min-height: 260px; margin-top: 22px; }
+        .payout-axis { display: flex; flex-direction: column; justify-content: space-between; padding: 0 12px 32px 0; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+        .payout-bars { display: grid; grid-template-columns: repeat(3, minmax(70px, 1fr)); gap: clamp(18px, 7vw, 90px); border-bottom: 1px solid var(--border); background: repeating-linear-gradient(to bottom, var(--border) 0 1px, transparent 1px 50%); }
+        .payout-bar-column { display: grid; grid-template-rows: 228px 32px; min-width: 0; }
+        .payout-bar-track { display: flex; align-items: flex-end; justify-content: center; min-height: 0; }
+        .payout-bar { display: flex; flex-direction: column; justify-content: flex-end; width: min(92px, 76%); min-height: 3px; overflow: hidden; border-radius: 7px 7px 0 0; }
+        .payout-segment { display: block; min-height: 3px; }
+        .payout-bar-label { align-self: end; padding-top: 10px; text-align: center; white-space: nowrap; }
+        .payout-segment.due, .payout-legend i.due { background: #d31d2a; }
+        .payout-segment.paid, .payout-legend i.paid { background: linear-gradient(180deg, #a977f3, #6540d0); }
+        .payout-segment.billed, .payout-legend i.billed { background: linear-gradient(180deg, #f6c64f, #dfa337); }
+        .payout-segment.upcoming, .payout-legend i.upcoming { background: linear-gradient(180deg, #58a7f7, #2472c5); }
+        .payout-legend { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px 28px; margin: 22px 0; }
+        .payout-legend span { display: inline-flex; align-items: center; gap: 9px; }
+        .payout-legend i { width: 13px; height: 13px; border-radius: 50%; }
+        .payout-period-list { display: grid; gap: 2px; max-width: 760px; margin: 0 auto; }
+        .payout-period-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 15px 6px; border-top: 1px solid var(--border); }
+        .payout-period-row:first-child { border-top: 0; }
+        .payout-period-row > div { display: grid; gap: 4px; }
+        .payout-period-row span, .payout-period-row small { color: var(--muted); font-weight: 500; }
+        .payout-period-row > strong { display: grid; justify-items: end; gap: 3px; font-variant-numeric: tabular-nums; }
+        .payout-period-row small { font-size: 11px; text-transform: uppercase; }
+        .payout-ledger-filter { margin-top: 38px; }
         .payout-cards { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
         .payout-section { margin-top: 34px; }
         .payout-table-wrap { overflow-x: auto; }
@@ -586,6 +612,14 @@
             .period-custom { display: grid; grid-template-columns: 1fr 1fr auto; }
             .period-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .payout-filter { margin-left: 0; }
+            .payout-cashflow { padding: 20px 16px; }
+            .payout-cashflow-chart { grid-template-columns: 52px minmax(0, 1fr); min-height: 220px; }
+            .payout-axis { padding-right: 7px; font-size: 12px; }
+            .payout-bars { gap: 12px; }
+            .payout-bar-column { grid-template-rows: 188px 32px; }
+            .payout-bar { width: min(62px, 78%); }
+            .payout-legend { justify-content: flex-start; gap: 10px 18px; }
+            .payout-period-row { align-items: flex-start; padding: 14px 0; }
             .payout-cards { grid-template-columns: minmax(0, 1fr); }
         }
         @media (max-width: 520px) {

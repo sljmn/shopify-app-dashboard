@@ -1,9 +1,60 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Payouts</h1>
-<p class="sub">Shopify settlement dates and net amounts{% if selected_app %} for {{ selected_app.name }}{% endif %}. Bank arrival status is not available in the Partner API.</p>
+<p class="sub">Shopify payout periods and net amounts{% if selected_app %} for {{ selected_app.name }}{% endif %}. Confirmed settlements and clearly marked estimates stay separate.</p>
 
-<section class="period-toolbar" aria-label="Payout period">
+<section class="payout-cashflow card" aria-labelledby="payout-cashflow-title">
+    <div class="payout-cashflow-head">
+        <h2 id="payout-cashflow-title">Shopify payouts</h2>
+        <a href="#details">View details</a>
+    </div>
+    {% if report.cashflow_currency %}
+    <div class="payout-cashflow-chart" aria-label="Payouts by Shopify payout period">
+        <div class="payout-axis" aria-hidden="true">
+            <span>{{ report.cashflow_currency }} {{ "%.1f"|format(report.cashflow_max / 1000) }}K</span>
+            <span>{{ report.cashflow_currency }} {{ "%.1f"|format(report.cashflow_max / 2000) }}K</span>
+            <span>{{ report.cashflow_currency }} 0</span>
+        </div>
+        <div class="payout-bars">
+        {% for row in report.cashflow %}
+            {% set scale = (row.total / report.cashflow_max * 100) if report.cashflow_max else 0 %}
+            <div class="payout-bar-column">
+                <div class="payout-bar-track">
+                    <div class="payout-bar" style="height: {{ '%.2f'|format(scale) }}%">
+                        {% if row.upcoming %}<span class="payout-segment upcoming" style="flex: {{ row.upcoming }}"></span>{% endif %}
+                        {% if row.billed %}<span class="payout-segment billed" style="flex: {{ row.billed }}"></span>{% endif %}
+                        {% if row.due %}<span class="payout-segment due" style="flex: {{ row.due }}"></span>{% endif %}
+                        {% if row.paid %}<span class="payout-segment paid" style="flex: {{ row.paid }}"></span>{% endif %}
+                    </div>
+                </div>
+                <span class="payout-bar-label">{{ row.end.strftime("%-d %b") }}</span>
+            </div>
+        {% endfor %}
+        </div>
+    </div>
+    <div class="payout-legend" aria-label="Payout statuses">
+        <span><i class="due"></i>Due</span>
+        <span><i class="paid"></i>Paid</span>
+        <span><i class="billed"></i>Billed</span>
+        <span><i class="upcoming"></i>Upcoming</span>
+    </div>
+    <div class="payout-period-list">
+        {% for row in report.cashflow %}
+        <div class="payout-period-row">
+            <div>
+                <strong>{{ row.start.strftime("%-d %b") }} – {{ row.end.strftime("%-d %b") }}</strong>
+                <span>{% if row.payment_date < today %}You were paid on{% else %}You'll be paid on{% endif %} {{ row.payment_date.strftime("%-d %b") }}</span>
+            </div>
+            <strong>{{ report.cashflow_currency }} {{ "%.2f"|format(row.total) }}{% if row.estimated %}<small>Estimated</small>{% endif %}</strong>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state compact"><strong>Multiple payout currencies</strong><span>Use the settlement details below for exact currency totals.</span></div>
+    {% endif %}
+</section>
+
+<section class="period-toolbar payout-ledger-filter" id="details" aria-label="Payout period">
     <form class="period-custom payout-filter" method="get" action="/payouts">
         {% if selected_app %}<input type="hidden" name="app" value="{{ selected_app.slug }}">{% endif %}
         <label>
@@ -62,7 +113,7 @@
 </section>
 
 {% if report.selected_date %}
-<section class="payout-section" id="details">
+<section class="payout-section" id="earning-details">
     <div class="period-section-head">
         <div><h2>{{ report.selected_date.strftime("%-d %b %Y") }}</h2><p class="sub">Earnings included in this settlement.</p></div>
     </div>

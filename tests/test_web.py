@@ -2254,6 +2254,13 @@ def test_payouts_requires_login_and_renders_settlement_details(db, test_app):
     body = unescape(page.text)
     assert page.status_code == 200
     assert "<h1>Payouts</h1>" in body
+    assert "Shopify payouts" in body
+    assert "payout-cashflow-chart" in body
+    assert "Paid" in body
+    assert "Billed" in body
+    assert "Upcoming" in body
+    assert "Estimated" in body
+    assert 'href="#details"' in body
     assert "USD 10.00" in body
     assert "8 Aug 2026" in body
     assert "App Sale" in body

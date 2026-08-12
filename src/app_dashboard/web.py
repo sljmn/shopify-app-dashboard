@@ -2248,7 +2248,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         try:
             scope, selected_app, apps = resolve_scope(request, conn)
             report = payout_report(
-                conn, scope, start_date, end_date, selected_date
+                conn, scope, start_date, end_date, selected_date, today=today
             )
         finally:
             conn.close()
@@ -2263,6 +2263,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 **page_context(request, user, "payouts", selected_app, apps),
                 "start": start_date,
                 "end": end_date,
+                "today": today,
                 "report": report,
                 "error": error,
                 "range_qs": urlencode(range_values),
