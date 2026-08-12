@@ -277,6 +277,32 @@ def run_watchlist_job(conn_factory, settings) -> list[dict]:
     return results
 
 
+def run_review_collection_job(conn_factory, settings) -> list[dict]:
+    from app_dashboard.review_collector import review_sync_targets, sync_app_reviews
+
+    conn = conn_factory()
+    try:
+        targets = review_sync_targets(conn)
+    finally:
+        conn.close()
+
+    def sync_one(item):
+        discovered_app_id, handle = item
+        worker_conn = conn_factory()
+        try:
+            return sync_app_reviews(worker_conn, discovered_app_id, handle)
+        except Exception as exc:
+            logger.exception("review sync failed for %s", handle)
+            return {"handle": handle, "ok": False, "error": type(exc).__name__}
+        finally:
+            worker_conn.close()
+
+    with ThreadPoolExecutor(max_workers=settings.watchlist_concurrency) as pool:
+        results = list(pool.map(sync_one, targets))
+    logger.info("review sync completed: %s", results)
+    return results
+
+
 def run_discovery_alerts_job(conn_factory, settings) -> dict:
     from app_dashboard.discovery_watchlist import deliver_discovery_alerts
 
@@ -376,6 +402,12 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         "interval", hours=24,
         next_run_time=datetime.now() + timedelta(minutes=60),
         id="watchlist_listings",
+    )
+    scheduler.add_job(
+        lambda: run_review_collection_job(conn_factory, settings),
+        "interval", hours=24,
+        next_run_time=datetime.now() + timedelta(minutes=75),
+        id="watchlist_reviews",
     )
     scheduler.add_job(
         lambda: run_discovery_alerts_job(conn_factory, settings),

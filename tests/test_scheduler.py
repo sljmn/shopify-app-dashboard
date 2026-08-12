@@ -2,13 +2,13 @@ from dataclasses import replace
 
 from app_dashboard.scheduler import (
     run_active_subscriptions_job,
-    run_app_discovery_job,
     run_all_apps,
-    run_category_discovery_job,
-    run_discovery_alerts_job,
-    run_watchlist_job,
-    run_sync_job,
+    run_app_discovery_job,
     run_aso_job,
+    run_category_discovery_job,
+    run_review_collection_job,
+    run_sync_job,
+    run_watchlist_job,
 )
 
 
@@ -184,6 +184,8 @@ def test_weekly_digest_is_registered_at_the_configured_local_time(monkeypatch, t
     assert discovery["app_store_categories"]["day_of_week"] == "tue,fri"
     watchlist = [kw for trigger, kw in fake.jobs if kw.get("id") == "watchlist_listings"]
     assert len(watchlist) == 1 and watchlist[0]["hours"] == 24
+    reviews = [kw for trigger, kw in fake.jobs if kw.get("id") == "watchlist_reviews"]
+    assert len(reviews) == 1 and reviews[0]["hours"] == 24
     assert started["yes"] is True
 
 
@@ -260,6 +262,34 @@ def test_watchlist_job_isolates_apps_and_closes_connections(monkeypatch, tmp_pat
     )
     assert results == [
         {"handle": "alpha", "ok": True, "created": True, "changes": 0},
+        {"handle": "beta", "ok": False, "error": "RuntimeError"},
+    ]
+    assert [conn.closed_count for conn in (index, alpha, beta)] == [1, 1, 1]
+
+
+def test_review_job_isolates_apps_and_closes_connections(monkeypatch):
+    from types import SimpleNamespace
+
+    index = FakeConn()
+    alpha = FakeConn()
+    beta = FakeConn()
+    connections = iter([index, alpha, beta])
+    monkeypatch.setattr(
+        "app_dashboard.review_collector.review_sync_targets",
+        lambda conn: [(1, "alpha"), (2, "beta")],
+    )
+
+    def sync(conn, app_id, handle):
+        if handle == "beta":
+            raise RuntimeError("failed")
+        return {"handle": handle, "ok": True, "captured": 3}
+
+    monkeypatch.setattr("app_dashboard.review_collector.sync_app_reviews", sync)
+    results = run_review_collection_job(
+        lambda: next(connections), SimpleNamespace(watchlist_concurrency=1),
+    )
+    assert results == [
+        {"handle": "alpha", "ok": True, "captured": 3},
         {"handle": "beta", "ok": False, "error": "RuntimeError"},
     ]
     assert [conn.closed_count for conn in (index, alpha, beta)] == [1, 1, 1]

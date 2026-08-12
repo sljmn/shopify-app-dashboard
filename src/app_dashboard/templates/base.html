@@ -967,6 +967,25 @@
         }
         .growth-empty-state h2 { margin-bottom: 5px; }
         .growth-empty-state p { margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.5; }
+        .review-metrics { margin-bottom: 26px; }
+        .review-section { display: grid; gap: 18px; }
+        .review-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+        .review-filters a {
+            display: inline-flex; align-items: center; gap: 8px; padding: 9px 12px;
+            border: 1px solid var(--line); border-radius: 6px; color: var(--ink-2);
+            font-size: 13px; font-weight: 700; background: var(--surface);
+        }
+        .review-filters a span { color: var(--muted); font-variant-numeric: tabular-nums; }
+        .review-filters a[aria-current="page"] { border-color: var(--brand); color: var(--brand); }
+        .review-list { display: grid; gap: 12px; }
+        .review-item { border: 1px solid var(--line); border-radius: 8px; padding: 20px; background: var(--surface); }
+        .review-item header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+        .review-stars { color: #b7791f; letter-spacing: 0; white-space: nowrap; }
+        .review-meta { color: var(--muted); font-size: 12px; margin: 6px 0 14px; }
+        .review-body { white-space: pre-wrap; line-height: 1.55; margin: 0; }
+        .review-reply { margin-top: 16px; padding: 14px 16px; border-left: 3px solid var(--brand); background: var(--brand-soft); }
+        .review-reply p { margin: 5px 0; white-space: pre-wrap; line-height: 1.5; }
+        .review-source { display: inline-block; margin-top: 14px; font-size: 12px; font-weight: 700; }
         .growth-signals { margin: 28px 0 20px; }
         .growth-signals .section-heading {
             display: flex; align-items: end; justify-content: space-between;
@@ -1011,6 +1030,7 @@
             .catalog-actions { justify-content: flex-start; flex-wrap: wrap; }
             .page-heading, .heading-actions, .watch-movement { align-items: stretch; flex-direction: column; }
             .listing-overview, .diff-pair { grid-template-columns: 1fr; }
+            .review-item header { display: grid; gap: 6px; }
             .listing-gallery { grid-template-columns: 1fr; }
             .page-heading .segment-control { align-self: flex-start; }
             .watch-movement {

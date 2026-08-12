@@ -302,6 +302,44 @@ def test_discovered_app_growth_uses_one_compact_empty_state(db):
     assert "Category positions" not in page.text
 
 
+def test_discovered_app_reviews_show_capture_status_filter_and_reply(db):
+    observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('reviewed-app','Reviewed App',%s,%s,true) returning id""",
+        (observed_at, observed_at),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_reviews
+             (discovered_app_id,shopify_review_id,rating,reviewed_on,
+              merchant_name,country,usage_duration,body,developer_reply,
+              developer_replied_on,source_url,first_captured_at,last_captured_at)
+           values (%s,42,5,'2026-08-10','Book House','Netherlands',
+                   '2 months using the app','Works well','Thank you',
+                   '2026-08-11','https://apps.shopify.com/reviewed-app/reviews',%s,%s)""",
+        (app_id, observed_at, observed_at),
+    )
+    db.execute(
+        """insert into discovery_review_sync_state
+             (discovered_app_id,next_backfill_page,backfill_completed_at,
+              last_attempt_at,last_success_at)
+           values (%s,4,%s,%s,%s)""",
+        (app_id, observed_at, observed_at, observed_at),
+    )
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    page = client.get("/discover/apps/reviewed-app?view=reviews&rating=5")
+
+    assert page.status_code == 200
+    assert "Merchant reviews" in page.text
+    assert "Book House" in page.text
+    assert "Works well" in page.text
+    assert "Developer reply" in page.text
+    assert "Complete" in page.text
+    assert 'href="?view=reviews&amp;rating=5" aria-current="page"' in page.text
+
+
 def test_discovery_media_requires_known_digest_and_serves_archive(
     db, tmp_path, monkeypatch,
 ):

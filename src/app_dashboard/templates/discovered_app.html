@@ -15,7 +15,7 @@
 </div>
 
 <nav class="aso-tabs" aria-label="App intelligence views">
-    {% for key, label in [("overview","Overview"),("growth","Growth"),("history","Listing history"),("compare","Compare")] %}
+    {% for key, label in [("overview","Overview"),("reviews","Reviews"),("growth","Growth"),("history","Listing history"),("compare","Compare")] %}
     <a href="/discover/apps/{{ detail.handle|urlencode }}?view={{ key }}"{% if view == key %} aria-current="page"{% endif %}>{{ label }}</a>
     {% endfor %}
 </nav>
@@ -40,6 +40,35 @@
     {% if screenshots %}<div class="listing-gallery">{% for media in screenshots %}<img src="/discover/media/{{ media.digest }}" alt="Listing screenshot {{ loop.index }}" loading="lazy">{% endfor %}</div>{% endif %}
 </section>
 {% else %}<p class="empty-state">Follow this app to capture its first full listing version during the next daily scan.</p>{% endif %}
+{% elif view == "reviews" %}
+<div class="cards detail-metrics review-metrics">
+    <div class="card stat"><div class="label">Captured</div><div class="num">{{ review_report.captured }}</div></div>
+    <div class="card stat"><div class="label">Developer replies</div><div class="num">{{ review_report.developer_replies }}</div></div>
+    <div class="card stat"><div class="label">Five star</div><div class="num">{{ review_report.distribution[5] }}</div></div>
+    <div class="card stat"><div class="label">History</div><div class="num"><small>{% if review_report.state.backfill_completed_at %}Complete{% elif review_report.state.last_error_code %}<span class="money-down">Paused</span>{% elif review_report.state.last_attempt_at %}Page {{ review_report.state.next_backfill_page }}{% else %}Pending{% endif %}</small></div></div>
+</div>
+<section class="review-section">
+    <div class="section-heading">
+        <div><h2>Merchant reviews</h2><p class="sub">Public Shopify reviews, newest first. Historical pages are collected gradually.</p></div>
+        {% if review_report.state.last_success_at %}<span class="sub">Synced {{ review_report.state.last_success_at|local_time("%-d %b %H:%M") }}</span>{% endif %}
+    </div>
+    <nav class="review-filters" aria-label="Filter reviews by rating">
+        <a href="?view=reviews"{% if review_report.rating is none %} aria-current="page"{% endif %}>All <span>{{ review_report.captured }}</span></a>
+        {% for stars in [5,4,3,2,1] %}<a href="?view=reviews&amp;rating={{ stars }}"{% if review_report.rating == stars %} aria-current="page"{% endif %}>{{ stars }} star <span>{{ review_report.distribution[stars] }}</span></a>{% endfor %}
+    </nav>
+    <div class="review-list">
+        {% for review in review_report.rows %}
+        <article class="review-item">
+            <header><div><strong>{{ review.merchant_name or "Shopify merchant" }}</strong>{% if review.country %}<span class="sub"> · {{ review.country }}</span>{% endif %}</div><span class="review-stars" aria-label="{{ review.rating }} out of 5 stars">{{ "★" * review.rating }}{{ "☆" * (5 - review.rating) }}</span></header>
+            <p class="review-meta">{{ review.reviewed_on.strftime("%-d %b %Y") }}{% if review.usage_duration %} · {{ review.usage_duration }}{% endif %}</p>
+            <p class="review-body">{{ review.body }}</p>
+            {% if review.developer_reply %}<div class="review-reply"><strong>Developer reply</strong><p>{{ review.developer_reply }}</p>{% if review.developer_replied_on %}<span class="sub">{{ review.developer_replied_on.strftime("%-d %b %Y") }}</span>{% endif %}</div>{% endif %}
+            <a class="review-source" href="{{ review.source_url }}" target="_blank" rel="noopener">View on Shopify</a>
+        </article>
+        {% else %}<div class="empty-state"><h2>No captured reviews yet</h2><p>{% if detail.followed %}The collector will add the newest reviews during its next run.{% else %}Follow this app to start collecting its public review history.{% endif %}</p></div>{% endfor %}
+    </div>
+    {% if review_report.pages > 1 %}<div class="pager"><span class="sub">{{ review_report.filtered_total }} reviews</span><span class="pager-links">{% if review_report.page > 1 %}<a href="?view=reviews{% if review_report.rating %}&amp;rating={{ review_report.rating }}{% endif %}&amp;review_page={{ review_report.page - 1 }}">Previous</a>{% else %}<span class="disabled">Previous</span>{% endif %}<span class="sub">Page {{ review_report.page }} of {{ review_report.pages }}</span>{% if review_report.page < review_report.pages %}<a href="?view=reviews{% if review_report.rating %}&amp;rating={{ review_report.rating }}{% endif %}&amp;review_page={{ review_report.page + 1 }}">Next</a>{% else %}<span class="disabled">Next</span>{% endif %}</span></div>{% endif %}
+</section>
 {% elif view == "growth" %}
 {% if history.reviews or history.ranks %}
 <section class="growth-history">

@@ -63,6 +63,7 @@ from app_dashboard.discovery_watchlist import (
     unfollow_app,
     watchlist_summary,
 )
+from app_dashboard.review_collector import review_report
 from app_dashboard.watchlist_collector import media_path
 from app_dashboard.catalog import AppConfig, list_apps
 from app_dashboard.integrations import (
@@ -870,9 +871,12 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
     def discovered_app_detail(
         request: Request, handle: str, view: str = "overview",
         before: int | None = None, after: int | None = None,
+        rating: int | None = None, review_page: int = 1,
         user: str = Depends(verify_creds),
     ):
-        view = view if view in {"overview", "growth", "history", "compare"} else "overview"
+        view = view if view in {
+            "overview", "reviews", "growth", "history", "compare",
+        } else "overview"
         conn = conn_factory()
         try:
             apps = active_apps(conn)
@@ -880,6 +884,9 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             if not detail:
                 raise HTTPException(status_code=404, detail="Unknown app")
             history = growth_history(conn, detail["id"]) if view == "growth" else None
+            reviews = review_report(
+                conn, detail["id"], rating=rating, page=review_page,
+            ) if view == "reviews" else None
             versions = listing_versions(conn, detail["id"])
             comparison = None
             if view == "compare" and before is None and after is None \
@@ -895,6 +902,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             request, "discovered_app.html", {
                 **page_context(request, user, "discover", None, apps),
                 "detail": detail, "view": view, "history": history,
+                "review_report": reviews,
                 "versions": versions, "comparison": comparison,
                 "before_id": before, "after_id": after,
             },
