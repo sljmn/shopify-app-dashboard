@@ -1562,7 +1562,6 @@
         // the bars would paint full width and then jump to zero to animate.
         if (!document.hidden) document.documentElement.classList.add("grow");
     </script>
-    {% block scripts %}{% endblock %}
 </head>
 <body class="{% block bodyclass %}{% endblock %}"
       style="{% block bodystyle %}{% endblock %}">
@@ -1961,6 +1960,7 @@
         })();
 
     </script>
+    {% block scripts %}{% endblock %}
     <!-- How fresh the numbers are is on Overview's ops strip, which reads the
          real poll interval. Repeating it here just gives it somewhere to go
          stale, which it did. What belongs here is the one fact that is true of

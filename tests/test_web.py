@@ -156,6 +156,9 @@ def test_research_workspace_is_authenticated_and_can_create_a_list(db):
     assert "research-dossier" in page.text
     assert "Edit details" in page.text
     assert "data-research-app-search" in page.text
+    assert page.text.index("data-research-app-search") < page.text.index(
+        'const form = document.querySelector("[data-research-app-search]")'
+    )
 
 
 def test_research_app_search_returns_catalog_matches_and_membership(db):
