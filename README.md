@@ -48,6 +48,8 @@ revenue figure appears anywhere in this repository, in the screenshots, or in th
   CSV export. It does not call Rankbase.
 - **App discovery** across the full Shopify App Store, with automatic category enrichment, a
   12-week view of newly observed apps, and review/rank signals for rising apps.
+- **Research workspace** with named app lists, searchable dated notes, private screenshots and
+  documents, and complete Shopify developer portfolios.
 - **Slack** stale-sync alerts and a weekly digest.
 
 ## Install
@@ -102,6 +104,10 @@ uv run uvicorn app_dashboard.web:app --reload
 
 Read [docs/configuration.md](docs/configuration.md) before the first run. Annual prices are per app;
 an omitted annual price silently reports that app's subscriber at twelve times its real MRR.
+
+Research lists and notes work without object storage. To add private screenshots or documents,
+configure the dedicated Backblaze bucket described in
+[docs/research-workspace.md](docs/research-workspace.md).
 
 The first sync replays every app's full history from the events feed, so there is no historical
 import to arrange.
