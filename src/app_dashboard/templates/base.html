@@ -1493,13 +1493,14 @@
         .research-edit-details { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 0 0 34px; }
         .research-edit-details summary { width: fit-content; cursor: pointer; color: var(--ink-2); font-weight: 650; padding: 13px 0; }
         .research-edit-details[open] summary { color: var(--brand); }
-        .research-edit-details form { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(300px, 2fr) 150px auto; align-items: end; gap: 14px; padding: 2px 0 18px; }
+        .research-edit-details form { display: grid; grid-template-columns: minmax(0, 720px); gap: 14px; padding: 2px 0 18px; }
         .research-edit-details label, .research-app-search > label { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 650; }
         .research-edit-details input, .research-edit-details textarea, .research-edit-details select {
             width: 100%; border: 1px solid var(--control-border); border-radius: 9px;
             background: var(--control-bg); color: var(--ink); padding: 10px 12px; font: 14px var(--body);
         }
         .research-edit-details textarea { min-height: 44px; resize: vertical; }
+        .research-edit-details form > button { width: fit-content; min-width: 140px; }
         .research-work-section { margin: 0 0 38px; }
         .research-work-section .section-heading { margin-bottom: 14px; }
         .section-count { display: inline-grid; min-width: 30px; height: 30px; place-items: center; border-radius: 50%; background: var(--control-inset); color: var(--ink-2); font: 650 13px var(--mono); }
@@ -1530,13 +1531,11 @@
         @media (max-width: 900px) {
             .research-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .research-filters input[type="search"] { grid-column: 1 / -1; }
-            .research-edit-details form { grid-template-columns: 1fr 1fr; }
-            .research-edit-details .wide-field { grid-column: 1 / -1; }
         }
         @media (max-width: 600px) {
-            .research-filters, .research-edit-details form { grid-template-columns: 1fr; }
+            .research-filters { grid-template-columns: 1fr; }
             .research-filters > * { width: 100%; }
-            .research-edit-details .wide-field { grid-column: auto; }
+            .research-edit-details form > button { width: 100%; }
             .research-dossier-head { flex-direction: column; gap: 18px; }
             .research-dossier-actions { width: 100%; }
             .research-dossier-actions > * { flex: 1; }
