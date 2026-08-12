@@ -152,6 +152,10 @@ def store_competitor_snapshot(
                set built_for_shopify=%s,bfs_checked_at=%s where id=%s""",
             (listing.get("built_for_shopify", False), captured_at, discovered_app_id),
         )
+        from app_dashboard.developer_catalog import upsert_developer_from_listing
+        upsert_developer_from_listing(
+            conn, discovered_app_id, listing, now=captured_at,
+        )
         return CompetitorSnapshotResult(existing[0], False, ())
     previous = conn.execute(
         """select listing from discovery_listing_snapshots
@@ -225,6 +229,8 @@ def store_competitor_snapshot(
                set built_for_shopify=%s,bfs_checked_at=%s where id=%s""",
             (listing.get("built_for_shopify", False), captured_at, discovered_app_id),
         )
+    from app_dashboard.developer_catalog import upsert_developer_from_listing
+    upsert_developer_from_listing(conn, discovered_app_id, listing, now=captured_at)
     return CompetitorSnapshotResult(snapshot_id, True, changed_fields)
 
 
