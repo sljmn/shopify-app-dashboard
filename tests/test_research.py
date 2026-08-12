@@ -9,6 +9,7 @@ from app_dashboard.research import (
     get_list,
     research_index,
     remove_app_from_list,
+    search_apps,
     target_research,
 )
 
@@ -35,6 +36,21 @@ def test_app_can_join_multiple_lists_and_membership_starts_tracking(db):
     assert db.execute(
         "select active from discovery_watchlist"
     ).fetchone()[0] is True
+
+
+def test_app_search_is_bounded_and_marks_existing_list_members(db):
+    research_list = create_list(db, "Targets")
+    for index in range(10):
+        discovered(db, f"content-tool-{index}", f"Content Tool {index}")
+    add_app_to_list(db, research_list["id"], "content-tool-0")
+
+    rows = search_apps(db, "content", list_id=research_list["id"], limit=8)
+
+    assert len(rows) == 8
+    assert rows[0]["handle"] == "content-tool-0"
+    assert rows[0]["in_list"] is True
+    assert all(set(row) == {"handle", "name", "categories", "in_list"} for row in rows)
+    assert search_apps(db, "  ", list_id=research_list["id"]) == []
 
 
 def test_targeted_notes_and_index_search_include_context_and_filename(db):

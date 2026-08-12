@@ -116,7 +116,52 @@ def get_list(conn, list_id: int) -> dict | None:
         ).fetchall()
     ]
     result["notes"] = list_notes(conn, target_kind="list", target_id=list_id)
+    result["app_count"] = len(result["apps"])
+    result["note_count"] = len(result["notes"])
+    result["attachment_count"] = sum(
+        note["attachment_count"] for note in result["notes"]
+    )
     return result
+
+
+def search_apps(
+    conn, query: str, *, list_id: int | None = None, limit: int = 8,
+) -> list[dict]:
+    """Return a small, ranked catalog result set for the research app picker."""
+    query = query.strip()
+    if not query:
+        return []
+    limit = max(1, min(limit, 8))
+    rows = conn.execute(
+        """select app.handle,coalesce(nullif(app.display_name,''),app.handle),
+                  coalesce(categories.names,''),
+                  exists (
+                    select 1 from research_list_apps member
+                    where member.research_list_id=%s
+                      and member.discovered_app_id=app.id
+                  ) in_list
+           from discovered_apps app
+           left join lateral (
+             select string_agg(category.name, ', ' order by category.name) names
+             from discovered_app_categories category_member
+             join discovery_categories category
+               on category.id=category_member.category_id
+             where category_member.discovered_app_id=app.id
+           ) categories on true
+           where app.handle ilike '%%' || %s || '%%'
+              or coalesce(app.display_name,'') ilike '%%' || %s || '%%'
+           order by
+             case when lower(app.handle)=lower(%s)
+                    or lower(coalesce(app.display_name,''))=lower(%s) then 0
+                  when app.handle ilike %s || '%%'
+                    or coalesce(app.display_name,'') ilike %s || '%%' then 1
+                  else 2 end,
+             coalesce(nullif(app.display_name,''),app.handle),app.handle
+           limit %s""",
+        (list_id, query, query, query, query, query, query, limit),
+    ).fetchall()
+    keys = ("handle", "name", "categories", "in_list")
+    return [dict(zip(keys, row, strict=True)) for row in rows]
 
 
 def add_app_to_list(conn, list_id: int, handle: str, *, now=None) -> bool:

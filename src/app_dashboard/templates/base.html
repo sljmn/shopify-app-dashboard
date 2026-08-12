@@ -1452,7 +1452,7 @@
         /* Research is a quiet work surface: dense tables for scanning, then
            simple unframed note streams inside a list/app/developer context. */
         .research-toolbar { margin: 18px 0 24px; }
-        .research-filters { display: grid; grid-template-columns: minmax(260px, 2fr) repeat(4, minmax(130px, 1fr)) auto auto; }
+        .research-filters { display: grid; grid-template-columns: minmax(260px, 2fr) repeat(2, minmax(130px, 1fr)) repeat(2, minmax(170px, 1fr)) auto auto; }
         .research-table td { vertical-align: top; }
         .compact-form { max-width: 760px; }
         .compact-form form, .list-settings form { display: grid; gap: 16px; }
@@ -1465,10 +1465,6 @@
         }
         .field-help { color: var(--muted); font-size: 12px; font-weight: 400; }
         .form-error { color: var(--down); border-left: 3px solid var(--down); padding-left: 10px; }
-        .list-settings { margin-bottom: 28px; }
-        .list-settings form { grid-template-columns: minmax(180px, 1fr) minmax(300px, 2fr) 150px auto; align-items: end; }
-        .list-settings textarea { min-height: 44px; }
-        .research-add-app { margin-bottom: 14px; grid-template-columns: minmax(240px, 1fr) auto auto; }
         .research-memberships, .attachment-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
         .research-notes { display: grid; gap: 12px; }
         .research-note { padding: 18px; }
@@ -1480,16 +1476,74 @@
         .developer-line { margin: -4px 0 20px; color: var(--muted); }
         .compact-list-form { display: inline-grid; grid-template-columns: minmax(120px, 1fr) auto; gap: 5px; }
         .compact-list-form select { min-width: 125px; max-width: 180px; }
+        .breadcrumb { display: flex; gap: 7px; color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+        .research-dossier { margin-bottom: 20px; }
+        .research-dossier-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; }
+        .research-dossier-copy { min-width: 0; max-width: 820px; }
+        .research-dossier-copy .title-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .research-dossier-copy h1 { margin: 0; overflow-wrap: anywhere; }
+        .research-description { max-width: 720px; color: var(--ink-2); font-size: 16px; line-height: 1.6; margin: 13px 0 8px; white-space: pre-wrap; }
+        .research-description.is-empty { color: var(--muted); font-style: italic; }
+        .research-dossier-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+        .research-dossier-stats { display: flex; gap: 0; margin: 24px 0 0; }
+        .research-dossier-stats div { min-width: 110px; padding-right: 28px; margin-right: 28px; border-right: 1px solid var(--border); }
+        .research-dossier-stats div:last-child { border: 0; margin: 0; padding: 0; }
+        .research-dossier-stats dt { color: var(--muted); font-size: 12px; font-weight: 650; text-transform: uppercase; }
+        .research-dossier-stats dd { margin: 2px 0 0; font: 700 22px var(--mono); }
+        .research-edit-details { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 0 0 34px; }
+        .research-edit-details summary { width: fit-content; cursor: pointer; color: var(--ink-2); font-weight: 650; padding: 13px 0; }
+        .research-edit-details[open] summary { color: var(--brand); }
+        .research-edit-details form { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(300px, 2fr) 150px auto; align-items: end; gap: 14px; padding: 2px 0 18px; }
+        .research-edit-details label, .research-app-search > label { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 650; }
+        .research-edit-details input, .research-edit-details textarea, .research-edit-details select {
+            width: 100%; border: 1px solid var(--control-border); border-radius: 9px;
+            background: var(--control-bg); color: var(--ink); padding: 10px 12px; font: 14px var(--body);
+        }
+        .research-edit-details textarea { min-height: 44px; resize: vertical; }
+        .research-work-section { margin: 0 0 38px; }
+        .research-work-section .section-heading { margin-bottom: 14px; }
+        .section-count { display: inline-grid; min-width: 30px; height: 30px; place-items: center; border-radius: 50%; background: var(--control-inset); color: var(--ink-2); font: 650 13px var(--mono); }
+        .research-app-search { position: relative; max-width: 820px; margin: 0 0 18px; }
+        .research-app-search-control { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; margin-top: 7px; border: 1px solid var(--control-border); border-radius: 9px; background: var(--control-bg); box-shadow: var(--control-shadow); }
+        .research-app-search-control:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent); }
+        .research-app-search-control > svg { margin-left: 13px; color: var(--muted); }
+        .research-app-search-control input[type="search"] { min-width: 0; width: 100%; border: 0; box-shadow: none; background: transparent; }
+        .research-app-search-control input[type="search"]:focus { box-shadow: none; }
+        .research-app-search-control button { align-self: stretch; border-radius: 0 8px 8px 0; }
+        .research-app-search-control button:disabled { cursor: not-allowed; opacity: .45; }
+        .research-app-search .field-help { display: block; margin-top: 7px; }
+        .research-app-results { position: absolute; z-index: 20; top: calc(100% - 18px); left: 0; right: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: var(--overlay-shadow); }
+        .research-app-result { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 11px 13px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: var(--card); color: var(--ink); text-align: left; }
+        .research-app-result:last-child { border-bottom: 0; }
+        .research-app-result:hover:not(:disabled), .research-app-result:focus-visible { background: var(--brand-wash); }
+        .research-app-result:disabled { cursor: default; opacity: .58; }
+        .research-app-result > span:first-child { display: grid; min-width: 0; }
+        .research-app-result strong, .research-app-result small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .research-app-result small { color: var(--muted); }
+        .research-app-result-state { flex: 0 0 auto; color: var(--brand); font-size: 12px; font-weight: 650; }
+        .research-app-result-empty { margin: 0; padding: 13px; color: var(--muted); }
+        .research-work-section .row-action { width: 1%; white-space: nowrap; text-align: right; }
+        .empty-state { display: grid; gap: 3px; color: var(--muted); }
+        .empty-state strong { color: var(--ink-2); }
+        .research-empty-notes { padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+        .research-empty-notes a { width: fit-content; margin-top: 6px; }
         @media (max-width: 900px) {
             .research-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .research-filters input[type="search"] { grid-column: 1 / -1; }
-            .list-settings form { grid-template-columns: 1fr 1fr; }
-            .list-settings form label:nth-child(2) { grid-column: 1 / -1; }
+            .research-edit-details form { grid-template-columns: 1fr 1fr; }
+            .research-edit-details .wide-field { grid-column: 1 / -1; }
         }
         @media (max-width: 600px) {
-            .research-filters, .list-settings form, .research-add-app { grid-template-columns: 1fr; }
-            .research-filters > *, .research-add-app > * { width: 100%; }
-            .list-settings form label:nth-child(2) { grid-column: auto; }
+            .research-filters, .research-edit-details form { grid-template-columns: 1fr; }
+            .research-filters > * { width: 100%; }
+            .research-edit-details .wide-field { grid-column: auto; }
+            .research-dossier-head { flex-direction: column; gap: 18px; }
+            .research-dossier-actions { width: 100%; }
+            .research-dossier-actions > * { flex: 1; }
+            .research-dossier-stats { justify-content: space-between; }
+            .research-dossier-stats div { min-width: 0; flex: 1; padding-right: 16px; margin-right: 16px; }
+            .research-app-search-control { grid-template-columns: auto minmax(0, 1fr); }
+            .research-app-search-control button { grid-column: 1 / -1; min-height: 42px; border-radius: 0 0 8px 8px; }
             .research-note header { align-items: stretch; flex-direction: column; }
             .research-note header form button { width: 100%; }
         }
@@ -1508,6 +1562,7 @@
         // the bars would paint full width and then jump to zero to animate.
         if (!document.hidden) document.documentElement.classList.add("grow");
     </script>
+    {% block scripts %}{% endblock %}
 </head>
 <body class="{% block bodyclass %}{% endblock %}"
       style="{% block bodystyle %}{% endblock %}">

@@ -81,6 +81,7 @@ from app_dashboard.research import (
     list_lists as list_research_lists,
     remove_app_from_list,
     research_index,
+    search_apps as search_research_apps,
     target_research,
     update_list as update_research_list,
 )
@@ -842,6 +843,18 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             request, "research_list_form.html",
             _research_context(request, user, record=None, error=None),
         )
+
+    @app.get("/research/apps/search")
+    def research_app_search(
+        q: str = "", list_id: int | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        del user
+        conn = conn_factory()
+        try:
+            return search_research_apps(conn, q, list_id=list_id, limit=8)
+        finally:
+            conn.close()
 
     @app.post("/research/lists")
     async def store_research_list(request: Request, user: str = Depends(verify_creds)):

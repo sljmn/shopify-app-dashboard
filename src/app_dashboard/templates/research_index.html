@@ -24,8 +24,8 @@
             <option value="">All lists</option>
             {% for list in lists %}<option value="{{ list.id }}"{% if selected_list_id == list.id %} selected{% endif %}>{{ list.title }}</option>{% endfor %}
         </select>
-        <input type="text" name="start" value="{{ start or '' }}" placeholder="From" data-date-picker aria-label="From date">
-        <input type="text" name="end" value="{{ end or '' }}" placeholder="To" data-date-picker aria-label="To date">
+        <span class="date-control"><input type="date" name="start" value="{{ start or '' }}" data-datepicker aria-label="From date"><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8h14"/></svg></span>
+        <span class="date-control"><input type="date" name="end" value="{{ end or '' }}" data-datepicker aria-label="To date"><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8h14"/></svg></span>
         <button type="submit">Filter</button>
         {% if query or selected_type or selected_list_id or start or end %}<a class="ghost" href="/research">Clear</a>{% endif %}
     </form>

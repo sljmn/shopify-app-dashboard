@@ -141,6 +141,10 @@ def test_research_workspace_is_authenticated_and_can_create_a_list(db):
         "/research", headers={"accept": "text/html"}, follow_redirects=False,
     ).status_code == 307
     client = dashboard_client(app)
+    workspace = client.get("/research")
+    assert workspace.status_code == 200
+    assert workspace.text.count("data-datepicker") >= 2
+    assert "data-date-picker" not in workspace.text
     created = client.post(
         "/research/lists", data={"title": "Acquisition targets", "description": "Apps to inspect"},
         follow_redirects=False,
@@ -149,6 +153,33 @@ def test_research_workspace_is_authenticated_and_can_create_a_list(db):
     page = client.get(created.headers["location"])
     assert page.status_code == 200
     assert "Acquisition targets" in page.text and "Apps to inspect" in page.text
+    assert "research-dossier" in page.text
+    assert "Edit details" in page.text
+    assert "data-research-app-search" in page.text
+
+
+def test_research_app_search_returns_catalog_matches_and_membership(db):
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('searchable-app','Searchable App',now(),now(),false) returning id"""
+    ).fetchone()[0]
+    list_id = db.execute(
+        "insert into research_lists (title) values ('Search list') returning id"
+    ).fetchone()[0]
+    db.execute(
+        "insert into research_list_apps (research_list_id,discovered_app_id) values (%s,%s)",
+        (list_id, app_id),
+    )
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    response = client.get(f"/research/apps/search?q=searchable&list_id={list_id}")
+
+    assert response.status_code == 200
+    assert response.json() == [{
+        "handle": "searchable-app", "name": "Searchable App",
+        "categories": "", "in_list": True,
+    }]
 
 
 def test_discover_app_can_join_a_research_list_and_opens_research_tab(db):

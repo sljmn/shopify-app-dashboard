@@ -1,13 +1,154 @@
 {% extends "base.html" %}
 {% block title %}{{ record.title }} · Research{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="sub"><a href="/research">Research</a> / List</p><h1>{{ record.title }}</h1><p class="sub">Created {{ record.created_at|local_time("%-d %b %Y") }} · updated {{ record.updated_at|local_time("%-d %b %Y %H:%M") }}</p></div><a class="ghost" href="/research/notes/new?target=list&amp;target_id={{ record.id }}">New note</a></div>
+<div class="research-dossier">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/research">Research</a><span>/</span><span>List</span></nav>
+    <header class="research-dossier-head">
+        <div class="research-dossier-copy">
+            <div class="title-line"><h1>{{ record.title }}</h1><span class="status-badge {{ 'installed' if record.status == 'active' else 'uninstalled' }}">{{ record.status|title }}</span></div>
+            {% if record.description %}<p class="research-description">{{ record.description }}</p>{% else %}<p class="research-description is-empty">No description yet.</p>{% endif %}
+            <p class="sub">Created {{ record.created_at|local_time("%-d %b %Y") }} · updated {{ record.updated_at|local_time("%-d %b %Y %H:%M") }}</p>
+        </div>
+        <div class="research-dossier-actions">
+            <a class="button" href="#add-research-app">Add app</a>
+            <a class="ghost" href="/research/notes/new?target=list&amp;target_id={{ record.id }}">New note</a>
+        </div>
+    </header>
+    <dl class="research-dossier-stats" aria-label="List totals">
+        <div><dt>Apps</dt><dd>{{ record.app_count }}</dd></div>
+        <div><dt>Notes</dt><dd>{{ record.note_count }}</dd></div>
+        <div><dt>Files</dt><dd>{{ record.attachment_count }}</dd></div>
+    </dl>
+</div>
 
-<section class="form-panel list-settings"><form method="post" action="/research/lists/{{ record.id }}"><label>Title<input name="title" required value="{{ record.title }}"></label><label>Description<textarea name="description" rows="3">{{ record.description }}</textarea></label><label>Status<select name="status"><option value="active"{% if record.status == 'active' %} selected{% endif %}>Active</option><option value="archived"{% if record.status == 'archived' %} selected{% endif %}>Archived</option></select></label><button type="submit">Save</button></form></section>
+<details class="research-edit-details">
+    <summary>Edit details</summary>
+    <form method="post" action="/research/lists/{{ record.id }}">
+        <label>Title<input name="title" required value="{{ record.title }}"></label>
+        <label class="wide-field">Description<textarea name="description" rows="3">{{ record.description }}</textarea></label>
+        <label>Status<select name="status"><option value="active"{% if record.status == 'active' %} selected{% endif %}>Active</option><option value="archived"{% if record.status == 'archived' %} selected{% endif %}>Archived</option></select></label>
+        <button type="submit">Save changes</button>
+    </form>
+</details>
 
-<section><div class="section-heading"><div><h2>Apps</h2><p class="sub">Adding an app starts listing and review tracking. Removing it does not stop its history.</p></div></div>
-<form class="filters research-add-app" method="post" action="/research/lists/{{ record.id }}/apps"><input name="handle" required placeholder="Shopify app handle, e.g. contentpilot"><button type="submit">Add app</button></form>
-<div class="table-card"><table><thead><tr><th>App</th><th>Added</th><th>Tracking</th><th></th></tr></thead><tbody>{% for app in record.apps %}<tr><td><a href="/discover/apps/{{ app.handle|urlencode }}"><strong>{{ app.name or app.handle }}</strong></a><br><span class="sub">/{{ app.handle }}</span></td><td>{{ app.added_at|local_time("%-d %b %Y") }}</td><td>{{ "Active" if app.followed else "Pending" }}</td><td><form class="inline-form" method="post" action="/research/lists/{{ record.id }}/apps/{{ app.handle|urlencode }}/remove"><button class="ghost" type="submit">Remove</button></form></td></tr>{% else %}<tr><td colspan="4">No apps in this list yet.</td></tr>{% endfor %}</tbody></table></div></section>
+<section id="add-research-app" class="research-work-section">
+    <div class="section-heading"><div><h2>Apps</h2><p class="sub">Adding an app starts listing and review tracking. Removing it keeps its history.</p></div><span class="section-count">{{ record.app_count }}</span></div>
+    <form class="research-app-search" method="post" action="/research/lists/{{ record.id }}/apps" data-research-app-search data-list-id="{{ record.id }}">
+        <label for="research-app-query">Find an App Store app</label>
+        <div class="research-app-search-control">
+            <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
+            <input id="research-app-query" type="search" autocomplete="off" placeholder="Search by app name or handle" aria-autocomplete="list" aria-controls="research-app-results" aria-expanded="false" data-research-app-query>
+            <input type="hidden" name="handle" data-research-app-handle>
+            <button type="submit" disabled data-research-app-submit>Add app</button>
+        </div>
+        <div id="research-app-results" class="research-app-results" role="listbox" hidden data-research-app-results></div>
+        <p class="field-help" data-research-app-help>Search the indexed Shopify App Store catalog.</p>
+    </form>
+    <div class="table-card"><table><thead><tr><th>App</th><th>Added</th><th>Tracking</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>{% for app in record.apps %}<tr><td><a href="/discover/apps/{{ app.handle|urlencode }}"><strong>{{ app.name or app.handle }}</strong></a><br><span class="sub">/{{ app.handle }}</span></td><td>{{ app.added_at|local_time("%-d %b %Y") }}</td><td><span class="status-badge {{ 'installed' if app.followed else 'uninstalled' }}">{{ "Active" if app.followed else "Pending" }}</span></td><td class="row-action"><form class="inline-form" method="post" action="/research/lists/{{ record.id }}/apps/{{ app.handle|urlencode }}/remove"><button class="ghost" type="submit">Remove</button></form></td></tr>{% else %}<tr><td colspan="4"><div class="empty-state"><strong>No apps in this list yet.</strong><span>Search above to start tracking one.</span></div></td></tr>{% endfor %}</tbody></table></div>
+</section>
 
-<section><div class="section-heading"><div><h2>Notes</h2><p class="sub">List-level decisions, evidence and attachments.</p></div><a href="/research/notes/new?target=list&amp;target_id={{ record.id }}">New note</a></div><div class="research-notes">{% for note in record.notes %}<article class="card research-note"><header><div><h3>{{ note.title }}</h3><span class="sub">{{ note.updated_at|local_time("%-d %b %Y %H:%M") }} · {{ note.author }}</span></div><form method="post" action="/research/notes/{{ note.id }}/delete"><button type="submit" class="ghost">Delete</button></form></header><p>{{ note.body }}</p>{% if note.attachments %}<div class="attachment-list">{% for attachment in note.attachments %}<a href="/research/attachments/{{ attachment.id }}">{{ attachment.filename }} <span>{{ (attachment.byte_size / 1024)|round(1) }} KB</span></a>{% endfor %}</div>{% endif %}</article>{% else %}<p class="empty-state">No notes yet.</p>{% endfor %}</div></section>
+<section class="research-work-section">
+    <div class="section-heading"><div><h2>Notes</h2><p class="sub">Decisions, evidence and attachments for this list.</p></div><a class="ghost" href="/research/notes/new?target=list&amp;target_id={{ record.id }}">New note</a></div>
+    <div class="research-notes">{% for note in record.notes %}<article class="card research-note"><header><div><h3>{{ note.title }}</h3><span class="sub">{{ note.updated_at|local_time("%-d %b %Y %H:%M") }} · {{ note.author }}</span></div><form method="post" action="/research/notes/{{ note.id }}/delete"><button type="submit" class="ghost">Delete</button></form></header><p>{{ note.body }}</p>{% if note.attachments %}<div class="attachment-list">{% for attachment in note.attachments %}<a href="/research/attachments/{{ attachment.id }}">{{ attachment.filename }} <span>{{ (attachment.byte_size / 1024)|round(1) }} KB</span></a>{% endfor %}</div>{% endif %}</article>{% else %}<div class="empty-state research-empty-notes"><strong>No notes yet.</strong><span>Capture a decision or attach evidence when you have it.</span><a href="/research/notes/new?target=list&amp;target_id={{ record.id }}">Create the first note</a></div>{% endfor %}</div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.nonce }}">
+(() => {
+    const form = document.querySelector("[data-research-app-search]");
+    if (!form) return;
+    const query = form.querySelector("[data-research-app-query]");
+    const handle = form.querySelector("[data-research-app-handle]");
+    const submit = form.querySelector("[data-research-app-submit]");
+    const results = form.querySelector("[data-research-app-results]");
+    const help = form.querySelector("[data-research-app-help]");
+    let timer;
+    let request;
+
+    function closeResults() {
+        results.hidden = true;
+        query.setAttribute("aria-expanded", "false");
+    }
+
+    function choose(row) {
+        query.value = row.name;
+        handle.value = row.handle;
+        submit.disabled = false;
+        help.textContent = `Ready to add /${row.handle}`;
+        closeResults();
+    }
+
+    function render(rows) {
+        results.replaceChildren();
+        if (!rows.length) {
+            const empty = document.createElement("p");
+            empty.className = "research-app-result-empty";
+            empty.textContent = "No matching apps found.";
+            results.append(empty);
+        }
+        rows.forEach((row) => {
+            const option = document.createElement("button");
+            option.type = "button";
+            option.className = "research-app-result";
+            option.setAttribute("role", "option");
+            option.disabled = row.in_list;
+            const copy = document.createElement("span");
+            const title = document.createElement("strong");
+            title.textContent = row.name;
+            const meta = document.createElement("small");
+            meta.textContent = `/${row.handle}${row.categories ? ` · ${row.categories}` : ""}`;
+            copy.append(title, meta);
+            const state = document.createElement("span");
+            state.className = "research-app-result-state";
+            state.textContent = row.in_list ? "Already added" : "Select";
+            option.append(copy, state);
+            option.addEventListener("click", () => choose(row));
+            results.append(option);
+        });
+        results.hidden = false;
+        query.setAttribute("aria-expanded", "true");
+    }
+
+    async function search() {
+        const value = query.value.trim();
+        if (value.length < 2) {
+            closeResults();
+            help.textContent = "Type at least two characters.";
+            return;
+        }
+        request?.abort();
+        request = new AbortController();
+        help.textContent = "Searching catalog…";
+        try {
+            const params = new URLSearchParams({q: value, list_id: form.dataset.listId});
+            const response = await fetch(`/research/apps/search?${params}`, {signal: request.signal});
+            if (!response.ok) throw new Error("search-failed");
+            const rows = await response.json();
+            render(rows);
+            help.textContent = rows.length ? `${rows.length} matches` : "Try another name or handle.";
+        } catch (error) {
+            if (error.name === "AbortError") return;
+            closeResults();
+            help.textContent = "Search is temporarily unavailable.";
+        }
+    }
+
+    query.addEventListener("input", () => {
+        handle.value = "";
+        submit.disabled = true;
+        clearTimeout(timer);
+        timer = setTimeout(search, 180);
+    });
+    query.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeResults();
+        if (event.key === "ArrowDown" && !results.hidden) {
+            event.preventDefault();
+            results.querySelector("button:not(:disabled)")?.focus();
+        }
+    });
+    document.addEventListener("click", (event) => {
+        if (!form.contains(event.target)) closeResults();
+    });
+})();
+</script>
 {% endblock %}
