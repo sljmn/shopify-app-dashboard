@@ -14,7 +14,7 @@ USER_AGENT = "Mantle Developer Research/1.0"
 SHOPIFY_HOSTS = frozenset({"apps.shopify.com", "apps.shopify.com."})
 RESERVED_PATHS = frozenset({
     "about", "categories", "collections", "compare", "login", "partners",
-    "privacy", "search", "terms",
+    "privacy", "search", "sitemap", "stories", "terms",
 })
 HANDLE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 

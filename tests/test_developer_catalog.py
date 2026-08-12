@@ -38,6 +38,21 @@ def test_developer_page_parser_extracts_unique_listing_handles():
     ]
 
 
+def test_developer_page_parser_ignores_shopify_navigation_links():
+    html = """
+      <a href="/stories">More stories</a>
+      <a href="/form-builder-by-hulkapps"><h3>Hulk Contact Form Builder</h3></a>
+      <a href="/product-options-by-hulkapps-1"><h3>Hulk Product Options</h3></a>
+      <a href="/post-purchase-survey"><h3>Hulk NPS Post Purchase Survey</h3></a>
+      <a href="/sitemap">Sitemap</a>
+    """
+    assert [item.handle for item in parse_developer_page(html)] == [
+        "form-builder-by-hulkapps",
+        "product-options-by-hulkapps-1",
+        "post-purchase-survey",
+    ]
+
+
 class Response:
     text = FIXTURE.read_text()
 
