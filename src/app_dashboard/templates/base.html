@@ -810,10 +810,6 @@
         .contact-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:0 24px; }
         .contact-person { display:grid; gap:4px; padding:16px 0; border-bottom:1px solid var(--line); }
         .inline-actions { display:flex; gap:8px; flex-wrap:wrap; }
-        .manage-fieldset { border:1px solid var(--line); border-radius:8px; padding:20px; margin-top:24px; }
-        .manage-fieldset legend { font-weight:700; padding:0 8px; }
-        .checkbox-row { display:flex!important; flex-direction:row!important; align-items:center; gap:10px; margin-bottom:18px; }
-        .metric-strip { display:flex; gap:24px; flex-wrap:wrap; padding-top:16px; border-top:1px solid var(--line); }
         .customer-attribution h2 { margin-bottom: 10px; }
         .detail-list {
             display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -1569,6 +1565,63 @@
         .manage-form label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
         .manage-form label small { color: var(--muted); font-weight: 400; line-height: 1.4; }
         .manage-form textarea { resize: vertical; }
+        .review-policy {
+            margin-top: 8px; padding: 24px 0; border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        .review-policy-head {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 24px; margin-bottom: 22px;
+        }
+        .review-policy-head h2 { margin: 0 0 5px; font-size: 19px; }
+        .review-policy-head p { margin: 0; max-width: 560px; color: var(--muted); font-size: 13px; }
+        .manage-form label.review-policy-toggle {
+            display: flex; grid-template-columns: none; flex-direction: row; align-items: center;
+            justify-content: space-between; gap: 16px; min-width: 270px; padding: 12px 14px;
+            border: 1px solid var(--border); border-radius: 7px; background: var(--control-inset);
+            cursor: pointer;
+        }
+        .review-policy-toggle-copy { display: grid; gap: 2px; }
+        .review-policy-toggle-copy strong { color: var(--ink); font-size: 13px; }
+        .review-policy-toggle-copy small { color: var(--muted); font-size: 11px; }
+        .review-policy-control { position: relative; flex: 0 0 auto; width: 38px; height: 22px; }
+        .manage-form .review-policy-control input {
+            position: absolute; width: 1px; height: 1px; margin: 0; padding: 0;
+            opacity: 0; pointer-events: none;
+        }
+        .review-policy-switch {
+            position: absolute; inset: 0; border: 1px solid var(--control-border);
+            border-radius: 999px; background: var(--card); transition: .16s ease;
+        }
+        .review-policy-switch::after {
+            content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
+            border-radius: 50%; background: var(--muted); transition: transform .16s ease, background .16s ease;
+        }
+        .review-policy-control input:checked + .review-policy-switch { border-color: var(--brand); background: var(--brand); }
+        .review-policy-control input:checked + .review-policy-switch::after { transform: translateX(16px); background: #fff; }
+        .review-policy-control input:focus-visible + .review-policy-switch {
+            outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent);
+        }
+        .review-policy-fields {
+            display: grid; grid-template-columns: minmax(240px, 2fr) repeat(2, minmax(150px, 1fr));
+            gap: 18px 16px;
+        }
+        .review-policy-event { grid-column: span 2; }
+        .number-suffix { position: relative; display: block; }
+        .manage-form .number-suffix input { padding-right: 68px; }
+        .number-suffix > span {
+            position: absolute; right: 11px; top: 50%; transform: translateY(-50%);
+            color: var(--muted); font-size: 12px; font-weight: 500; pointer-events: none;
+        }
+        .review-policy-metrics {
+            display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0; margin: 24px 0 0; padding: 18px 0 0; border-top: 1px solid var(--border);
+        }
+        .review-policy-metrics div { padding: 0 18px; border-left: 1px solid var(--border); }
+        .review-policy-metrics div:first-child { padding-left: 0; border-left: 0; }
+        .review-policy-metrics dt { color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; }
+        .review-policy-metrics dd { margin: 4px 0 0; color: var(--ink); font: 700 22px var(--mono); }
+        .manage-save-actions { justify-content: flex-end; }
         .back-link { display: inline-block; margin-bottom: 8px; font-size: 13px; }
         .danger-zone { max-width: 900px; margin-top: 16px; }
         .danger-zone summary { cursor: pointer; font-weight: 600; }
@@ -1608,6 +1661,10 @@
             .manage-actions .button { flex: 1; }
             .manage-orgs { grid-template-columns: 1fr; }
             .form-grid { grid-template-columns: 1fr; }
+            .review-policy-head { align-items: stretch; flex-direction: column; }
+            .manage-form label.review-policy-toggle { width: 100%; min-width: 0; }
+            .review-policy-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .review-policy-event { grid-column: 1 / -1; }
             .runbook-layout { grid-template-columns: 1fr; }
             .runbook-index { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .manage-table, .manage-table tbody, .manage-table tr, .manage-table td { display: block; width: 100%; }
@@ -1620,6 +1677,16 @@
         @media (max-width: 520px) {
             .manage-filter { align-items: stretch; flex-direction: column; }
             .manage-filter select, .manage-filter button { width: 100%; }
+            .review-policy { padding: 20px 0; }
+            .review-policy-fields, .review-policy-metrics { grid-template-columns: 1fr; }
+            .review-policy-metrics { gap: 0; }
+            .review-policy-metrics div,
+            .review-policy-metrics div:first-child {
+                display: flex; align-items: baseline; justify-content: space-between;
+                padding: 10px 0; border: 0; border-bottom: 1px solid var(--border);
+            }
+            .review-policy-metrics div:last-child { border-bottom: 0; }
+            .manage-save-actions button { width: 100%; }
             .runbook-index { grid-template-columns: 1fr; }
         }
 

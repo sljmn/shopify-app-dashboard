@@ -33,27 +33,41 @@
         <label><span>Measurement Protocol</span><select name="tracking_status">{% for item in tracking_statuses %}<option value="{{ item }}" {% if values.tracking_status == item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select></label>
     </div>
     <label><span>Listing status note</span><textarea name="listing_status_reason" rows="3">{{ values.listing_status_reason or '' }}</textarea></label>
-    <fieldset class="manage-fieldset">
-        <legend>Review collection</legend>
-        <label class="checkbox-row"><input type="checkbox" name="review_prompt_enabled" value="1" {% if values.review_prompt_enabled %}checked{% endif %}><span>Enable native Shopify review prompts</span></label>
-        <div class="form-grid">
-            <label><span>Success event</span><input name="review_trigger_event" value="{{ values.review_trigger_event or '' }}" placeholder="book_import_succeeded"></label>
-            <label><span>Successful events required</span><input type="number" min="1" name="review_min_success_count" value="{{ values.review_min_success_count or 1 }}"></label>
-            <label><span>Minimum hours installed</span><input type="number" min="24" name="review_min_install_hours" value="{{ values.review_min_install_hours or 24 }}"></label>
-            <label><span>Retry after cancellation (days)</span><input type="number" min="1" name="review_retry_days" value="{{ values.review_retry_days or 90 }}"></label>
-            <label><span>Maximum prompts per year</span><input type="number" min="1" max="3" name="review_annual_cap" value="{{ values.review_annual_cap or 3 }}"></label>
+    <section class="review-policy" aria-labelledby="review-policy-title">
+        <div class="review-policy-head">
+            <div>
+                <h2 id="review-policy-title">Review collection</h2>
+                <p>Ask for a Shopify review after the merchant reaches a proven success moment.</p>
+            </div>
+            <label class="review-policy-toggle">
+                <span class="review-policy-toggle-copy">
+                    <strong>Native review prompt</strong>
+                    <small>Development stores are excluded</small>
+                </span>
+                <span class="review-policy-control">
+                    <input type="checkbox" name="review_prompt_enabled" value="1" {% if values.review_prompt_enabled %}checked{% endif %}>
+                    <span class="review-policy-switch" aria-hidden="true"></span>
+                </span>
+            </label>
+        </div>
+        <div class="review-policy-fields">
+            <label class="review-policy-event"><span>Success event</span><input name="review_trigger_event" value="{{ values.review_trigger_event or '' }}" placeholder="book_import_succeeded"><small>Exact allowlisted event reported by the app.</small></label>
+            <label><span>Events required</span><input type="number" min="1" name="review_min_success_count" value="{{ values.review_min_success_count or 1 }}"><small>Successful events before asking.</small></label>
+            <label><span>Installed for</span><span class="number-suffix"><input type="number" min="24" name="review_min_install_hours" value="{{ values.review_min_install_hours or 24 }}"><span>hours</span></span><small>Minimum age of the installation.</small></label>
+            <label><span>Retry delay</span><span class="number-suffix"><input type="number" min="1" name="review_retry_days" value="{{ values.review_retry_days or 90 }}"><span>days</span></span><small>Wait after a merchant closes it.</small></label>
+            <label><span>Annual limit</span><span class="number-suffix"><input type="number" min="1" max="3" name="review_annual_cap" value="{{ values.review_annual_cap or 3 }}"><span>prompts</span></span><small>Maximum per shop and staff member.</small></label>
         </div>
         {% if review_summary %}
-        <div class="metric-strip">
-            <span><b>{{ review_summary.shown }}</b> shown</span>
-            <span><b>{{ review_summary.temporarily_declined }}</b> retry later</span>
-            <span><b>{{ review_summary.stopped }}</b> stopped</span>
-            <span><b>{{ review_summary.scheduled }}</b> pending</span>
-        </div>
+        <dl class="review-policy-metrics" aria-label="Review prompt outcomes">
+            <div><dt>Shown</dt><dd>{{ review_summary.shown }}</dd></div>
+            <div><dt>Retry later</dt><dd>{{ review_summary.temporarily_declined }}</dd></div>
+            <div><dt>Stopped</dt><dd>{{ review_summary.stopped }}</dd></div>
+            <div><dt>Pending</dt><dd>{{ review_summary.scheduled }}</dd></div>
+        </dl>
         {% endif %}
-    </fieldset>
+    </section>
     {% endif %}
-    <div class="form-actions"><button type="submit">Save</button></div>
+    <div class="form-actions manage-save-actions"><button type="submit">Save changes</button></div>
 </form>
 
 {% if values.id and not values.archived_at and not values.archived %}

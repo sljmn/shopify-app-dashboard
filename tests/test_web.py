@@ -133,6 +133,14 @@ def test_integration_management_is_authenticated_and_never_renders_secrets(db):
     assert "Token present" in page.text
     assert "Management" in page.text
 
+    app_form = dashboard_client(app).get("/management/apps/1/edit")
+    assert app_form.status_code == 200
+    assert 'class="review-policy"' in app_form.text
+    assert 'class="review-policy-toggle"' in app_form.text
+    assert 'class="review-policy-fields"' in app_form.text
+    assert 'class="review-policy-metrics"' in app_form.text
+    assert "Development stores are excluded" in app_form.text
+
 
 def test_research_workspace_is_authenticated_and_can_create_a_list(db):
     app = create_app(conn_factory=lambda: keep_open(db))
