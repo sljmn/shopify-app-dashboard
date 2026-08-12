@@ -10,6 +10,7 @@
         <p class="sub"><a href="/discover">Discover</a> / Public app</p>
         <div class="title-with-status"><h1>{{ detail.name or detail.handle|replace('-', ' ')|title }}</h1>{% if detail.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% endif %}</div>
         <p class="sub">/{{ detail.handle }} · {{ detail.categories or "Not categorized" }}</p>
+        {% if detail.developer_id %}<div class="app-developer-meta"><span>Developer</span><a href="/research/developers/{{ detail.developer_id }}"><strong>{{ detail.developer_name }}</strong></a><span aria-hidden="true">·</span><a href="{{ detail.developer_url }}" target="_blank" rel="noopener">Shopify profile</a></div>{% endif %}
     </div>
     <div class="heading-actions">
         <form method="post" action="/discover/apps/{{ detail.handle|urlencode }}/{% if detail.followed %}unfollow{% else %}follow{% endif %}">
@@ -33,7 +34,6 @@
     <div class="card stat"><div class="label">First observed</div><div class="num"><small>{{ detail.first_seen_at|local_time("%-d %b %Y") }}</small></div></div>
     <div class="card stat"><div class="label">Built for Shopify</div><div class="num bfs-status"><small>{% if detail.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% elif detail.bfs_checked_at %}Not BFS{% else %}Not checked{% endif %}</small></div>{% if detail.bfs_checked_at %}<div class="sub">Checked {{ detail.bfs_checked_at|local_time("%-d %b %Y %H:%M") }}</div>{% endif %}</div>
 </div>
-{% if detail.developer_id %}<p class="developer-line">By <a href="/research/developers/{{ detail.developer_id }}"><strong>{{ detail.developer_name }}</strong></a> · <a href="{{ detail.developer_url }}" target="_blank" rel="noopener">Developer page</a></p>{% endif %}
 {% if detail.listing %}
 <section class="listing-overview">
     <div class="listing-copy">

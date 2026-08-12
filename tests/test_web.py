@@ -591,6 +591,37 @@ def test_discover_and_app_detail_show_built_for_shopify_status(db):
     assert "Checked 12 Aug 2026 02:00" in detail.text
 
 
+def test_discovered_app_places_developer_identity_in_the_page_heading(db):
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('developer-app','Developer App',now(),now(),false) returning id"""
+    ).fetchone()[0]
+    developer_id = db.execute(
+        """insert into discovered_developers (shopify_url,name)
+           values ('https://apps.shopify.com/partners/example','Example Studio')
+           returning id"""
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovered_app_developers
+             (discovered_app_id,discovered_developer_id)
+           values (%s,%s)""",
+        (app_id, developer_id),
+    )
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    page = client.get("/discover/apps/developer-app")
+
+    assert page.status_code == 200
+    assert 'class="app-developer-meta"' in page.text
+    assert "Example Studio" in page.text
+    assert "Shopify profile" in page.text
+    assert 'class="developer-line"' not in page.text
+    assert page.text.index('<div class="app-developer-meta">') < page.text.index(
+        '<nav class="aso-tabs"'
+    )
+
+
 def test_discovered_app_reviews_show_capture_status_filter_and_reply(db):
     observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
     app_id = db.execute(
