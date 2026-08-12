@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Research · {{ DASHBOARD_NAME }}{% endblock %}
+{% block content %}
+<div class="page-heading">
+    <div><h1>Research</h1><p class="sub">Lists, notes and evidence for public apps and developers.</p></div>
+    <a class="ghost" href="/research/lists/new">New list</a>
+</div>
+
+<nav class="aso-tabs" aria-label="Research type">
+    <a href="/research"{% if not selected_type %} aria-current="page"{% endif %}>All</a>
+    {% for key, label in [("list","Lists"),("note","Notes"),("attachment","Attachments")] %}
+    <a href="/research?type={{ key }}"{% if selected_type == key %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>
+
+<section class="research-toolbar">
+    <form class="filters research-filters" method="get">
+        <input type="search" name="q" value="{{ query }}" placeholder="Search title, note, app, developer or filename">
+        <select name="type" aria-label="Type">
+            <option value="">All types</option>
+            {% for key, label in [("list","Lists"),("note","Notes"),("attachment","Attachments")] %}<option value="{{ key }}"{% if selected_type == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        <select name="list_id" aria-label="Research list">
+            <option value="">All lists</option>
+            {% for list in lists %}<option value="{{ list.id }}"{% if selected_list_id == list.id %} selected{% endif %}>{{ list.title }}</option>{% endfor %}
+        </select>
+        <input type="text" name="start" value="{{ start or '' }}" placeholder="From" data-date-picker aria-label="From date">
+        <input type="text" name="end" value="{{ end or '' }}" placeholder="To" data-date-picker aria-label="To date">
+        <button type="submit">Filter</button>
+        {% if query or selected_type or selected_list_id or start or end %}<a class="ghost" href="/research">Clear</a>{% endif %}
+    </form>
+</section>
+
+{% if not selected_type or selected_type == "list" %}
+<section>
+    <div class="section-heading"><div><h2>Lists</h2><p class="sub">Named workspaces for apps you want to keep researching.</p></div></div>
+    <div class="table-card"><table class="research-table"><thead><tr><th>Updated</th><th>Title</th><th>Status</th><th>Apps</th><th>Notes</th><th>Files</th></tr></thead><tbody>
+    {% for list in lists %}<tr><td>{{ list.updated_at|local_time("%-d %b %Y %H:%M") }}</td><td><a href="/research/lists/{{ list.id }}"><strong>{{ list.title }}</strong></a><br><span class="sub">{{ list.description|truncate(100) }}</span></td><td><span class="status-badge {{ 'installed' if list.status == 'active' else 'uninstalled' }}">{{ list.status|title }}</span></td><td>{{ list.app_count }}</td><td>{{ list.note_count }}</td><td>{{ list.attachment_count }}</td></tr>
+    {% else %}<tr><td colspan="6">No research lists yet.</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endif %}
+
+{% if selected_type != "list" %}
+<section>
+    <div class="section-heading"><div><h2>{% if selected_type %}{{ selected_type|title }}s{% else %}Latest research{% endif %}</h2><p class="sub">Newest changes first.</p></div></div>
+    <div class="table-card"><table class="research-table"><thead><tr><th>Updated</th><th>Title</th><th>Type</th><th>Context</th><th>List</th><th>Author</th></tr></thead><tbody>
+    {% for row in rows if row.type != 'list' %}<tr><td>{{ row.updated_at|local_time("%-d %b %Y %H:%M") }}</td><td>{% if row.type == 'attachment' %}<a href="/research/attachments/{{ row.id }}"><strong>{{ row.title }}</strong></a><br><span class="sub">{{ row.mime_type }}</span>{% else %}<strong>{{ row.title }}</strong><br><span class="sub">{{ row.summary|truncate(120) }}</span>{% endif %}</td><td>{{ row.type|title }}</td><td>{% if row.context_kind == 'list' %}<a href="/research/lists/{{ row.context_id }}">{{ row.context_title }}</a>{% elif row.context_kind == 'developer' %}<a href="/research/developers/{{ row.context_id }}">{{ row.context_title }}</a>{% else %}<a href="/discover/apps/{{ row.context_handle|urlencode }}?view=research">{{ row.context_title }}</a>{% endif %}</td><td>{% if row.list_id %}<a href="/research/lists/{{ row.list_id }}">{{ row.list_title }}</a>{% else %}—{% endif %}</td><td>{{ row.author }}</td></tr>
+    {% else %}<tr><td colspan="6">No research matches these filters.</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endif %}
+{% endblock %}

@@ -1375,6 +1375,51 @@
             .manage-filter select, .manage-filter button { width: 100%; }
             .runbook-index { grid-template-columns: 1fr; }
         }
+
+        /* Research is a quiet work surface: dense tables for scanning, then
+           simple unframed note streams inside a list/app/developer context. */
+        .research-toolbar { margin: 18px 0 24px; }
+        .research-filters { display: grid; grid-template-columns: minmax(260px, 2fr) repeat(4, minmax(130px, 1fr)) auto auto; }
+        .research-table td { vertical-align: top; }
+        .compact-form { max-width: 760px; }
+        .compact-form form, .list-settings form { display: grid; gap: 16px; }
+        .compact-form label, .list-settings label { display: grid; gap: 7px; font-size: 13px; font-weight: 650; }
+        .compact-form input, .compact-form textarea, .list-settings input,
+        .list-settings textarea, .list-settings select {
+            width: 100%; border: 1px solid var(--control-border); border-radius: 7px;
+            background: var(--control-bg); color: var(--ink); padding: 10px 12px;
+            font: 14px var(--body); resize: vertical;
+        }
+        .field-help { color: var(--muted); font-size: 12px; font-weight: 400; }
+        .form-error { color: var(--down); border-left: 3px solid var(--down); padding-left: 10px; }
+        .list-settings { margin-bottom: 28px; }
+        .list-settings form { grid-template-columns: minmax(180px, 1fr) minmax(300px, 2fr) 150px auto; align-items: end; }
+        .list-settings textarea { min-height: 44px; }
+        .research-add-app { margin-bottom: 14px; grid-template-columns: minmax(240px, 1fr) auto auto; }
+        .research-memberships, .attachment-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+        .research-notes { display: grid; gap: 12px; }
+        .research-note { padding: 18px; }
+        .research-note header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+        .research-note h3 { margin: 0 0 3px; }
+        .research-note p { white-space: pre-wrap; line-height: 1.55; }
+        .attachment-list a { display: inline-flex; gap: 6px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; }
+        .attachment-list span { color: var(--muted); font-size: 12px; }
+        .developer-line { margin: -4px 0 20px; color: var(--muted); }
+        .compact-list-form { display: inline-grid; grid-template-columns: minmax(120px, 1fr) auto; gap: 5px; }
+        .compact-list-form select { min-width: 125px; max-width: 180px; }
+        @media (max-width: 900px) {
+            .research-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .research-filters input[type="search"] { grid-column: 1 / -1; }
+            .list-settings form { grid-template-columns: 1fr 1fr; }
+            .list-settings form label:nth-child(2) { grid-column: 1 / -1; }
+        }
+        @media (max-width: 600px) {
+            .research-filters, .list-settings form, .research-add-app { grid-template-columns: 1fr; }
+            .research-filters > *, .research-add-app > * { width: 100%; }
+            .list-settings form label:nth-child(2) { grid-column: auto; }
+            .research-note header { align-items: stretch; flex-direction: column; }
+            .research-note header form button { width: 100%; }
+        }
     </style>
     <!-- Arms the bar-grow animation, and only if this document is on screen
          right now. In the head so the class is set before first paint; without
@@ -1442,6 +1487,9 @@
          []),
         ("/discover", "discover", "Discover",
          '<circle cx="8" cy="8" r="4.5"/><path d="m11.5 11.5 4 4"/><path d="M15 3v4M13 5h4"/>',
+         []),
+        ("/research", "research", "Research",
+         '<path d="M4 4h12v12H4z"/><path d="M7 8h6M7 11h6M7 14h4"/>',
          []),
         ("/management/integrations", "management", "Management",
          '<path d="M4 5h12M4 10h12M4 15h12"/><circle cx="7" cy="5" r="1.5"/><circle cx="13" cy="10" r="1.5"/><circle cx="8" cy="15" r="1.5"/>',

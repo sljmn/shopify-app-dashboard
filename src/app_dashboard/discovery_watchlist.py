@@ -243,6 +243,7 @@ def app_detail(conn, handle: str) -> dict | None:
                   watch.last_error_code,observation.review_count,
                   observation.rating,observation.best_category_rank,
                   snapshot.id,snapshot.captured_at,snapshot.listing,
+                  developer.id,developer.name,developer.shopify_url,
                   coalesce(string_agg(distinct category.name, ', '
                     order by category.name),'') categories
            from discovered_apps app
@@ -258,12 +259,20 @@ def app_detail(conn, handle: str) -> dict | None:
            ) snapshot on true
            left join discovered_app_categories member on member.discovered_app_id=app.id
            left join discovery_categories category on category.id=member.category_id
+           left join lateral (
+             select developer.id,developer.name,developer.shopify_url
+             from discovered_app_developers relation
+             join discovered_developers developer
+               on developer.id=relation.discovered_developer_id
+             where relation.discovered_app_id=app.id
+             order by relation.created_at desc limit 1
+           ) developer on true
            where app.handle=%s
            group by app.id,watch.active,watch.follow_source,watch.followed_at,
                     watch.last_success_at,watch.last_error_code,
                     observation.review_count,observation.rating,
                     observation.best_category_rank,snapshot.id,snapshot.captured_at,
-                    snapshot.listing""",
+                    snapshot.listing,developer.id,developer.name,developer.shopify_url""",
         (handle,),
     ).fetchone()
     if not row:
@@ -273,9 +282,22 @@ def app_detail(conn, handle: str) -> dict | None:
         "built_for_shopify", "bfs_checked_at",
         "followed", "follow_source", "followed_at", "last_success_at",
         "last_error_code", "reviews", "rating", "best_rank", "snapshot_id",
-        "snapshot_at", "listing", "categories",
+        "snapshot_at", "listing", "developer_id", "developer_name",
+        "developer_url", "categories",
     )
     detail = dict(zip(keys, row, strict=True))
+    if detail["developer_id"] is None and detail["listing"]:
+        from app_dashboard.developer_catalog import upsert_developer_from_listing
+        developer_id = upsert_developer_from_listing(
+            conn, detail["id"], detail["listing"], now=detail["snapshot_at"],
+        )
+        if developer_id:
+            developer = conn.execute(
+                "select id,name,shopify_url from discovered_developers where id=%s",
+                (developer_id,),
+            ).fetchone()
+            (detail["developer_id"], detail["developer_name"],
+             detail["developer_url"]) = developer
     detail["media"] = []
     if detail["snapshot_id"] is not None:
         detail["media"] = [

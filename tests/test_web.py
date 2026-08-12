@@ -134,6 +134,56 @@ def test_integration_management_is_authenticated_and_never_renders_secrets(db):
     assert "Management" in page.text
 
 
+def test_research_workspace_is_authenticated_and_can_create_a_list(db):
+    app = create_app(conn_factory=lambda: keep_open(db))
+    signed_out = dashboard_client(app, authenticated=False)
+    assert signed_out.get(
+        "/research", headers={"accept": "text/html"}, follow_redirects=False,
+    ).status_code == 307
+    client = dashboard_client(app)
+    created = client.post(
+        "/research/lists", data={"title": "Acquisition targets", "description": "Apps to inspect"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    page = client.get(created.headers["location"])
+    assert page.status_code == 200
+    assert "Acquisition targets" in page.text and "Apps to inspect" in page.text
+
+
+def test_discover_app_can_join_a_research_list_and_opens_research_tab(db):
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('research-route','Research Route',now(),now(),false) returning id"""
+    ).fetchone()[0]
+    list_id = db.execute(
+        "insert into research_lists (title) values ('Route list') returning id"
+    ).fetchone()[0]
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+    response = client.post(
+        "/discover/apps/research-route/lists", data={"list_id": str(list_id)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?view=research")
+    page = client.get(response.headers["location"])
+    assert page.status_code == 200 and "Route list" in page.text
+    assert db.execute(
+        "select count(*) from research_list_apps where discovered_app_id=%s", (app_id,),
+    ).fetchone()[0] == 1
+
+
+def test_research_write_refuses_cross_origin_requests(db):
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+    response = client.post(
+        "/research/lists", data={"title": "Nope"},
+        headers={"Origin": "https://evil.example"}, follow_redirects=False,
+    )
+    assert response.status_code == 403
+    assert db.execute("select count(*) from research_lists").fetchone()[0] == 0
+
+
 def test_integration_management_labels_connected_tracking_without_data_as_waiting(db):
     db.execute("update apps set tracking_status='connected'")
 

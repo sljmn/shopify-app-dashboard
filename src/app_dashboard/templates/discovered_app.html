@@ -15,7 +15,7 @@
 </div>
 
 <nav class="aso-tabs" aria-label="App intelligence views">
-    {% for key, label in [("overview","Overview"),("reviews","Reviews"),("growth","Growth"),("history","Listing history"),("compare","Compare")] %}
+    {% for key, label in [("overview","Overview"),("reviews","Reviews"),("growth","Growth"),("history","Listing history"),("compare","Compare"),("research","Research")] %}
     <a href="/discover/apps/{{ detail.handle|urlencode }}?view={{ key }}"{% if view == key %} aria-current="page"{% endif %}>{{ label }}</a>
     {% endfor %}
 </nav>
@@ -28,6 +28,7 @@
     <div class="card stat"><div class="label">First observed</div><div class="num"><small>{{ detail.first_seen_at|local_time("%-d %b %Y") }}</small></div></div>
     <div class="card stat"><div class="label">Built for Shopify</div><div class="num bfs-status"><small>{% if detail.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% elif detail.bfs_checked_at %}Not BFS{% else %}Not checked{% endif %}</small></div>{% if detail.bfs_checked_at %}<div class="sub">Checked {{ detail.bfs_checked_at|local_time("%-d %b %Y %H:%M") }}</div>{% endif %}</div>
 </div>
+{% if detail.developer_id %}<p class="developer-line">By <a href="/research/developers/{{ detail.developer_id }}"><strong>{{ detail.developer_name }}</strong></a> · <a href="{{ detail.developer_url }}" target="_blank" rel="noopener">Developer page</a></p>{% endif %}
 {% if detail.listing %}
 <section class="listing-overview">
     <div class="listing-copy">
@@ -99,11 +100,19 @@
 <section><h2>Immutable listing versions</h2><p class="sub">Growth movement is measured at the first category scan after a listing change. It shows correlation, not causation.</p><div class="table-card"><table><thead><tr><th>Captured</th><th>Changed fields</th><th>Next review movement</th><th>Next rank movement</th><th>Archived media</th><th></th></tr></thead><tbody>
 {% for version in versions %}<tr><td>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</td><td>{{ version.changed_fields|join(", ") or "Baseline" }}</td><td{% if version.review_movement and version.review_movement > 0 %} class="money-up"{% endif %}>{% if version.review_movement is not none %}{{ signed(version.review_movement) }}{% else %}—{% endif %}</td><td{% if version.rank_movement and version.rank_movement > 0 %} class="money-up"{% endif %}>{% if version.rank_movement is not none %}{{ signed(version.rank_movement) }}{% else %}—{% endif %}</td><td>{{ version.media_count }}</td><td>{% if version.before_id %}<a href="/discover/apps/{{ detail.handle|urlencode }}?view=compare&amp;before={{ version.before_id }}&amp;after={{ version.after_id }}">View diff</a>{% else %}<span class="sub">Initial version</span>{% endif %}</td></tr>{% else %}<tr><td colspan="6">No listing versions captured yet.</td></tr>{% endfor %}
 </tbody></table></div></section>
-{% else %}
+{% elif view == "compare" %}
 <section><h2>Compare listing versions</h2>
 <form class="filters compare-picker" method="get"><input type="hidden" name="view" value="compare"><select name="before" aria-label="Before version">{% for version in versions %}<option value="{{ version.id }}"{% if version.id == before_id %} selected{% endif %}>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</option>{% endfor %}</select><select name="after" aria-label="After version">{% for version in versions %}<option value="{{ version.id }}"{% if version.id == after_id %} selected{% endif %}>{{ version.captured_at|local_time("%-d %b %Y %H:%M") }}</option>{% endfor %}</select><button type="submit">Compare</button></form>
 {% if comparison %}<div class="version-diff">{% for change in comparison.fields %}<article><h3>{{ change.field|replace('_',' ')|title }}</h3><div class="diff-pair"><div><span class="sub">Before</span><pre>{{ change.before }}</pre></div><div><span class="sub">After</span><pre>{{ change.after }}</pre></div></div></article>{% else %}<p>No differences between these versions.</p>{% endfor %}
 <article><h3>Archived media</h3><div class="diff-pair"><div><span class="sub">Before</span><div class="listing-gallery">{% for role, position, digest, source in comparison.before.media if role == "screenshot" %}<img src="/discover/media/{{ digest }}" alt="Before screenshot {{ position + 1 }}" loading="lazy">{% else %}<span>—</span>{% endfor %}</div></div><div><span class="sub">After</span><div class="listing-gallery">{% for role, position, digest, source in comparison.after.media if role == "screenshot" %}<img src="/discover/media/{{ digest }}" alt="After screenshot {{ position + 1 }}" loading="lazy">{% else %}<span>—</span>{% endfor %}</div></div></div></article></div>{% elif versions|length < 2 %}<p class="empty-state">Two changed listing versions are required for comparison.</p>{% endif %}
+</section>
+{% else %}
+<section class="research-app-view">
+    <div class="section-heading"><div><h2>Research</h2><p class="sub">Keep this app in multiple lists and record decisions or evidence.</p></div><a href="/research/notes/new?target=app&amp;target_id={{ detail.id }}">New note</a></div>
+    <form class="filters research-add-app" method="post" action="/discover/apps/{{ detail.handle|urlencode }}/lists"><select name="list_id" required><option value="">Add to a list…</option>{% for list in research_lists %}<option value="{{ list.id }}">{{ list.title }}</option>{% endfor %}</select><button type="submit">Add</button><a class="ghost" href="/research/lists/new">New list</a></form>
+    {% if research.lists %}<div class="research-memberships">{% for list in research.lists %}<a class="category-pill" href="/research/lists/{{ list.id }}">{{ list.title }}</a>{% endfor %}</div>{% endif %}
+    {% if detail.developer_id %}<p>Developer: <a href="/research/developers/{{ detail.developer_id }}"><strong>{{ detail.developer_name }}</strong></a></p>{% endif %}
+    <div class="research-notes">{% for note in research.notes %}<article class="card research-note"><header><div><h3>{{ note.title }}</h3><span class="sub">{{ note.updated_at|local_time("%-d %b %Y %H:%M") }} · {{ note.author }}</span></div><form method="post" action="/research/notes/{{ note.id }}/delete"><button class="ghost" type="submit">Delete</button></form></header><p>{{ note.body }}</p>{% if note.attachments %}<div class="attachment-list">{% for attachment in note.attachments %}<a href="/research/attachments/{{ attachment.id }}">{{ attachment.filename }}</a>{% endfor %}</div>{% endif %}</article>{% else %}<p class="empty-state">No app notes yet.</p>{% endfor %}</div>
 </section>
 {% endif %}
 {% endblock %}

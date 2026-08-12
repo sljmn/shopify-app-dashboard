@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}New research note · {{ DASHBOARD_NAME }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="sub"><a href="/research">Research</a> / Note</p><h1>New note</h1></div></div>
+<section class="form-panel compact-form">
+    {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
+    <form method="post" action="/research/notes" enctype="multipart/form-data">
+        <input type="hidden" name="target_kind" value="{{ target_kind }}"><input type="hidden" name="target_id" value="{{ target_id }}">
+        <label>Title<input name="title" required maxlength="180"></label>
+        <label>Notes<textarea name="body" rows="9"></textarea></label>
+        <label>Attachments<input name="attachments" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.csv,.txt"><span class="field-help">Images, PDF, Office, CSV or TXT · maximum 15 MB each · up to 5 files</span></label>
+        <div class="form-actions"><button type="submit">Save note</button><a class="ghost" href="/research">Cancel</a></div>
+    </form>
+</section>
+{% endblock %}

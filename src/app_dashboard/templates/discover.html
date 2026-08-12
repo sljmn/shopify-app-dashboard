@@ -47,6 +47,8 @@
                 <td data-label="Categories" class="category-list">{{ row.categories or "—" }}</td>
                 <td data-label="Actions"><div class="catalog-actions">
                     <a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a>
+                    <a href="/discover/apps/{{ row.handle|urlencode }}?view=research">Research</a>
+                    {% if research_lists %}<form class="inline-form compact-list-form" method="post" action="/discover/apps/{{ row.handle|urlencode }}/lists"><select name="list_id" aria-label="Add {{ row.name or row.handle }} to research list" required><option value="">Add to list…</option>{% for list in research_lists %}<option value="{{ list.id }}">{{ list.title }}</option>{% endfor %}</select><button class="ghost" type="submit">Add</button></form>{% endif %}
                     <form class="inline-form" method="post" action="/discover/apps/{{ row.handle|urlencode }}/{% if row.followed %}unfollow{% else %}follow{% endif %}">
                         <button class="ghost" type="submit">{% if row.followed %}Following{% else %}Follow{% endif %}</button>
                     </form>
@@ -137,7 +139,7 @@
                 <td>{{ row.reviews if row.reviews is not none else "—" }}</td>
                 <td>{{ row.event_at|local_time("%-d %b %Y %H:%M") }}<br><span class="sub">Shopify lastmod: {{ row.listing_updated_on or "—" }}</span></td>
                 <td>{% if row.last_verified_change %}<a href="/discover/apps/{{ row.handle|urlencode }}?view=history">{{ row.last_verified_change|local_time("%-d %b %H:%M") }}</a>{% else %}—{% endif %}</td>
-                <td><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
+                <td><a href="/discover/apps/{{ row.handle|urlencode }}?view=research">Research</a> · <a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
             </tr>
             {% else %}
             <tr><td colspan="10">{% if indexed %}No app activity matches these filters yet.{% else %}The first App Store baseline has not run yet.{% endif %}</td></tr>

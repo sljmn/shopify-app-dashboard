@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from datetime import date, timedelta
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -63,6 +63,26 @@ from app_dashboard.discovery_watchlist import (
     unfollow_category,
     unfollow_app,
     watchlist_summary,
+)
+from app_dashboard.developer_catalog import developer_detail, sync_developer_catalog
+from app_dashboard.object_storage import (
+    InvalidResearchFile,
+    ResearchObjectStore,
+    StorageConfigurationError,
+)
+from app_dashboard.research import (
+    add_app_to_list,
+    attach_object,
+    attachment_detail,
+    create_list as create_research_list,
+    create_note as create_research_note,
+    delete_note as delete_research_note,
+    get_list as get_research_list,
+    list_lists as list_research_lists,
+    remove_app_from_list,
+    research_index,
+    target_research,
+    update_list as update_research_list,
 )
 from app_dashboard.review_collector import review_report
 from app_dashboard.watchlist_collector import media_path
@@ -757,6 +777,303 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             **extra,
         }
 
+    def _research_context(request: Request, user: str, **extra) -> dict:
+        conn = conn_factory()
+        try:
+            apps = active_apps(conn)
+        finally:
+            conn.close()
+        return {
+            **page_context(request, user, "research", None, apps),
+            **extra,
+        }
+
+    async def _research_form(request: Request) -> tuple[str, dict]:
+        """Same-origin multipart boundary for notes with bounded attachments."""
+        email = _session_email(request)
+        if not email:
+            raise HTTPException(status_code=403, detail="Changing dashboard data needs a browser session. Sign in first.")
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != settings.public_base_url.rstrip("/"):
+            raise HTTPException(status_code=403, detail="Cross-origin write refused")
+        content_type = request.headers.get("content-type", "")
+        if not content_type.startswith("multipart/form-data"):
+            raise HTTPException(status_code=415, detail="Send a multipart form body")
+        form = await request.form(max_files=5, max_fields=30,
+                                  max_part_size=settings.research_upload_max_bytes)
+        return email, form
+
+    def _research_store() -> ResearchObjectStore:
+        try:
+            return ResearchObjectStore(settings)
+        except StorageConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+
+    @app.get("/research")
+    def research_workspace(
+        request: Request, q: str = "", type: str = "", list_id: int | None = None,
+        status: str = "", start: date | None = None, end: date | None = None,
+        user: str = Depends(verify_creds),
+    ):
+        selected_type = type if type in {"list", "note", "attachment"} else None
+        selected_status = status if status in {"active", "archived"} else None
+        conn = conn_factory()
+        try:
+            rows = research_index(
+                conn, query=q.strip() or None, item_type=selected_type,
+                list_id=list_id, status=selected_status, start=start, end=end,
+            )
+            lists = list_research_lists(conn, status=selected_status)
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request, "research_index.html",
+            _research_context(
+                request, user, rows=rows, lists=lists, query=q.strip(),
+                selected_type=selected_type or "", selected_list_id=list_id,
+                selected_status=selected_status or "", start=start, end=end,
+            ),
+        )
+
+    @app.get("/research/lists/new")
+    def new_research_list(request: Request, user: str = Depends(verify_creds)):
+        return templates.TemplateResponse(
+            request, "research_list_form.html",
+            _research_context(request, user, record=None, error=None),
+        )
+
+    @app.post("/research/lists")
+    async def store_research_list(request: Request, user: str = Depends(verify_creds)):
+        del user
+        _, raw = await _browser_form(request)
+        values = _flat_form(raw)
+        conn = conn_factory()
+        try:
+            record = create_research_list(
+                conn, values.get("title", ""), values.get("description", ""),
+            )
+        except ValueError as exc:
+            return templates.TemplateResponse(
+                request, "research_list_form.html",
+                _research_context(request, settings.dashboard_username,
+                                  record=values, error=str(exc)), status_code=422,
+            )
+        finally:
+            conn.close()
+        return RedirectResponse(f"/research/lists/{record['id']}", status_code=303)
+
+    @app.get("/research/lists/{list_id}")
+    def research_list_detail(
+        request: Request, list_id: int, user: str = Depends(verify_creds),
+    ):
+        conn = conn_factory()
+        try:
+            record = get_research_list(conn, list_id)
+            if not record:
+                raise HTTPException(status_code=404, detail="Unknown research list")
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request, "research_list.html",
+            _research_context(request, user, record=record),
+        )
+
+    @app.post("/research/lists/{list_id}")
+    async def save_research_list(
+        request: Request, list_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        _, raw = await _browser_form(request)
+        values = _flat_form(raw)
+        conn = conn_factory()
+        try:
+            update_research_list(
+                conn, list_id, title=values.get("title", ""),
+                description=values.get("description", ""),
+                status=values.get("status", "active"),
+            )
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown research list") from None
+        finally:
+            conn.close()
+        return RedirectResponse(f"/research/lists/{list_id}", status_code=303)
+
+    @app.post("/research/lists/{list_id}/apps")
+    async def add_research_list_app(
+        request: Request, list_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        _, raw = await _browser_form(request)
+        handle = _flat_form(raw).get("handle", "").strip()
+        conn = conn_factory()
+        try:
+            add_app_to_list(conn, list_id, handle)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown app or research list") from None
+        finally:
+            conn.close()
+        return RedirectResponse(f"/research/lists/{list_id}", status_code=303)
+
+    @app.post("/research/lists/{list_id}/apps/{handle}/remove")
+    async def remove_research_list_app(
+        request: Request, list_id: int, handle: str,
+        user: str = Depends(verify_creds),
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            remove_app_from_list(conn, list_id, handle)
+        finally:
+            conn.close()
+        return RedirectResponse(f"/research/lists/{list_id}", status_code=303)
+
+    @app.get("/research/notes/new")
+    def new_research_note(
+        request: Request, target: str, target_id: int,
+        user: str = Depends(verify_creds),
+    ):
+        if target not in {"list", "app", "developer"}:
+            raise HTTPException(status_code=422, detail="Unknown note target")
+        return templates.TemplateResponse(
+            request, "research_note_form.html",
+            _research_context(
+                request, user, target_kind=target, target_id=target_id, error=None,
+            ),
+        )
+
+    @app.post("/research/notes")
+    async def store_research_note(
+        request: Request, user: str = Depends(verify_creds),
+    ):
+        del user
+        email, values = await _research_form(request)
+        try:
+            target_kind = str(values.get("target_kind", ""))
+            target_id = int(str(values.get("target_id", "0")))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid note target") from None
+        conn = conn_factory()
+        store = None
+        uploaded = []
+        try:
+            note = create_research_note(
+                conn, target_kind=target_kind, target_id=target_id,
+                title=str(values.get("title", "")), body=str(values.get("body", "")),
+                author=email,
+            )
+            files = [value for value in values.getlist("attachments")
+                     if hasattr(value, "filename") and value.filename]
+            if files:
+                store = _research_store()
+            for upload in files:
+                data = await upload.read(settings.research_upload_max_bytes + 1)
+                saved = store.validate_and_upload(
+                    data, filename=upload.filename, content_type=upload.content_type,
+                )
+                uploaded.append(saved)
+                attach_object(
+                    conn, note["id"], digest=saved.digest,
+                    object_key=saved.object_key, mime_type=saved.mime_type,
+                    byte_size=saved.byte_size, original_filename=saved.filename,
+                )
+        except (ValueError, InvalidResearchFile) as exc:
+            for saved in uploaded:
+                if saved.created and store:
+                    store.delete(saved.object_key)
+            return templates.TemplateResponse(
+                request, "research_note_form.html",
+                _research_context(
+                    request, email, target_kind=target_kind, target_id=target_id,
+                    error=str(exc),
+                ), status_code=422,
+            )
+        finally:
+            conn.close()
+        if target_kind == "list":
+            destination = f"/research/lists/{target_id}"
+        elif target_kind == "app":
+            app_conn = conn_factory()
+            try:
+                handle = app_conn.execute(
+                    "select handle from discovered_apps where id=%s", (target_id,),
+                ).fetchone()[0]
+            finally:
+                app_conn.close()
+            destination = f"/discover/apps/{handle}?view=research"
+        else:
+            destination = f"/research/developers/{target_id}"
+        return RedirectResponse(destination, status_code=303)
+
+    @app.post("/research/notes/{note_id}/delete")
+    async def remove_research_note(
+        request: Request, note_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            detached = delete_research_note(conn, note_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown research note") from None
+        finally:
+            conn.close()
+        if detached and settings.b2_configured:
+            store = _research_store()
+            for item in detached:
+                if item.delete_physical:
+                    store.delete(item.object_key)
+        return RedirectResponse("/research", status_code=303)
+
+    @app.get("/research/attachments/{attachment_id}")
+    def download_research_attachment(
+        attachment_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        conn = conn_factory()
+        try:
+            attachment = attachment_detail(conn, attachment_id)
+        finally:
+            conn.close()
+        if not attachment:
+            raise HTTPException(status_code=404, detail="Unknown attachment")
+        url = _research_store().presigned_get(
+            attachment["object_key"], filename=attachment["filename"],
+        )
+        return RedirectResponse(url, status_code=307)
+
+    @app.get("/research/developers/{developer_id}")
+    def research_developer(
+        request: Request, developer_id: int, user: str = Depends(verify_creds),
+    ):
+        conn = conn_factory()
+        try:
+            detail = developer_detail(conn, developer_id)
+            if not detail:
+                raise HTTPException(status_code=404, detail="Unknown developer")
+            detail["research"] = target_research(
+                conn, target_kind="developer", target_id=developer_id,
+            )
+        finally:
+            conn.close()
+        return templates.TemplateResponse(
+            request, "developer_detail.html",
+            _research_context(request, user, detail=detail),
+        )
+
+    @app.post("/research/developers/{developer_id}/refresh")
+    async def refresh_research_developer(
+        request: Request, developer_id: int, user: str = Depends(verify_creds),
+    ):
+        del user
+        await _browser_form(request)
+        conn = conn_factory()
+        try:
+            sync_developer_catalog(conn, developer_id)
+        finally:
+            conn.close()
+        return RedirectResponse(f"/research/developers/{developer_id}", status_code=303)
+
     @app.get("/management/integrations")
     def manage_integrations(
         request: Request, user: str = Depends(verify_creds)
@@ -807,6 +1124,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         conn = conn_factory()
         try:
             apps = active_apps(conn)
+            research_lists = list_research_lists(conn, status="active")
             if category.strip():
                 category_report = category_dashboard(
                     conn, category, search=q, signal=signal, bfs=bfs,
@@ -878,6 +1196,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "activity": activity,
                 "filter_qs": urlencode(query),
                 "catalog_filter_qs": urlencode(catalog_query_values),
+                "research_lists": research_lists,
             },
         )
 
@@ -911,6 +1230,25 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
             conn.close()
         return RedirectResponse(f"/discover/apps/{handle}", status_code=303)
 
+    @app.post("/discover/apps/{handle}/lists")
+    async def add_discovered_app_to_research(
+        request: Request, handle: str, user: str = Depends(verify_creds),
+    ):
+        del user
+        _, raw = await _browser_form(request)
+        try:
+            list_id = int(_flat_form(raw).get("list_id", "0"))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Choose a research list") from None
+        conn = conn_factory()
+        try:
+            add_app_to_list(conn, list_id, handle)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Unknown app or research list") from None
+        finally:
+            conn.close()
+        return RedirectResponse(f"/discover/apps/{handle}?view=research", status_code=303)
+
     @app.get("/discover/apps/{handle}")
     def discovered_app_detail(
         request: Request, handle: str, view: str = "overview",
@@ -919,7 +1257,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         user: str = Depends(verify_creds),
     ):
         view = view if view in {
-            "overview", "reviews", "growth", "history", "compare",
+            "overview", "reviews", "growth", "history", "compare", "research",
         } else "overview"
         conn = conn_factory()
         try:
@@ -932,6 +1270,10 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 conn, detail["id"], rating=rating, page=review_page,
             ) if view == "reviews" else None
             versions = listing_versions(conn, detail["id"])
+            research = target_research(
+                conn, target_kind="app", target_id=detail["id"],
+            ) if view == "research" else None
+            research_lists = list_research_lists(conn, status="active")
             comparison = None
             if view == "compare" and before is None and after is None \
                     and len(versions) >= 2:
@@ -949,6 +1291,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 "review_report": reviews,
                 "versions": versions, "comparison": comparison,
                 "before_id": before, "after_id": after,
+                "research": research, "research_lists": research_lists,
             },
         )
 

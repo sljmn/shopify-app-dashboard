@@ -203,7 +203,10 @@ def list_notes(conn, *, target_kind: str, target_id: int) -> list[dict]:
         "id", "title", "body", "author", "created_at", "updated_at",
         "attachment_count",
     )
-    return [dict(zip(keys, row, strict=True)) for row in rows]
+    notes = [dict(zip(keys, row, strict=True)) for row in rows]
+    for note in notes:
+        note["attachments"] = note_attachments(conn, note["id"])
+    return notes
 
 
 def get_note(conn, note_id: int) -> dict | None:
@@ -327,7 +330,8 @@ def research_index(
         """with items as (
              select 'list' item_type,list.id item_id,list.title,
                     list.description summary,'list' context_kind,list.id context_id,
-                    list.title context_title,list.id list_id,list.title list_title,
+                    list.title context_title,null::text context_handle,
+                    list.id list_id,list.title list_title,list.status list_status,
                     null::text filename,null::text mime_type,'system' author,
                     list.updated_at
              from research_lists list
@@ -339,7 +343,8 @@ def research_index(
                     coalesce(note.research_list_id,note.discovered_app_id,
                              note.discovered_developer_id),
                     coalesce(list.title,app.display_name,app.handle,developer.name),
-                    note.research_list_id,list.title,null,null,note.author,note.updated_at
+                    app.handle,note.research_list_id,list.title,list.status,
+                    null,null,note.author,note.updated_at
              from research_notes note
              left join research_lists list on list.id=note.research_list_id
              left join discovered_apps app on app.id=note.discovered_app_id
@@ -353,8 +358,9 @@ def research_index(
                     coalesce(note.research_list_id,note.discovered_app_id,
                              note.discovered_developer_id),
                     coalesce(list.title,app.display_name,app.handle,developer.name),
-                    note.research_list_id,list.title,attachment.original_filename,
-                    object.mime_type,note.author,attachment.created_at
+                    app.handle,note.research_list_id,list.title,list.status,
+                    attachment.original_filename,object.mime_type,note.author,
+                    attachment.created_at
              from research_note_attachments attachment
              join research_attachment_objects object on object.digest=attachment.digest
              join research_notes note on note.id=attachment.research_note_id
@@ -364,24 +370,27 @@ def research_index(
                on developer.id=note.discovered_developer_id
            )
            select item_type,item_id,title,summary,context_kind,context_id,
-                  context_title,list_id,list_title,filename,mime_type,author,updated_at
+                  context_title,context_handle,list_id,list_title,list_status,
+                  filename,mime_type,author,updated_at
            from items
            where (%s::text is null or item_type=%s)
              and (%s::bigint is null or list_id=%s or (item_type='list' and item_id=%s))
              and (%s::date is null or updated_at::date >= %s)
              and (%s::date is null or updated_at::date <= %s)
+             and (%s::text is null or list_status=%s)
              and (%s::text is null or title ilike '%%' || %s || '%%'
                   or summary ilike '%%' || %s || '%%'
                   or context_title ilike '%%' || %s || '%%'
                   or filename ilike '%%' || %s || '%%')
            order by updated_at desc,item_type,item_id desc limit %s""",
         (item_type, item_type, list_id, list_id, list_id,
-         start, start, end, end, query, query, query, query, query, limit),
+         start, start, end, end, status, status,
+         query, query, query, query, query, limit),
     ).fetchall()
     keys = (
         "type", "id", "title", "summary", "context_kind", "context_id",
-        "context_title", "list_id", "list_title", "filename", "mime_type",
-        "author", "updated_at",
+        "context_title", "context_handle", "list_id", "list_title", "list_status",
+        "filename", "mime_type", "author", "updated_at",
     )
     return [dict(zip(keys, row, strict=True)) for row in rows]
 
