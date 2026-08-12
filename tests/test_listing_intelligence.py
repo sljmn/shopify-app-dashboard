@@ -45,6 +45,17 @@ def test_listing_parser_extracts_competitor_strategy_fields():
     assert listing["languages"] == ["English", "Dutch"]
     assert listing["integrations"] == ["Klaviyo"]
     assert listing["videos"] == ["https://cdn.shopify.com/video.mp4"]
+    assert listing["built_for_shopify"] is False
+
+
+def test_listing_parser_detects_shopifys_official_bfs_badge():
+    listing = parse_listing("""
+      <script type="application/ld+json">{
+        "@type":"SoftwareApplication","name":"Alpha","description":"Useful"
+      }</script>
+      <div class="built-for-shopify-badge"><span>Built for Shopify</span></div>
+    """)
+    assert listing["built_for_shopify"] is True
 
 
 def test_listing_parser_supports_shopifys_label_value_metadata_grid():

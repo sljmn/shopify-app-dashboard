@@ -19,17 +19,24 @@
             <option value="{{ slug }}"{% if catalog_category == slug %} selected{% endif %}>{{ name }} ({{ count }})</option>
             {% endfor %}
         </select>
+        <select name="catalog_bfs" aria-label="Built for Shopify status">
+            <option value="">All BFS statuses</option>
+            <option value="bfs"{% if catalog_bfs == "bfs" %} selected{% endif %}>Built for Shopify</option>
+            <option value="not_bfs"{% if catalog_bfs == "not_bfs" %} selected{% endif %}>Not BFS</option>
+            <option value="unknown"{% if catalog_bfs == "unknown" %} selected{% endif %}>Not checked</option>
+        </select>
         <button type="submit">Search</button>
-        {% if catalog_query or catalog_category %}<a class="ghost" href="/discover">Clear</a>{% endif %}
+        {% if catalog_query or catalog_category or catalog_bfs %}<a class="ghost" href="/discover">Clear</a>{% endif %}
     </form>
-    {% if catalog_query or catalog_category %}
+    {% if catalog_query or catalog_category or catalog_bfs %}
     <div class="table-card catalog-results">
         <table class="catalog-table">
-            <thead><tr><th>App</th><th>Developer</th><th>Reviews</th><th>Rating</th><th>Best rank</th><th>Categories</th><th>Actions</th></tr></thead>
+            <thead><tr><th>App</th><th>BFS</th><th>Developer</th><th>Reviews</th><th>Rating</th><th>Best rank</th><th>Categories</th><th>Actions</th></tr></thead>
             <tbody>
             {% for row in catalog.rows %}
             <tr>
                 <td data-label="App"><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name or row.handle|replace('-', ' ')|title }}</strong></a><br><span class="sub">/{{ row.handle }}</span></td>
+                <td data-label="BFS">{% if row.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% elif row.bfs_checked_at %}<span class="sub">Not BFS</span>{% else %}<span class="sub">Not checked</span>{% endif %}</td>
                 <td data-label="Developer">{{ row.developer or "—" }}</td>
                 <td data-label="Reviews">{{ row.reviews if row.reviews is not none else "—" }}</td>
                 <td data-label="Rating">{{ row.rating if row.rating is not none else "—" }}</td>
@@ -42,7 +49,7 @@
                     </form>
                 </div></td>
             </tr>
-            {% else %}<tr><td colspan="7">No indexed apps match this search.</td></tr>{% endfor %}
+            {% else %}<tr><td colspan="8">No indexed apps match this search.</td></tr>{% endfor %}
             </tbody>
         </table>
     </div>
@@ -86,10 +93,10 @@
             <p class="sub">First appearance, Shopify sitemap updates and confirmed removals are separate signals. Verified change means Mantle captured an actual listing diff.</p>
         </div>
         <nav class="aso-tabs growth-tabs" aria-label="App Store activity type">
-            <a href="/discover?activity=new{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if activity == "new" %} aria-current="page"{% endif %}>New apps</a>
-            <a href="/discover?activity=updated{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if activity == "updated" %} aria-current="page"{% endif %}>Listing updates</a>
-            <a href="/discover?activity=delisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if activity == "delisted" %} aria-current="page"{% endif %}>Delisted</a>
-            <a href="/discover?activity=relisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}"{% if activity == "relisted" %} aria-current="page"{% endif %}>Relisted</a>
+            <a href="/discover?activity=new{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "new" %} aria-current="page"{% endif %}>New apps</a>
+            <a href="/discover?activity=updated{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "updated" %} aria-current="page"{% endif %}>Listing updates</a>
+            <a href="/discover?activity=delisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "delisted" %} aria-current="page"{% endif %}>Delisted</a>
+            <a href="/discover?activity=relisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "relisted" %} aria-current="page"{% endif %}>Relisted</a>
         </nav>
     </div>
     <form class="filters discover-filters" method="get" action="/discover">
@@ -102,17 +109,24 @@
             <option value="{{ slug }}"{% if selected_category == slug %} selected{% endif %}>{{ name }} ({{ count }})</option>
             {% endfor %}
         </select>
+        <select name="bfs" aria-label="Built for Shopify status">
+            <option value="">All BFS statuses</option>
+            <option value="bfs"{% if selected_bfs == "bfs" %} selected{% endif %}>Built for Shopify</option>
+            <option value="not_bfs"{% if selected_bfs == "not_bfs" %} selected{% endif %}>Not BFS</option>
+            <option value="unknown"{% if selected_bfs == "unknown" %} selected{% endif %}>Not checked</option>
+        </select>
         <button type="submit">Filter</button>
-        {% if query or selected_category %}<a class="ghost" href="/discover?growth={{ selected_growth }}&amp;activity={{ activity }}">Clear</a>{% endif %}
+        {% if query or selected_category or selected_bfs %}<a class="ghost" href="/discover?growth={{ selected_growth }}&amp;activity={{ activity }}">Clear</a>{% endif %}
     </form>
 
     <div class="table-card">
         <table class="discover-table activity-table">
-            <thead><tr><th>App</th><th>Signal</th><th>Categories</th><th>Pricing</th><th>Developer</th><th>Reviews</th><th>Observed</th><th>Verified change</th><th></th></tr></thead>
+            <thead><tr><th>App</th><th>BFS</th><th>Signal</th><th>Categories</th><th>Pricing</th><th>Developer</th><th>Reviews</th><th>Observed</th><th>Verified change</th><th></th></tr></thead>
             <tbody>
             {% for row in rows %}
             <tr>
                 <td><a href="/discover/apps/{{ row.handle|urlencode }}"><strong>{{ row.name }}</strong></a><br><span class="sub">/{{ row.handle }}</span></td>
+                <td>{% if row.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% elif row.bfs_checked_at %}<span class="sub">Not BFS</span>{% else %}<span class="sub">Not checked</span>{% endif %}</td>
                 <td>{% if row.event_type == "discovered" %}<span class="status-badge installed">New</span>{% elif row.event_type == "listing_updated" %}<strong>Shopify lastmod</strong><br><span class="sub">{{ row.previous_updated_on or "—" }} → {{ row.event_updated_on or "—" }}</span>{% elif row.event_type == "delisted" %}<span class="status-badge uninstalled">Delisted</span>{% else %}<strong>Relisted</strong>{% endif %}</td>
                 <td class="category-list">{{ row.categories or "Not categorized yet" }}</td>
                 <td><strong>{{ row.pricing.label }}</strong>{% if row.pricing.monthly %}<br><span class="sub">from ${{ row.pricing.monthly[0] }}/mo</span>{% elif row.pricing.annual %}<br><span class="sub">from ${{ row.pricing.annual[0] }}/yr</span>{% endif %}{% if row.pricing.trial %}<br><span class="sub">{{ row.pricing.trial }}</span>{% endif %}</td>
@@ -123,7 +137,7 @@
                 <td><a href="https://apps.shopify.com/{{ row.handle|urlencode }}" target="_blank" rel="noopener">View listing</a></td>
             </tr>
             {% else %}
-            <tr><td colspan="5">{% if indexed %}No newly observed apps match these filters yet.{% else %}The first App Store baseline has not run yet.{% endif %}</td></tr>
+            <tr><td colspan="10">{% if indexed %}No app activity matches these filters yet.{% else %}The first App Store baseline has not run yet.{% endif %}</td></tr>
             {% endfor %}
             </tbody>
         </table>

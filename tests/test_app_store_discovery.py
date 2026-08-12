@@ -71,6 +71,20 @@ def test_category_cards_parse_review_count_and_rating():
     assert apps == [CategoryApp("alpha", "Alpha App", 1234, Decimal("4.8"))]
 
 
+def test_category_cards_detect_shopifys_official_bfs_badge():
+    html = """
+      <div data-controller="app-card" data-app-card-handle-value="alpha"
+           data-app-card-name-value="Alpha App">
+        <span class="built-for-shopify-badge">Built for Shopify</span>
+      </div>
+      <div data-controller="app-card" data-app-card-handle-value="beta"
+           data-app-card-name-value="Beta App"></div>
+    """
+    _, apps = parse_category_page(html, "design")
+    assert apps[0].built_for_shopify is True
+    assert apps[1].built_for_shopify is False
+
+
 def test_category_collection_uses_every_sitemap_category_and_stops_on_empty_page():
     class Response:
         def __init__(self, text, status_code=200):
@@ -235,6 +249,23 @@ def test_category_sync_records_daily_review_and_rank_observations(db):
     assert db.execute(
         "select position from discovery_category_observations order by position"
     ).fetchall() == [(3,), (8,)]
+
+
+def test_category_sync_records_current_bfs_status_and_check_time(db):
+    observed_at = datetime(2026, 8, 12, 8, tzinfo=timezone.utc)
+    sync_discovered_apps(
+        db, [SitemapApp("alpha", None), SitemapApp("beta", None)], observed_at,
+    )
+    sync_discovery_categories(db, [CategoryResult("design", "Design", (
+        CategoryApp("alpha", "Alpha", built_for_shopify=True),
+        CategoryApp("beta", "Beta", built_for_shopify=False),
+    ))], observed_at)
+    assert db.execute(
+        """select handle,built_for_shopify,bfs_checked_at from discovered_apps
+           order by handle"""
+    ).fetchall() == [
+        ("alpha", True, observed_at), ("beta", False, observed_at),
+    ]
 
 
 def test_category_crawl_can_be_the_first_source_of_a_new_app(db):
@@ -411,6 +442,44 @@ def test_catalog_search_includes_baseline_apps_categories_and_follow_state(db):
         "rating": Decimal("4.80"), "best_rank": 3,
         "categories": "Product content", "followed": True,
         "follow_source": "manual",
+        "built_for_shopify": False, "bfs_checked_at": observed_at,
     }
     assert search_app_catalog(db, category="product-content")["total"] == 1
+    assert search_app_catalog(db, bfs="not_bfs")["total"] == 1
+    assert search_app_catalog(db, bfs="bfs")["total"] == 0
     assert search_app_catalog(db)["rows"] == []
+
+
+def test_discovery_report_filters_bfs_without_collapsing_unknown(db):
+    observed_at = datetime(2026, 8, 12, tzinfo=timezone.utc)
+    for handle, value, checked_at in (
+        ("official-app", True, observed_at),
+        ("checked-app", False, observed_at),
+        ("unknown-app", None, None),
+    ):
+        app_id = db.execute(
+            """insert into discovered_apps
+                 (handle,display_name,first_seen_at,last_seen_at,is_baseline,
+                  built_for_shopify,bfs_checked_at)
+               values (%s,%s,%s,%s,false,%s,%s) returning id""",
+            (handle, handle, observed_at, observed_at, value, checked_at),
+        ).fetchone()[0]
+        db.execute(
+            """insert into discovery_app_events
+                 (discovered_app_id,event_type,occurred_at)
+               values (%s,'discovered',%s)""",
+            (app_id, observed_at),
+        )
+
+    assert [row["handle"] for row in discovery_report(db, bfs="bfs")["rows"]] == [
+        "official-app"
+    ]
+    assert [row["handle"] for row in discovery_report(db, bfs="not_bfs")["rows"]] == [
+        "checked-app"
+    ]
+    assert [row["handle"] for row in discovery_report(db, bfs="unknown")["rows"]] == [
+        "unknown-app"
+    ]
+    assert search_app_catalog(db, bfs="unknown")["rows"][0][
+        "built_for_shopify"
+    ] is None

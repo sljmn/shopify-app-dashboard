@@ -3,7 +3,7 @@
 <div class="page-heading">
     <div>
         <p class="sub"><a href="/discover">Discover</a> / Public app</p>
-        <h1>{{ detail.name or detail.handle|replace('-', ' ')|title }}</h1>
+        <div class="title-with-status"><h1>{{ detail.name or detail.handle|replace('-', ' ')|title }}</h1>{% if detail.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% endif %}</div>
         <p class="sub">/{{ detail.handle }} · {{ detail.categories or "Not categorized" }}</p>
     </div>
     <div class="heading-actions">
@@ -26,6 +26,7 @@
     <div class="card stat"><div class="label">Rating</div><div class="num">{{ detail.rating if detail.rating is not none else "—" }}</div></div>
     <div class="card stat"><div class="label">Best category rank</div><div class="num">{% if detail.best_rank %}#{{ detail.best_rank }}{% else %}—{% endif %}</div></div>
     <div class="card stat"><div class="label">First observed</div><div class="num"><small>{{ detail.first_seen_at|local_time("%-d %b %Y") }}</small></div></div>
+    <div class="card stat"><div class="label">Built for Shopify</div><div class="num bfs-status"><small>{% if detail.built_for_shopify is sameas true %}<span class="bfs-badge">Built for Shopify</span>{% elif detail.bfs_checked_at %}Not BFS{% else %}Not checked{% endif %}</small></div>{% if detail.bfs_checked_at %}<div class="sub">Checked {{ detail.bfs_checked_at|local_time("%-d %b %Y %H:%M") }}</div>{% endif %}</div>
 </div>
 {% if detail.listing %}
 <section class="listing-overview">

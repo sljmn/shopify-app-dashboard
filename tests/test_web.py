@@ -302,6 +302,35 @@ def test_discovered_app_growth_uses_one_compact_empty_state(db):
     assert "Category positions" not in page.text
 
 
+def test_discover_and_app_detail_show_built_for_shopify_status(db):
+    observed_at = datetime(2026, 8, 12, tzinfo=timezone.utc)
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline,
+              built_for_shopify,bfs_checked_at)
+           values ('official-app','Official App',%s,%s,false,true,%s)
+           returning id""",
+        (observed_at, observed_at, observed_at),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_app_events
+             (discovered_app_id,event_type,occurred_at)
+           values (%s,'discovered',%s)""",
+        (app_id, observed_at),
+    )
+    client = dashboard_client(create_app(conn_factory=lambda: keep_open(db)))
+
+    discover = client.get("/discover?bfs=bfs&catalog_bfs=bfs")
+    detail = client.get("/discover/apps/official-app")
+
+    assert discover.status_code == 200
+    assert 'option value="bfs" selected' in discover.text
+    assert "Built for Shopify" in discover.text
+    assert detail.status_code == 200
+    assert detail.text.count("Built for Shopify") >= 2
+    assert "Checked 12 Aug 2026 02:00" in detail.text
+
+
 def test_discovered_app_reviews_show_capture_status_filter_and_reply(db):
     observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
     app_id = db.execute(

@@ -147,6 +147,11 @@ def store_competitor_snapshot(
                where discovered_app_id=%s""",
             (captured_at, captured_at, captured_at, discovered_app_id),
         )
+        conn.execute(
+            """update discovered_apps
+               set built_for_shopify=%s,bfs_checked_at=%s where id=%s""",
+            (listing.get("built_for_shopify", False), captured_at, discovered_app_id),
+        )
         return CompetitorSnapshotResult(existing[0], False, ())
     previous = conn.execute(
         """select listing from discovery_listing_snapshots
@@ -156,6 +161,7 @@ def store_competitor_snapshot(
     changed_fields = tuple(
         field for field in LISTING_FIELDS
         if previous and previous[0].get(field) != listing.get(field)
+        and (field != "built_for_shopify" or field in previous[0])
     )
     with conn.transaction():
         snapshot_id = conn.execute(
@@ -214,13 +220,19 @@ def store_competitor_snapshot(
                where discovered_app_id=%s""",
             (captured_at, captured_at, captured_at, discovered_app_id),
         )
+        conn.execute(
+            """update discovered_apps
+               set built_for_shopify=%s,bfs_checked_at=%s where id=%s""",
+            (listing.get("built_for_shopify", False), captured_at, discovered_app_id),
+        )
     return CompetitorSnapshotResult(snapshot_id, True, changed_fields)
 
 
 def app_detail(conn, handle: str) -> dict | None:
     row = conn.execute(
         """select app.id,app.handle,app.display_name,app.first_seen_at,
-                  app.listing_updated_on,coalesce(watch.active,false),
+                  app.listing_updated_on,app.built_for_shopify,
+                  app.bfs_checked_at,coalesce(watch.active,false),
                   watch.follow_source,watch.followed_at,watch.last_success_at,
                   watch.last_error_code,observation.review_count,
                   observation.rating,observation.best_category_rank,
@@ -252,6 +264,7 @@ def app_detail(conn, handle: str) -> dict | None:
         return None
     keys = (
         "id", "handle", "name", "first_seen_at", "listing_updated_on",
+        "built_for_shopify", "bfs_checked_at",
         "followed", "follow_source", "followed_at", "last_success_at",
         "last_error_code", "reviews", "rating", "best_rank", "snapshot_id",
         "snapshot_at", "listing", "categories",

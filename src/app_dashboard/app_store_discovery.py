@@ -45,6 +45,7 @@ class CategoryApp:
     review_count: int | None = None
     rating: Decimal | None = None
     rank: int | None = None
+    built_for_shopify: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,10 @@ def parse_category_page(html: str, slug: str) -> tuple[str, list[CategoryApp]]:
             int(reviews_match.group(1).replace(",", "")) if reviews_match else None
         )
         rating = Decimal(rating_match.group(1)) if rating_match else None
-        apps.append(CategoryApp(handle, display_name, review_count, rating))
+        apps.append(CategoryApp(
+            handle, display_name, review_count, rating, None,
+            card.select_one(".built-for-shopify-badge") is not None,
+        ))
     return name, list({app.handle: app for app in apps}.values())
 
 
@@ -166,7 +170,7 @@ def collect_categories(
             for app in fresh:
                 found[app.handle] = CategoryApp(
                     app.handle, app.name, app.review_count, app.rating,
-                    len(found) + 1,
+                    len(found) + 1, app.built_for_shopify,
                 )
             sleep(page_delay)
         # Umbrella categories have no populated /all page and add no useful tag.
@@ -338,13 +342,17 @@ def sync_discovery_categories(conn, categories: list[CategoryResult], now=None) 
             )
             conn.cursor().executemany(
                 """insert into discovered_apps
-                   (handle,display_name,first_seen_at,last_seen_at,is_baseline)
-                   values (%s,%s,%s,%s,%s) on conflict (handle) do update set
+                   (handle,display_name,first_seen_at,last_seen_at,is_baseline,
+                    built_for_shopify,bfs_checked_at)
+                   values (%s,%s,%s,%s,%s,%s,%s) on conflict (handle) do update set
                    display_name=coalesce(
                      excluded.display_name,discovered_apps.display_name
                    ),
-                   last_seen_at=greatest(discovered_apps.last_seen_at,excluded.last_seen_at)""",
-                [(app.handle, app.name, observed_at, observed_at, baseline_pending)
+                   last_seen_at=greatest(discovered_apps.last_seen_at,excluded.last_seen_at),
+                   built_for_shopify=excluded.built_for_shopify,
+                   bfs_checked_at=excluded.bfs_checked_at""",
+                [(app.handle, app.name, observed_at, observed_at, baseline_pending,
+                  app.built_for_shopify, observed_at)
                  for app in category.apps],
             )
         if not baseline_pending and new_handles:
@@ -746,7 +754,7 @@ def category_opportunities(conn, *, now=None) -> list[dict]:
 
 def discovery_report(
     conn, *, search: str = "", category: str = "", page: int = 1,
-    per_page: int = 100, activity: str = "new", now=None,
+    per_page: int = 100, activity: str = "new", bfs: str = "", now=None,
 ) -> dict:
     current = now or datetime.now(timezone.utc)
     local_now = current.astimezone(DISPLAY_TZ)
@@ -775,6 +783,12 @@ def discovery_report(
             "where member.discovered_app_id=app.id and category.slug=%s)"
         )
         params.append(category.strip())
+    if bfs == "bfs":
+        where.append("app.built_for_shopify is true")
+    elif bfs == "not_bfs":
+        where.append("app.built_for_shopify is false")
+    elif bfs == "unknown":
+        where.append("app.built_for_shopify is null")
     filtered = " and ".join(where)
     total_filtered = conn.execute(
         f"""select count(*) from discovery_app_events event
@@ -789,7 +803,8 @@ def discovery_report(
                    app.listing_updated_on,app.delisted_at,
                    observation.review_count,observation.rating,
                    observation.best_category_rank,snapshot.listing,
-                   verified.changed_at,category_names.names
+                   verified.changed_at,category_names.names,
+                   app.built_for_shopify,app.bfs_checked_at
             from discovery_app_events event
             join discovered_apps app on app.id=event.discovered_app_id
             left join lateral (
@@ -834,6 +849,7 @@ def discovery_report(
         "handle", "name", "event_at", "event_type", "previous_updated_on",
         "event_updated_on", "listing_updated_on", "delisted_at", "reviews",
         "rating", "best_rank", "listing", "last_verified_change", "categories",
+        "built_for_shopify", "bfs_checked_at",
     )
     rows = []
     for raw in raw_rows:
@@ -912,11 +928,11 @@ def discovery_report(
 
 def search_app_catalog(
     conn, *, search: str = "", category: str = "", page: int = 1,
-    per_page: int = 50,
+    per_page: int = 50, bfs: str = "",
 ) -> dict:
     search = search.strip()
     category = category.strip()
-    if not search and not category:
+    if not search and not category and not bfs:
         return {"rows": [], "total": 0, "page": 1, "pages": 1}
     where = []
     params = []
@@ -945,6 +961,12 @@ def search_app_catalog(
             )"""
         )
         params.append(category)
+    if bfs == "bfs":
+        where.append("app.built_for_shopify is true")
+    elif bfs == "not_bfs":
+        where.append("app.built_for_shopify is false")
+    elif bfs == "unknown":
+        where.append("app.built_for_shopify is null")
     filtered = " and ".join(where)
     base = f"""from discovered_apps app
         left join lateral (
@@ -976,7 +998,8 @@ def search_app_catalog(
                    observation.review_count,observation.rating,
                    observation.best_category_rank,
                    category_names.names categories,
-                   coalesce(watch.active,false),watch.follow_source
+                   coalesce(watch.active,false),watch.follow_source,
+                   app.built_for_shopify,app.bfs_checked_at
             {base}
             order by coalesce(app.display_name,app.handle),app.handle
             limit %s offset %s""",
@@ -985,6 +1008,7 @@ def search_app_catalog(
     keys = (
         "handle", "name", "developer", "reviews", "rating", "best_rank",
         "categories", "followed", "follow_source",
+        "built_for_shopify", "bfs_checked_at",
     )
     return {
         "rows": [dict(zip(keys, row, strict=True)) for row in rows],

@@ -20,7 +20,7 @@ from app_dashboard.catalog import AppConfig
 LISTING_FIELDS = (
     "name", "subtitle", "description", "features", "pricing", "developer",
     "languages", "integrations", "icon", "screenshots", "videos", "rating",
-    "rating_count",
+    "rating_count", "built_for_shopify",
 )
 AUTOCOMPLETE_URL = "https://apps.shopify.com/search/autocomplete"
 USER_AGENT = "Mantle ASO Intelligence/1.0"
@@ -160,6 +160,7 @@ def parse_listing(html: str) -> dict:
         "videos": videos,
         "rating": rating.get("ratingValue"),
         "rating_count": rating.get("ratingCount"),
+        "built_for_shopify": soup.select_one(".built-for-shopify-badge") is not None,
     }
 
 

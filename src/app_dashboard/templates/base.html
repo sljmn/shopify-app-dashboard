@@ -927,6 +927,16 @@
         .activity-table { min-width: 1480px; }
         .opportunity-table { min-width: 1100px; }
         .page-heading { display: flex; justify-content: space-between; align-items: end; gap: 20px; }
+        .title-with-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .title-with-status h1 { margin-right: 0; }
+        .bfs-badge {
+            display: inline-flex; align-items: center; width: fit-content;
+            padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--up) 28%, transparent);
+            border-radius: 999px; background: color-mix(in srgb, var(--up) 10%, var(--card));
+            color: var(--up); font-size: 11px; font-weight: 700; line-height: 1.2;
+            white-space: nowrap;
+        }
+        .bfs-status { font-family: inherit !important; font-size: 17px !important; }
         .heading-actions { display: flex; align-items: center; gap: 8px; }
         .heading-actions form { margin: 0; }
         .segment-control {

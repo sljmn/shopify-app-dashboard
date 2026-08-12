@@ -785,35 +785,44 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         category: str = "",
         catalog_q: str = "",
         catalog_category: str = "",
+        catalog_bfs: str = "",
         catalog_page: int = 1,
         growth: str = "gems",
         activity: str = "new",
+        bfs: str = "",
         page: int = 1,
         user: str = Depends(verify_creds),
     ):
         growth = growth if growth in {"gems", "fastest", "contenders"} else "gems"
+        bfs = bfs if bfs in {"bfs", "not_bfs", "unknown"} else ""
+        catalog_bfs = (
+            catalog_bfs if catalog_bfs in {"bfs", "not_bfs", "unknown"} else ""
+        )
         conn = conn_factory()
         try:
             apps = active_apps(conn)
             report = discovery_report(
                 conn, search=q, category=category, page=page, activity=activity,
+                bfs=bfs,
             )
             signals = growth_signals(conn, category=category)
             opportunities = category_opportunities(conn)
             catalog = search_app_catalog(
                 conn, search=catalog_q, category=catalog_category,
-                page=catalog_page,
+                page=catalog_page, bfs=catalog_bfs,
             )
         finally:
             conn.close()
         query = {
             "q": q.strip(), "category": category.strip(), "growth": growth,
             "activity": report["activity"],
+            "bfs": bfs,
         }
         query = {key: value for key, value in query.items() if value}
         catalog_query_values = {
             "catalog_q": catalog_q.strip(),
             "catalog_category": catalog_category.strip(),
+            "catalog_bfs": catalog_bfs,
         }
         catalog_query_values = {
             key: value for key, value in catalog_query_values.items() if value
@@ -826,12 +835,14 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 **report,
                 "query": q.strip(),
                 "selected_category": category.strip(),
+                "selected_bfs": bfs,
                 "selected_growth": growth,
                 "growth_rows": signals[growth],
                 "opportunities": opportunities,
                 "catalog": catalog,
                 "catalog_query": catalog_q.strip(),
                 "catalog_category": catalog_category.strip(),
+                "catalog_bfs": catalog_bfs,
                 "filter_qs": urlencode(query),
                 "catalog_filter_qs": urlencode(catalog_query_values),
             },

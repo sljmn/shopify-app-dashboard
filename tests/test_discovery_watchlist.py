@@ -150,6 +150,47 @@ def test_new_apps_are_enriched_once_then_leave_the_active_watchlist(db):
     assert status.last_success_at == found_at
 
 
+def test_listing_snapshots_update_and_version_bfs_status(db):
+    sync_discovered_apps(db, [SitemapApp("alpha", None)], NOW)
+    follow_app(db, "alpha", source="manual", now=NOW)
+    app_id = db.execute(
+        "select id from discovered_apps where handle='alpha'"
+    ).fetchone()[0]
+    store_competitor_snapshot(
+        db, app_id, {"name": "Alpha", "built_for_shopify": False}, (), NOW,
+    )
+    changed_at = NOW + timedelta(days=1)
+    result = store_competitor_snapshot(
+        db, app_id, {"name": "Alpha", "built_for_shopify": True}, (), changed_at,
+    )
+    assert result.changed_fields == ("built_for_shopify",)
+    assert db.execute(
+        """select built_for_shopify,bfs_checked_at from discovered_apps
+           where id=%s""", (app_id,),
+    ).fetchone() == (True, changed_at)
+
+
+def test_first_bfs_capture_does_not_create_a_false_listing_change(db):
+    sync_discovered_apps(db, [SitemapApp("legacy-snapshot", None)], NOW)
+    follow_app(db, "legacy-snapshot", source="manual", now=NOW)
+    app_id = db.execute(
+        "select id from discovered_apps where handle='legacy-snapshot'"
+    ).fetchone()[0]
+    store_competitor_snapshot(db, app_id, {"name": "Legacy"}, (), NOW)
+
+    result = store_competitor_snapshot(
+        db, app_id, {"name": "Legacy", "built_for_shopify": False}, (),
+        NOW + timedelta(days=1),
+    )
+
+    assert result.created is True
+    assert result.changed_fields == ()
+    assert db.execute(
+        "select count(*) from discovery_alerts where discovered_app_id=%s",
+        (app_id,),
+    ).fetchone()[0] == 0
+
+
 def test_category_follows_queue_new_app_alerts_once(db):
     sync_discovered_apps(db, [SitemapApp("alpha", None)], NOW)
     sync_discovery_categories(db, [CategoryResult("design", "Design", (
