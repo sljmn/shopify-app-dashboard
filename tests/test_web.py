@@ -600,6 +600,12 @@ def test_discover_category_mode_shows_inventory_instead_of_empty_events(db):
     assert "Fastest growers" in page.text
     assert "Built for Shopify" in page.text
 
+    overview = client.get("/discover")
+    assert overview.status_code == 200
+    assert '<option value="all" selected>All activity</option>' in overview.text
+    assert "New launches only" in overview.text
+    assert "Listing updates only" in overview.text
+
     missing = client.get("/discover?category=missing-category")
     assert missing.status_code == 200
     assert "Category not found" in missing.text

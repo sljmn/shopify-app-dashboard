@@ -1393,7 +1393,7 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
         catalog_category: str = "",
         catalog_bfs: str = "",
         catalog_page: int = 1,
-        activity: str = "new",
+        activity: str = "all",
         bfs: str = "",
         page: int = 1,
         signal: str = "all",
@@ -1421,8 +1421,8 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
                 catalog = {"rows": [], "total": 0, "page": 1, "pages": 1}
                 activity = (
                     activity if activity in {
-                        "new", "updated", "delisted", "relisted",
-                    } else "new"
+                        "all", "new", "updated", "delisted", "relisted",
+                    } else "all"
                 )
             else:
                 category_report = None

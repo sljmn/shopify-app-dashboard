@@ -592,6 +592,37 @@ def test_focused_discovery_reports_isolate_launches_and_expose_verified_diff(db)
     assert updates["rows"][0]["verified_changed_at"] == after_at
 
 
+def test_activity_report_can_mix_launches_and_listing_updates(db):
+    now = datetime(2026, 8, 12, 12, tzinfo=timezone.utc)
+    app_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('mixed-app','Mixed App',%s,%s,false) returning id""",
+        (now - timedelta(days=2), now),
+    ).fetchone()[0]
+    baseline_id = db.execute(
+        """insert into discovered_apps
+             (handle,display_name,first_seen_at,last_seen_at,is_baseline)
+           values ('baseline','Baseline',%s,%s,true) returning id""",
+        (now - timedelta(days=30), now),
+    ).fetchone()[0]
+    db.execute(
+        """insert into discovery_app_events
+             (discovered_app_id,event_type,occurred_at)
+           values (%s,'discovered',%s),(%s,'listing_updated',%s),
+                  (%s,'discovered',%s)""",
+        (app_id, now - timedelta(days=2), app_id, now - timedelta(days=1),
+         baseline_id, now - timedelta(days=30)),
+    )
+
+    combined = discovery_report(db, activity="all", now=now)
+    assert [row["event_type"] for row in combined["rows"]] == [
+        "listing_updated", "discovered",
+    ]
+    assert combined["total"] == 2
+
+
+
 def test_catalog_search_includes_baseline_apps_categories_and_follow_state(db):
     observed_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
     sync_discovered_apps(db, [SitemapApp("alpha-books", None)], observed_at)

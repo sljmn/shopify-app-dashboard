@@ -933,7 +933,7 @@ def category_opportunities(conn, *, now=None) -> list[dict]:
 
 def discovery_report(
     conn, *, search: str = "", category: str = "", page: int = 1,
-    per_page: int = 100, activity: str = "new", bfs: str = "",
+    per_page: int = 100, activity: str = "all", bfs: str = "",
     pricing: str = "", period_days: int | None = None, now=None,
 ) -> dict:
     current = now or datetime.now(timezone.utc)
@@ -942,16 +942,23 @@ def discovery_report(
         hour=0, minute=0, second=0, microsecond=0
     )
     chart_start = this_week - timedelta(weeks=11)
-    activity = activity if activity in {"new", "updated", "delisted", "relisted"} else "new"
+    activity = activity if activity in {
+        "all", "new", "updated", "delisted", "relisted",
+    } else "all"
     event_type = {
         "new": "discovered", "updated": "listing_updated",
         "delisted": "delisted", "relisted": "relisted",
-    }[activity]
+    }.get(activity)
     params: list = []
-    where = ["event.event_type=%s"]
-    params.append(event_type)
-    if activity == "new":
-        where.append("app.is_baseline is false")
+    if activity == "all":
+        where = ["event.event_type in ('discovered','listing_updated')"]
+    else:
+        where = ["event.event_type=%s"]
+        params.append(event_type)
+    if activity in {"all", "new"}:
+        where.append(
+            "(event.event_type<>'discovered' or app.is_baseline is false)"
+        )
     if period_days in {7, 30, 90}:
         where.append("event.occurred_at >= %s")
         params.append(current - timedelta(days=period_days))

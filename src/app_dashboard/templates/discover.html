@@ -99,14 +99,21 @@
             <p class="sub">First appearance, Shopify sitemap updates and confirmed removals are separate signals. Verified change means Mantle captured an actual listing diff.</p>
         </div>
         <nav class="aso-tabs growth-tabs" aria-label="App Store activity type">
-            <a href="/discover/new">New launches</a>
-            <a href="/discover/updates">Listing updates</a>
+            <a href="/discover?activity=all{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "all" %} aria-current="page"{% endif %}>All activity</a>
+            <a href="/discover?activity=new{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "new" %} aria-current="page"{% endif %}>New launches</a>
+            <a href="/discover?activity=updated{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "updated" %} aria-current="page"{% endif %}>Listing updates</a>
             <a href="/discover?activity=delisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "delisted" %} aria-current="page"{% endif %}>Delisted</a>
             <a href="/discover?activity=relisted{% if selected_category %}&amp;category={{ selected_category|urlencode }}{% endif %}{% if selected_bfs %}&amp;bfs={{ selected_bfs }}{% endif %}"{% if activity == "relisted" %} aria-current="page"{% endif %}>Relisted</a>
         </nav>
     </div>
     <form class="filters discover-filters" method="get" action="/discover">
-        <input type="hidden" name="activity" value="{{ activity }}">
+        <select name="activity" aria-label="Activity type">
+            <option value="all"{% if activity == "all" %} selected{% endif %}>All activity</option>
+            <option value="new"{% if activity == "new" %} selected{% endif %}>New launches only</option>
+            <option value="updated"{% if activity == "updated" %} selected{% endif %}>Listing updates only</option>
+            <option value="delisted"{% if activity == "delisted" %} selected{% endif %}>Delisted only</option>
+            <option value="relisted"{% if activity == "relisted" %} selected{% endif %}>Relisted only</option>
+        </select>
         <input type="search" name="q" value="{{ query }}" placeholder="Search app name or handle" aria-label="Search app name or handle">
         <select name="category" aria-label="Category">
             <option value="">All categories</option>
@@ -121,7 +128,7 @@
             <option value="unknown"{% if selected_bfs == "unknown" %} selected{% endif %}>Not checked</option>
         </select>
         <button type="submit">Filter</button>
-        {% if query or selected_category or selected_bfs %}<a class="ghost" href="/discover?activity={{ activity }}">Clear</a>{% endif %}
+        {% if query or selected_category or selected_bfs or activity != "all" %}<a class="ghost" href="/discover">Clear</a>{% endif %}
     </form>
 
     <div class="table-card">
@@ -148,7 +155,7 @@
         </table>
     </div>
 
-    <div class="pager"><span class="sub">Showing {{ rows[:5]|length }} of {{ total }} recent events</span><span class="pager-links"><a href="{% if activity == 'updated' %}/discover/updates{% elif activity == 'new' %}/discover/new{% else %}/discover?activity={{ activity }}{% endif %}">View all</a></span></div>
+    <div class="pager"><span class="sub">Showing {{ rows[:5]|length }} of {{ total }} recent events</span>{% if activity == 'updated' or activity == 'new' %}<span class="pager-links"><a href="{% if activity == 'updated' %}/discover/updates{% else %}/discover/new{% endif %}">View all</a></span>{% endif %}</div>
 </section>
 
 <section class="growth-signals" aria-labelledby="growth-signals-title">
