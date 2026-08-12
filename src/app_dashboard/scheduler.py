@@ -303,6 +303,35 @@ def run_review_collection_job(conn_factory, settings) -> list[dict]:
     return results
 
 
+def run_developer_catalog_job(conn_factory, settings) -> list[dict]:
+    from app_dashboard.developer_catalog import (
+        developers_due_for_refresh,
+        sync_developer_catalog,
+    )
+
+    conn = conn_factory()
+    try:
+        developer_ids = developers_due_for_refresh(conn)
+    finally:
+        conn.close()
+
+    def sync_one(developer_id):
+        worker_conn = conn_factory()
+        try:
+            return sync_developer_catalog(worker_conn, developer_id)
+        except Exception as exc:
+            logger.exception("developer catalog sync failed for %s", developer_id)
+            return {"developer_id": developer_id, "status": "failed",
+                    "error": type(exc).__name__}
+        finally:
+            worker_conn.close()
+
+    with ThreadPoolExecutor(max_workers=settings.watchlist_concurrency) as pool:
+        results = list(pool.map(sync_one, developer_ids))
+    logger.info("developer catalog sync completed: %s", results)
+    return results
+
+
 def run_discovery_alerts_job(conn_factory, settings) -> dict:
     from app_dashboard.discovery_watchlist import deliver_discovery_alerts
 
@@ -408,6 +437,12 @@ def start_scheduler(conn_factory, settings, apps) -> BackgroundScheduler:
         "interval", hours=24,
         next_run_time=datetime.now() + timedelta(minutes=75),
         id="watchlist_reviews",
+    )
+    scheduler.add_job(
+        lambda: run_developer_catalog_job(conn_factory, settings),
+        "cron", hour=5, minute=45, timezone="Europe/Amsterdam",
+        next_run_time=datetime.now() + timedelta(minutes=90),
+        id="research_developers",
     )
     scheduler.add_job(
         lambda: run_discovery_alerts_job(conn_factory, settings),

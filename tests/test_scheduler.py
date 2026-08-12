@@ -6,6 +6,7 @@ from app_dashboard.scheduler import (
     run_app_discovery_job,
     run_aso_job,
     run_category_discovery_job,
+    run_developer_catalog_job,
     run_review_collection_job,
     run_sync_job,
     run_watchlist_job,
@@ -291,5 +292,33 @@ def test_review_job_isolates_apps_and_closes_connections(monkeypatch):
     assert results == [
         {"handle": "alpha", "ok": True, "captured": 3},
         {"handle": "beta", "ok": False, "error": "RuntimeError"},
+    ]
+    assert [conn.closed_count for conn in (index, alpha, beta)] == [1, 1, 1]
+
+
+def test_developer_catalog_job_isolates_developers_and_closes_connections(monkeypatch):
+    from types import SimpleNamespace
+
+    index = FakeConn()
+    alpha = FakeConn()
+    beta = FakeConn()
+    connections = iter([index, alpha, beta])
+    monkeypatch.setattr(
+        "app_dashboard.developer_catalog.developers_due_for_refresh",
+        lambda conn: [10, 20],
+    )
+
+    def sync(conn, developer_id):
+        if developer_id == 20:
+            raise RuntimeError("page failed")
+        return {"developer_id": developer_id, "status": "ready"}
+
+    monkeypatch.setattr("app_dashboard.developer_catalog.sync_developer_catalog", sync)
+    results = run_developer_catalog_job(
+        lambda: next(connections), SimpleNamespace(watchlist_concurrency=1),
+    )
+    assert results == [
+        {"developer_id": 10, "status": "ready"},
+        {"developer_id": 20, "status": "failed", "error": "RuntimeError"},
     ]
     assert [conn.closed_count for conn in (index, alpha, beta)] == [1, 1, 1]
