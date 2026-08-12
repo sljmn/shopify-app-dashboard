@@ -439,6 +439,11 @@ def test_rank_tracker_workflow_creates_list_keyword_and_renders_results(db):
     )
     assert created.status_code == 303
     assert created.headers["location"] == "/rank-tracker/lists/1"
+    list_page = client.get(created.headers["location"])
+    assert "App Store context" in list_page.text
+    assert "App Store language" in list_page.text
+    assert "Reporting market" in list_page.text
+    assert "does not change rankings" in list_page.text
 
     keyword = client.post(
         "/rank-tracker/lists/1/keywords",
