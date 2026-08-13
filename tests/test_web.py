@@ -2450,3 +2450,36 @@ def test_invalid_and_future_periods_render_a_useful_page(db):
     response = _signed_in().get(url)
     assert response.status_code == 200
     assert "This period has not started yet" in response.text
+
+
+def test_content_studio_is_authenticated_and_can_create_project(db, test_app):
+    app=create_app(conn_factory=lambda: keep_open(db))
+    signed_out=dashboard_client(app,authenticated=False)
+    assert signed_out.get(
+        "/content",headers={"accept":"text/html"},follow_redirects=False,
+    ).headers["location"] == "/auth/login"
+
+    style_id=db.execute(
+        "insert into content_style_profiles (name,prompt_template) values ('Test editorial','Illustrate {subject}') returning id"
+    ).fetchone()[0]
+    db.execute(
+        "insert into app_content_profiles (app_id,style_profile_id,facts) values (%s,%s,%s)",
+        (test_app.id,style_id,Jsonb([{"label":"Import","value":"Creates a Shopify product"}])),
+    )
+    client=dashboard_client(app)
+    index=client.get("/content")
+    assert index.status_code==200 and "Content Studio" in index.text
+    created=client.post(
+        "/content",data={"app_id":str(test_app.id),"title":"ISBN import guide","target_query":"import books shopify","channel":"seo_article","language":"en"},follow_redirects=False,
+    )
+    assert created.status_code==303 and created.headers["location"].startswith("/content/")
+    detail=client.get(created.headers["location"])
+    assert "ISBN import guide" in detail.text and "Publication gate" in detail.text
+
+
+def test_content_studio_rejects_cross_origin_write(db, test_app):
+    app=create_app(conn_factory=lambda: keep_open(db))
+    response=dashboard_client(app).post(
+        "/content/inventory/sync",headers={"origin":"https://attacker.test"},follow_redirects=False,
+    )
+    assert response.status_code==403

@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}New content{% endblock %}{% block content %}
+<div class="narrow-workspace"><a href="/content">Content Studio</a><h1>New content</h1><p>Start with a real buyer question. Mantle checks existing Newcraft content before publication.</p>
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+<form method="post" action="/content" class="stack-form card">
+<label><span>App</span><select name="app_id" required><option value="">Choose an app</option>{% for app in active_apps %}<option value="{{ app.id }}" {% if values.app_id|string==app.id|string %}selected{% endif %}>{{ app.name }}{% if app.id not in profiles %} · profile needed{% endif %}</option>{% endfor %}</select></label>
+<label><span>Working title</span><input name="title" required value="{{ values.title or '' }}" placeholder="How to import books into Shopify"></label>
+<label><span>Target query or topic</span><input name="target_query" required value="{{ values.target_query or '' }}" placeholder="import books into Shopify"></label>
+<div class="form-grid"><label><span>Channel</span><select name="channel"><option value="seo_article">SEO article</option><option value="youtube">YouTube</option></select></label><label><span>Language</span><select name="language"><option value="en">English</option><option value="nl-NL">Dutch</option></select></label></div>
+<button type="submit">Create project</button></form></div>{% endblock %}

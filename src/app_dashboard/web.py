@@ -133,6 +133,7 @@ from app_dashboard.integrations import (
     save_organization,
 )
 from app_dashboard.config import get_settings
+from app_dashboard.content_router import build_content_router
 from app_dashboard.customers import (
     PLAN_INTERVALS,
     count_customers,
@@ -2866,6 +2867,11 @@ def create_app(conn_factory, manual_sync_coordinator=None) -> FastAPI:
              "needs_app": selected_app is None},
         )
 
+    app.include_router(build_content_router(
+        conn_factory=conn_factory, settings=settings, templates=templates,
+        verify_creds=verify_creds, page_context=page_context,
+        active_apps=active_apps, browser_form=_browser_form, flat_form=_flat_form,
+    ))
     return app
 
 

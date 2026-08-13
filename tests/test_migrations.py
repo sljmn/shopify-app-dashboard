@@ -40,6 +40,12 @@ def test_core_tables_exist(db):
     assert {
         "aso_rank_lists", "aso_rank_keywords", "aso_rank_scans", "aso_rank_results",
     } <= names
+    assert {
+        "app_content_profiles", "content_inventory", "content_projects",
+        "content_versions", "content_sources", "content_links",
+        "content_style_profiles", "content_media", "content_quality_checks",
+        "content_runs", "content_publications",
+    } <= names
 
 
 def test_research_note_requires_exactly_one_target(db):
@@ -79,6 +85,7 @@ def test_every_app_owned_table_has_a_required_app_id(db):
             "aso_listing_snapshots", "aso_listing_changes", "payout_earnings",
             "merchant_contacts", "review_prompt_decisions",
             "review_prompt_suppressions",
+            "app_content_profiles", "content_projects",
         }
     rows = db.execute(
         """

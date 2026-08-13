@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Content Studio{% endblock %}
+{% block content %}
+<header class="content-head">
+  <div><p class="eyebrow">Content operations</p><h1>Content Studio</h1><p>Evidence-backed SEO articles and YouTube scripts for Newcraft apps.</p></div>
+  <a class="button" href="/content/new">New content</a>
+</header>
+{% if request.query_params.get('notice') %}<div class="notice">{{ request.query_params.get('notice') }}</div>{% endif %}
+<section class="content-status" aria-label="Content integrations">
+  <div><span>Inventory</span><strong>{{ inventory_count }} pages</strong><small>{{ inventory_synced_at|local_time("%-d %b %Y %H:%M") if inventory_synced_at else 'Not synced yet' }}</small></div>
+  <div><span>OpenRouter</span><strong>{{ 'Connected' if openrouter_configured else 'Needs configuration' }}</strong><small>Structured generation</small></div>
+  <div><span>WordPress</span><strong>{{ 'Connected' if wordpress_configured else 'Needs configuration' }}</strong><small>Drafts and publishing</small></div>
+  <form method="post" action="/content/inventory/sync"><button class="secondary" type="submit">Sync inventory</button></form>
+</section>
+<form class="content-filters" method="get">
+  <input name="q" value="{{ q }}" placeholder="Search title or target query" aria-label="Search content">
+  <select name="stage" aria-label="Stage"><option value="">All stages</option>{% for item in ['idea','brief','outline','draft','review','media','ready','published','archived'] %}<option value="{{ item }}" {% if stage==item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select>
+  <button type="submit">Filter</button>
+</form>
+<div class="table-shell"><table class="data-table"><thead><tr><th>Content</th><th>App</th><th>Channel</th><th>Language</th><th>Overlap</th><th>Stage</th><th>WordPress</th><th>Updated</th></tr></thead><tbody>
+{% for item in projects %}<tr><td><a href="/content/{{ item.id }}"><strong>{{ item.title }}</strong></a><small>{{ item.target_query }}</small></td><td>{{ item.app_name }}</td><td>{{ item.channel|replace('_',' ')|title }}</td><td>{{ item.language }}</td><td><span class="status neutral">{{ item.overlap_status|replace('_',' ') }}</span></td><td>{{ item.stage|title }}</td><td>{{ item.publication_status or '—' }}</td><td>{{ item.updated_at|local_time("%-d %b %H:%M") }}</td></tr>
+{% else %}<tr><td colspan="8" class="empty-cell"><strong>No content projects yet</strong><span>Create one after configuring an app content profile.</span></td></tr>{% endfor %}
+</tbody></table></div>
+<section class="content-profile-links"><h2>App content profiles</h2><p>Verified facts and claims are the guardrails for every generated item.</p><div>{% for app in active_apps %}<a href="/content/profiles/{{ app.id }}">{{ app.name }}</a>{% endfor %}</div></section>
+{% endblock %}

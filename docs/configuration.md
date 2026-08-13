@@ -99,6 +99,29 @@ git push dokku-mantle HEAD:master
 
 Delete `service-account.json` from the workstation after the secret is set. Never commit it.
 
+## Content Studio
+
+Content Studio is an authenticated workspace for app-specific SEO articles and YouTube scripts.
+It stores verified app facts, immutable briefs and drafts, overlap decisions, quality checks,
+editorial images, and WordPress publication records.
+
+1. Configure `CONTENT_SITEMAP_URL` and `CONTENT_ALLOWED_HOSTS`, then sync the inventory from the
+   Content Studio index. The fetcher rejects off-domain redirects, non-HTML responses, and pages
+   above `CONTENT_PAGE_MAX_BYTES`.
+2. Set `OPENROUTER_API_KEY` to enable staged ideas, briefs, outlines, drafts, reviews, and image
+   generation. Each stage requires structured JSON and is saved as an immutable version.
+3. Use the existing private B2 settings for generated images. They live under content-addressed
+   `content/` keys and are only copied to WordPress when a draft is created.
+4. Configure all WordPress values together: `WORDPRESS_SITE_URL`, `WORDPRESS_USERNAME`, and
+   `WORDPRESS_APPLICATION_PASSWORD`. Use a dedicated WordPress Application Password with only the
+   permissions needed for the configured post type and media.
+5. In Management, open Content Studio and configure each app's verified facts, approved claims,
+   source URLs, languages, pillar page, listing URL, and related WordPress app ID.
+
+The publication gate blocks WordPress until an accepted draft exists and overlap has been resolved.
+Saving a WordPress draft and publishing it are separate actions. Publishing always requires a
+browser confirmation; generation never publishes automatically.
+
 ## Scope semantics
 
 No `?app=` means All apps. Lifecycle and financial figures add app installations, so one shop

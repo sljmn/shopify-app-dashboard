@@ -167,3 +167,41 @@ class ResearchObjectStore:
 
     def delete(self, object_key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=object_key)
+
+
+class ContentObjectStore(ResearchObjectStore):
+    """Private, content-addressed storage for generated editorial images."""
+
+    def __init__(self, settings, *, client=None):
+        super().__init__(settings, client=client)
+        self.max_bytes = settings.content_image_max_bytes
+
+    def upload_image(self, data: bytes, *, mime_type: str) -> StoredObject:
+        extension_by_mime = {
+            "image/jpeg": ".jpg", "image/png": ".png",
+            "image/webp": ".webp", "image/gif": ".gif",
+        }
+        extension = extension_by_mime.get(mime_type)
+        if not extension:
+            raise InvalidResearchFile("unsupported-content-image-type")
+        if len(data) > self.max_bytes:
+            raise InvalidResearchFile("file-too-large")
+        _, detected = inspect_file(data, f"generated{extension}", mime_type)
+        digest = hashlib.sha256(data).hexdigest()
+        object_key = f"content/{digest[:2]}/{digest}"
+        created = not self._exists(object_key)
+        if created:
+            self.client.put_object(
+                Bucket=self.bucket, Key=object_key, Body=data,
+                ContentType=detected, ContentDisposition="inline",
+                ServerSideEncryption="AES256", Metadata={"sha256": digest},
+            )
+        return StoredObject(
+            digest, object_key, detected, len(data), f"{digest}{extension}", created,
+        )
+
+    def presigned_inline(self, object_key: str) -> str:
+        return self.client.generate_presigned_url(
+            "get_object", Params={"Bucket": self.bucket, "Key": object_key},
+            ExpiresIn=600,
+        )

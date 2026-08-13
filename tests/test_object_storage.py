@@ -4,13 +4,14 @@ import zipfile
 import pytest
 from botocore.exceptions import ClientError
 
-from app_dashboard.object_storage import InvalidResearchFile, ResearchObjectStore, inspect_file
+from app_dashboard.object_storage import ContentObjectStore, InvalidResearchFile, ResearchObjectStore, inspect_file
 
 
 class Settings:
     b2_bucket = "research-test"
     research_upload_max_bytes = 100
     b2_configured = True
+    content_image_max_bytes = 100
 
 
 class FakeS3:
@@ -70,3 +71,12 @@ def test_office_open_xml_is_inspected_not_only_trusted_by_extension():
     )
     assert name == "research.docx"
     assert mime.endswith("wordprocessingml.document")
+
+
+def test_content_images_use_their_own_private_namespace():
+    client=FakeS3()
+    stored=ContentObjectStore(Settings(),client=client).upload_image(
+        b"\x89PNG\r\n\x1a\nimage",mime_type="image/png",
+    )
+    assert stored.object_key.startswith("content/")
+    assert client.objects[("research-test",stored.object_key)][1]["ContentDisposition"] == "inline"

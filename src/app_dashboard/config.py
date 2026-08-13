@@ -72,6 +72,22 @@ class Settings(BaseSettings):
     b2_bucket: str | None = None
     b2_endpoint: str | None = None
     research_upload_max_bytes: int = 15 * 1024 * 1024
+    content_image_max_bytes: int = 12 * 1024 * 1024
+    content_sitemap_url: str = "https://newcraft.dev/marketing-post-sitemap.xml"
+    content_allowed_hosts: str = "newcraft.dev,www.newcraft.dev"
+    content_fetch_timeout_seconds: int = 12
+    content_page_max_bytes: int = 2 * 1024 * 1024
+    content_inventory_max_age_hours: int = 24
+    openrouter_api_key: str | None = None
+    openrouter_generation_model: str = "openai/gpt-5.2"
+    openrouter_review_model: str = "openai/gpt-5.2"
+    openrouter_image_model: str = "google/gemini-3-pro-image-preview"
+    openrouter_timeout_seconds: int = 90
+    wordpress_site_url: str | None = None
+    wordpress_username: str | None = None
+    wordpress_application_password: str | None = None
+    wordpress_post_type: str = "marketing-post"
+    wordpress_timeout_seconds: int = 20
 
     # --- validation ---------------------------------------------------------
     # These run at construction, which for this app means at import, because
@@ -143,6 +159,13 @@ class Settings(BaseSettings):
             raise ValueError("RESEARCH_UPLOAD_MAX_BYTES must be between 1 byte and 50 MB")
         return value
 
+    @field_validator("content_image_max_bytes")
+    @classmethod
+    def _content_image_size_is_bounded(cls, value: int) -> int:
+        if not 1 <= value <= 25 * 1024 * 1024:
+            raise ValueError("CONTENT_IMAGE_MAX_BYTES must be between 1 byte and 25 MB")
+        return value
+
     @model_validator(mode="after")
     def _b2_configuration_is_complete(self):
         values = (
@@ -153,9 +176,58 @@ class Settings(BaseSettings):
             raise ValueError("B2_KEY_ID, B2_APPLICATION_KEY, B2_REGION, B2_BUCKET and B2_ENDPOINT must be set together")
         return self
 
+    @model_validator(mode="after")
+    def _wordpress_configuration_is_complete(self):
+        values = (
+            self.wordpress_site_url, self.wordpress_username,
+            self.wordpress_application_password,
+        )
+        if any(values) and not all(values):
+            raise ValueError(
+                "WORDPRESS_SITE_URL, WORDPRESS_USERNAME and "
+                "WORDPRESS_APPLICATION_PASSWORD must be set together"
+            )
+        return self
+
     @property
     def b2_configured(self) -> bool:
         return bool(self.b2_key_id)
+
+    @property
+    def openrouter_configured(self) -> bool:
+        return bool(self.openrouter_api_key)
+
+    @property
+    def wordpress_configured(self) -> bool:
+        return bool(self.wordpress_site_url and self.wordpress_username and self.wordpress_application_password)
+
+    @field_validator("content_fetch_timeout_seconds", "wordpress_timeout_seconds")
+    @classmethod
+    def _external_timeout_is_bounded(cls, value: int) -> int:
+        if not 1 <= value <= 30:
+            raise ValueError("External fetch timeouts must be between 1 and 30 seconds")
+        return value
+
+    @field_validator("openrouter_timeout_seconds")
+    @classmethod
+    def _model_timeout_is_bounded(cls, value: int) -> int:
+        if not 10 <= value <= 180:
+            raise ValueError("OPENROUTER_TIMEOUT_SECONDS must be between 10 and 180")
+        return value
+
+    @field_validator("content_page_max_bytes")
+    @classmethod
+    def _content_page_size_is_bounded(cls, value: int) -> int:
+        if not 64 * 1024 <= value <= 5 * 1024 * 1024:
+            raise ValueError("CONTENT_PAGE_MAX_BYTES must be between 64 KB and 5 MB")
+        return value
+
+    @field_validator("content_inventory_max_age_hours")
+    @classmethod
+    def _inventory_age_is_bounded(cls, value: int) -> int:
+        if not 1 <= value <= 168:
+            raise ValueError("CONTENT_INVENTORY_MAX_AGE_HOURS must be between 1 and 168")
+        return value
 
     @property
     def dashboard_name(self) -> str:

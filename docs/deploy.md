@@ -77,6 +77,41 @@ dokku config:set --no-restart mantle \
 Keep one web process: the daily watchlist job is part of the same APScheduler instance. Back up the
 mounted directory together with Postgres; the database contains content digests, not media bytes.
 
+### Dokku Content Studio
+
+Content Studio is optional, but each provider must be configured as a complete group. Reuse the
+private Backblaze credentials already used for Research; generated assets use the separate
+content-addressed `content/` key prefix. Do not copy credentials into `config/apps.yml` or the
+database.
+
+```bash
+dokku config:set --no-restart mantle \
+  CONTENT_SITEMAP_URL=https://newcraft.dev/marketing-post-sitemap.xml \
+  CONTENT_ALLOWED_HOSTS=newcraft.dev,www.newcraft.dev \
+  OPENROUTER_API_KEY='...' \
+  B2_KEY_ID='...' B2_APPLICATION_KEY='...' B2_REGION='eu-central-003' \
+  B2_BUCKET='...' B2_ENDPOINT='https://s3.eu-central-003.backblazeb2.com' \
+  WORDPRESS_SITE_URL=https://newcraft.dev WORDPRESS_USERNAME='...' \
+  WORDPRESS_APPLICATION_PASSWORD='...' WORDPRESS_POST_TYPE=marketing-post
+```
+
+After deploy, sign in and open **Content**:
+
+1. Run **Sync sitemap**. A successful run updates every page in one transaction and only then
+   marks pages missing from the completed sitemap as removed.
+2. Configure an app profile before creating a project. Approved claims must have a source URL.
+3. Use **Test WordPress** before the first editorial draft. Create a draft, inspect its Gutenberg
+   blocks, excerpt, related app and featured image in WordPress, then delete that smoke draft.
+4. Keep direct publication operator initiated. Generation and review never publish on their own.
+
+Provider failures are recorded with a bounded safe error and leave the last accepted version or
+published post intact. Retry OpenRouter stages from the project page. If sitemap sync fails, fix the
+off-domain redirect, response type or page size and rerun it; the previous inventory remains valid.
+If WordPress accepts a post but Mantle loses the response, locate the draft by slug in WordPress,
+record that post as the explicit update target, and update it instead of creating another post.
+Rotate OpenRouter, B2 or WordPress secrets with `dokku config:set --no-restart`, then deploy or run
+`dokku ps:restart mantle`; never paste their values into notes or runbooks.
+
 ## Verify
 
 Do not consider it deployed until all three pass:

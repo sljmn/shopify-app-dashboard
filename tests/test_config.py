@@ -73,3 +73,8 @@ def test_watchlist_storage_and_concurrency_are_validated(monkeypatch):
 def test_backblaze_configuration_must_be_complete(monkeypatch):
     with pytest.raises(ValidationError, match="must be set together"):
         _settings(monkeypatch, B2_BUCKET="only-a-bucket")
+
+
+def test_wordpress_configuration_must_be_complete(monkeypatch):
+    with pytest.raises(ValidationError, match="WORDPRESS_SITE_URL"):
+        _settings(monkeypatch, WORDPRESS_SITE_URL="https://newcraft.dev")
