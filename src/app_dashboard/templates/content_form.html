@@ -1,9 +1,41 @@
-{% extends "base.html" %}{% block title %}New content{% endblock %}{% block content %}
-<div class="narrow-workspace"><a href="/content">Content Studio</a><h1>New content</h1><p>Start with a real buyer question. Mantle checks existing Newcraft content before publication.</p>
-{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
-<form method="post" action="/content" class="stack-form card">
-<label><span>App</span><select name="app_id" required><option value="">Choose an app</option>{% for app in active_apps %}<option value="{{ app.id }}" {% if values.app_id|string==app.id|string %}selected{% endif %}>{{ app.name }}{% if app.id not in profiles %} · profile needed{% endif %}</option>{% endfor %}</select></label>
-<label><span>Working title</span><input name="title" required value="{{ values.title or '' }}" placeholder="How to import books into Shopify"></label>
-<label><span>Target query or topic</span><input name="target_query" required value="{{ values.target_query or '' }}" placeholder="import books into Shopify"></label>
-<div class="form-grid"><label><span>Channel</span><select name="channel"><option value="seo_article">SEO article</option><option value="youtube">YouTube</option></select></label><label><span>Language</span><select name="language"><option value="en">English</option><option value="nl-NL">Dutch</option></select></label></div>
-<button type="submit">Create project</button></form></div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}New content{% endblock %}
+{% block content %}
+<div class="content-form-page">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/content">Content Studio</a><span>/</span><span>New project</span></nav>
+  <header class="content-form-head">
+    <p class="eyebrow">Editorial workflow</p>
+    <h1>New content</h1>
+    <p>Start with one real buyer question. Existing Newcraft content is checked before anything can be published.</p>
+  </header>
+  {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+  <form method="post" action="/content" class="content-form-card">
+    <section class="content-form-section">
+      <div class="content-form-section-head"><span>1</span><div><h2>Choose the product</h2><p>The product profile supplies the verified facts and approved claims.</p></div></div>
+      <label class="content-field">
+        <span class="field-label">App</span>
+        <select class="content-control" name="app_id" required>
+          <option value="">Choose an app</option>
+          {% for app in active_apps %}<option value="{{ app.id }}" {% if values.app_id|string==app.id|string %}selected{% endif %} {% if app.id not in profiles %}disabled{% endif %}>{{ app.name }}{% if app.id not in profiles %} · profile needed{% endif %}</option>{% endfor %}
+        </select>
+        <small>Only apps with a completed content profile can start a project.</small>
+      </label>
+    </section>
+    <section class="content-form-section">
+      <div class="content-form-section-head"><span>2</span><div><h2>Define the buyer question</h2><p>Use a working title for the piece and the actual search phrase or topic separately.</p></div></div>
+      <div class="content-field-grid">
+        <label class="content-field"><span class="field-label">Working title</span><input class="content-control" name="title" required value="{{ values.title or '' }}" placeholder="How to import books into Shopify"></label>
+        <label class="content-field"><span class="field-label">Target query or topic</span><input class="content-control" name="target_query" required value="{{ values.target_query or '' }}" placeholder="import books into Shopify"></label>
+      </div>
+    </section>
+    <section class="content-form-section">
+      <div class="content-form-section-head"><span>3</span><div><h2>Choose the deliverable</h2><p>Language is selected per project, so the same product can publish in English or Dutch.</p></div></div>
+      <div class="content-field-grid">
+        <label class="content-field"><span class="field-label">Channel</span><select class="content-control" name="channel"><option value="seo_article" {% if values.channel in [None,'seo_article'] %}selected{% endif %}>SEO article</option><option value="youtube" {% if values.channel=='youtube' %}selected{% endif %}>YouTube script</option></select></label>
+        <label class="content-field"><span class="field-label">Language</span><select class="content-control" name="language"><option value="en" {% if values.language in [None,'en'] %}selected{% endif %}>English</option><option value="nl-NL" {% if values.language=='nl-NL' %}selected{% endif %}>Dutch</option></select></label>
+      </div>
+    </section>
+    <div class="content-save-bar"><p>The project starts as a private brief. Nothing is published automatically.</p><button type="submit">Create project</button></div>
+  </form>
+</div>
+{% endblock %}

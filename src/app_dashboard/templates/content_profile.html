@@ -1,8 +1,45 @@
-{% extends "base.html" %}{% block title %}{{ profile_app.name }} content profile{% endblock %}{% block content %}
-<div class="narrow-workspace"><a href="/content">Content Studio</a><h1>{{ profile_app.name }}</h1><p>Only enter product facts you can defend. OpenRouter receives this profile, not secrets or merchant data.</p>
-{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
-<form method="post" class="stack-form card">
-<div class="form-grid"><label><span>Pillar URL</span><input type="url" name="pillar_url" value="{{ values.pillar_url or '' }}"></label><label><span>Shopify listing URL</span><input type="url" name="shopify_listing_url" value="{{ values.shopify_listing_url or '' }}"></label><label><span>WordPress related app ID</span><input inputmode="numeric" name="wordpress_related_app_id" value="{{ values.wordpress_related_app_id or '' }}"></label><label><span>Default language</span><input name="default_language" value="{{ values.default_language or 'en' }}"></label><label><span>Supported languages</span><input name="supported_languages" value="{{ values.supported_languages or 'en' }}"><small>Comma-separated BCP-47 tags.</small></label><label><span>Illustration style</span><select name="style_profile_id"><option value="">Default</option>{% for style in styles %}<option value="{{ style.id }}" {% if values.style_profile_id==style.id %}selected{% endif %}>{{ style.name }} v{{ style.version }}</option>{% endfor %}</select></label></div>
-<label><span>Verified facts</span><textarea name="facts" rows="6" placeholder="Feature: Verified description">{{ values.facts or '' }}</textarea><small>One per line as Label: fact.</small></label>
-<div class="form-grid"><label><span>Allowed claims</span><textarea name="allowed_claims" rows="5">{{ values.allowed_claims or '' }}</textarea></label><label><span>Forbidden claims</span><textarea name="forbidden_claims" rows="5">{{ values.forbidden_claims or '' }}</textarea></label><label><span>Audiences</span><textarea name="audiences" rows="5">{{ values.audiences or '' }}</textarea></label><label><span>Buyer objections</span><textarea name="objections" rows="5">{{ values.objections or '' }}</textarea></label></div>
-<label><span>Approved source URLs</span><textarea name="source_urls" rows="4">{{ values.source_urls or '' }}</textarea></label><button type="submit">Save content profile</button></form></div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}{{ profile_app.name }} content profile{% endblock %}
+{% block content %}
+<div class="content-profile-page">
+  <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/content">Content Studio</a><span>/</span><span>App profile</span></nav>
+  <header class="content-form-head content-profile-head">
+    <div><p class="eyebrow">Product guardrails</p><h1>{{ profile_app.name }}</h1><p>Only store product facts you can defend. OpenRouter receives this profile, never secrets or merchant data.</p></div>
+    {% if request.query_params.get('saved') %}<span class="saved-indicator">Saved</span>{% endif %}
+  </header>
+  {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+  <form method="post" class="content-form-card content-profile-form">
+    <section class="content-form-section">
+      <div class="content-form-section-head"><span>1</span><div><h2>Product destinations</h2><p>Canonical locations used for internal linking, Shopify attribution and WordPress publishing.</p></div></div>
+      <div class="content-field-grid">
+        <label class="content-field"><span class="field-label">Pillar URL</span><input class="content-control" type="url" name="pillar_url" value="{{ values.pillar_url or '' }}" placeholder="https://newcraft.dev/apps/..."></label>
+        <label class="content-field"><span class="field-label">Shopify listing URL</span><input class="content-control" type="url" name="shopify_listing_url" value="{{ values.shopify_listing_url or '' }}" placeholder="https://apps.shopify.com/..."></label>
+        <label class="content-field"><span class="field-label">WordPress related app ID</span><input class="content-control" inputmode="numeric" name="wordpress_related_app_id" value="{{ values.wordpress_related_app_id or '' }}" placeholder="WordPress post ID"><small>Used by the existing related-app publishing field.</small></label>
+      </div>
+    </section>
+    <section class="content-form-section">
+      <div class="content-form-section-head"><span>2</span><div><h2>Editorial defaults</h2><p>Set the normal language range and the approved visual direction for this product.</p></div></div>
+      <div class="content-field-grid content-field-grid-three">
+        <label class="content-field"><span class="field-label">Default language</span><input class="content-control" name="default_language" value="{{ values.default_language or 'en' }}" placeholder="en"></label>
+        <label class="content-field"><span class="field-label">Supported languages</span><input class="content-control" name="supported_languages" value="{{ values.supported_languages or 'en' }}" placeholder="en, nl-NL"><small>Comma-separated BCP-47 tags.</small></label>
+        <label class="content-field"><span class="field-label">Illustration style</span><select class="content-control" name="style_profile_id"><option value="">Default style</option>{% for style in styles %}<option value="{{ style.id }}" {% if values.style_profile_id==style.id %}selected{% endif %}>{{ style.name }} · v{{ style.version }}</option>{% endfor %}</select></label>
+      </div>
+    </section>
+    <section class="content-form-section">
+      <div class="content-form-section-head"><span>3</span><div><h2>Evidence</h2><p>Every factual statement available to the model starts here.</p></div></div>
+      <label class="content-field"><span class="field-label">Verified facts</span><textarea class="content-control content-textarea-large" name="facts" rows="7" placeholder="Feature: Verified description">{{ values.facts or '' }}</textarea><small>One fact per line, written as <strong>Label: verified fact</strong>.</small></label>
+      <label class="content-field"><span class="field-label">Approved source URLs</span><textarea class="content-control" name="source_urls" rows="4" placeholder="https://newcraft.dev/verified-source">{{ values.source_urls or '' }}</textarea><small>One HTTPS URL per line.</small></label>
+    </section>
+    <section class="content-form-section">
+      <div class="content-form-section-head"><span>4</span><div><h2>Positioning boundaries</h2><p>Define who the product is for and the line between useful persuasion and unsupported claims.</p></div></div>
+      <div class="content-field-grid">
+        <label class="content-field"><span class="field-label">Allowed claims</span><textarea class="content-control" name="allowed_claims" rows="5" placeholder="One approved claim per line">{{ values.allowed_claims or '' }}</textarea></label>
+        <label class="content-field"><span class="field-label">Forbidden claims</span><textarea class="content-control" name="forbidden_claims" rows="5" placeholder="Claims the content must never make">{{ values.forbidden_claims or '' }}</textarea></label>
+        <label class="content-field"><span class="field-label">Audiences</span><textarea class="content-control" name="audiences" rows="5" placeholder="One audience per line">{{ values.audiences or '' }}</textarea></label>
+        <label class="content-field"><span class="field-label">Buyer objections</span><textarea class="content-control" name="objections" rows="5" placeholder="One real objection per line">{{ values.objections or '' }}</textarea></label>
+      </div>
+    </section>
+    <div class="content-save-bar"><p>Changes apply to future generations. Existing accepted versions stay unchanged.</p><button type="submit">Save profile</button></div>
+  </form>
+</div>
+{% endblock %}

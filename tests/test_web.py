@@ -2469,6 +2469,15 @@ def test_content_studio_is_authenticated_and_can_create_project(db, test_app):
     client=dashboard_client(app)
     index=client.get("/content")
     assert index.status_code==200 and "Content Studio" in index.text
+    assert "1 of 1 configured" in index.text
+    assert 'class="profile-row"' in index.text
+    profile=client.get(f"/content/profiles/{test_app.id}")
+    assert profile.status_code==200
+    assert "Product destinations" in profile.text
+    assert 'class="content-control"' in profile.text
+    new_project=client.get("/content/new")
+    assert "Define the buyer question" in new_project.text
+    assert "Nothing is published automatically" in new_project.text
     created=client.post(
         "/content",data={"app_id":str(test_app.id),"title":"ISBN import guide","target_query":"import books shopify","channel":"seo_article","language":"en"},follow_redirects=False,
     )

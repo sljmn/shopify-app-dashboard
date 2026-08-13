@@ -30,7 +30,10 @@ def build_content_router(*, conn_factory, settings, templates, verify_creds, pag
         try:
             rows=list_projects(conn,query=q,stage=stage)
             inventory=conn.execute("select count(*),max(last_seen_at) from content_inventory where removed_at is null").fetchone()
-            return templates.TemplateResponse(request,"content_index.html",context(request,user,conn,{"projects":rows,"q":q,"stage":stage,"inventory_count":inventory[0],"inventory_synced_at":inventory[1],"openrouter_configured":settings.openrouter_configured,"wordpress_configured":settings.wordpress_configured}))
+            configured_profile_ids = {
+                row[0] for row in conn.execute("select app_id from app_content_profiles").fetchall()
+            }
+            return templates.TemplateResponse(request,"content_index.html",context(request,user,conn,{"projects":rows,"q":q,"stage":stage,"inventory_count":inventory[0],"inventory_synced_at":inventory[1],"configured_profile_ids":configured_profile_ids,"openrouter_configured":settings.openrouter_configured,"wordpress_configured":settings.wordpress_configured}))
         finally: conn.close()
 
     @router.get("/content/new")
