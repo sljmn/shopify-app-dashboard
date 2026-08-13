@@ -91,6 +91,8 @@ def test_cashflow_uses_mantle_half_month_windows_and_statuses(db, app_factory):
         date(2026, 8, 1), date(2026, 8, 15), date(2026, 8, 20),
     )
     assert current.due == Decimal("80.00")
+    assert current.confirmed == Decimal("80.00")
+    assert current.estimated is True
     assert upcoming.billed == Decimal("25.00")
     assert upcoming.estimated is True
     assert report.cashflow_currency == "USD"
@@ -132,3 +134,39 @@ def test_upcoming_projection_respects_monthly_and_annual_billing_cadence(
     # The next window is 16-31 Aug: monthly and the Aug annual renewal are
     # included. The October annual subscription is not spread over every month.
     assert report.cashflow[-1].upcoming == Decimal("135.94")
+
+
+def test_current_window_projects_only_the_unconfirmed_remainder(db, app_factory):
+    app = app_factory(slug="current", name="Current")
+    db.execute(
+        "insert into shops (app_id, shop_gid, install_state) values (%s,'shop','installed')",
+        (app.id,),
+    )
+    db.execute(
+        """insert into subscriptions
+           (app_id, id, shop_gid, monthly_amount, billing_type, converted_at)
+           values (%s,'sub','shop',20,'EVERY_30_DAYS','2026-07-10')""",
+        (app.id,),
+    )
+    db.execute(
+        """insert into transactions
+           (app_id, id, type, created_at, shop_gid, billing_interval,
+            gross_amount, net_amount, currency_code)
+           values (%s,'tx','AppSubscriptionSale','2026-07-10','shop',
+                   'EVERY_30_DAYS',20,19.42,'USD')""",
+        (app.id,),
+    )
+    _earning(
+        db, app.id, "confirmed", settlement_date=date(2026, 8, 16),
+        net="10.00", occurred_at=datetime(2026, 8, 10, tzinfo=timezone.utc),
+    )
+
+    report = payout_report(
+        db, Scope.for_app(app.id), date(2026, 8, 1), date(2026, 8, 31),
+        today=date(2026, 8, 12),
+    )
+
+    current = report.cashflow[1]
+    assert current.confirmed == Decimal("10.00")
+    assert current.upcoming == Decimal("9.42")
+    assert current.total == Decimal("19.42")

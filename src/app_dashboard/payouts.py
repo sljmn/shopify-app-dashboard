@@ -56,6 +56,10 @@ class PayoutWindow:
     def total(self) -> Decimal:
         return self.paid + self.due + self.billed + self.upcoming
 
+    @property
+    def confirmed(self) -> Decimal:
+        return self.paid + self.due + self.billed
+
 
 @dataclass(frozen=True)
 class PayoutReport:
@@ -175,8 +179,6 @@ def _cashflow(
     ).fetchall()
     currencies = {row[3] for row in rows}
     currency = next(iter(currencies)) if len(currencies) == 1 else None
-    projection = _projected_net(conn, scope, *windows[-1])
-
     result = []
     for index, (start, end) in enumerate(windows):
         paid = due = billed = Decimal("0")
@@ -194,8 +196,9 @@ def _cashflow(
             else:
                 due += amount
         upcoming = Decimal("0")
-        estimated = index == len(windows) - 1
+        estimated = end >= today
         if estimated and currency in (None, "USD"):
+            projection = _projected_net(conn, scope, start, end)
             upcoming = max(projection - paid - due - billed, Decimal("0"))
             currency = currency or "USD"
         result.append(PayoutWindow(

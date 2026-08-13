@@ -2386,7 +2386,9 @@ def test_payouts_requires_login_and_renders_settlement_details(db, test_app):
     assert "Paid" in body
     assert "Billed" in body
     assert "Upcoming" in body
-    assert "Estimated" in body
+    assert "Expected in your bank account" in body
+    assert "Confirmed by Shopify" in body
+    assert "Estimated remainder" in body
     assert 'href="#details"' in body
     assert "USD 10.00" in body
     assert "8 Aug 2026" in body

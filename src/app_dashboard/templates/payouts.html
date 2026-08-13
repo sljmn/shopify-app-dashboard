@@ -9,6 +9,21 @@
         <a href="#details">View details</a>
     </div>
     {% if report.cashflow_currency %}
+    {% set next_payout = report.cashflow|selectattr('payment_date', 'ge', today)|first %}
+    {% if next_payout %}
+    <div class="payout-bank-summary">
+        <div>
+            <span class="eyebrow">Expected in your bank account</span>
+            <strong>{{ report.cashflow_currency }} {{ "%.2f"|format(next_payout.total) }}</strong>
+            <span>Expected payout date: {{ next_payout.payment_date.strftime("%-d %B %Y") }}</span>
+        </div>
+        <dl>
+            <div><dt>Confirmed by Shopify</dt><dd>{{ report.cashflow_currency }} {{ "%.2f"|format(next_payout.confirmed) }}</dd></div>
+            <div><dt>Estimated remainder</dt><dd>{{ report.cashflow_currency }} {{ "%.2f"|format(next_payout.upcoming) }}</dd></div>
+        </dl>
+        <p>The final bank transfer can still change through new charges, refunds or Shopify adjustments before the payout closes.</p>
+    </div>
+    {% endif %}
     <div class="payout-cashflow-chart" aria-label="Payouts by Shopify payout period">
         <div class="payout-axis" aria-hidden="true">
             <span>{{ report.cashflow_currency }} {{ "%.1f"|format(report.cashflow_max / 1000) }}K</span>
@@ -45,7 +60,7 @@
                 <strong>{{ row.start.strftime("%-d %b") }} – {{ row.end.strftime("%-d %b") }}</strong>
                 <span>{% if row.payment_date < today %}You were paid on{% else %}You'll be paid on{% endif %} {{ row.payment_date.strftime("%-d %b") }}</span>
             </div>
-            <strong>{{ report.cashflow_currency }} {{ "%.2f"|format(row.total) }}{% if row.estimated %}<small>Estimated</small>{% endif %}</strong>
+                <strong>{{ report.cashflow_currency }} {{ "%.2f"|format(row.total) }}{% if row.estimated %}<small>{{ "Partly estimated" if row.confirmed else "Estimated" }}</small>{% endif %}</strong>
         </div>
         {% endfor %}
     </div>

@@ -658,6 +658,16 @@
         .payout-cashflow { margin-top: 28px; padding: 26px 30px; }
         .payout-cashflow-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
         .payout-cashflow-head h2 { margin: 0; }
+        .payout-bank-summary { display: grid; grid-template-columns: minmax(250px, 1.1fr) minmax(280px, .9fr); gap: 24px 42px; margin-top: 22px; padding: 22px 24px; border: 1px solid var(--border); border-radius: 8px; background: var(--purple-pale); }
+        .payout-bank-summary > div:first-child { display: grid; align-content: start; gap: 5px; }
+        .payout-bank-summary .eyebrow { color: var(--brand); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+        .payout-bank-summary > div > strong { color: var(--ink); font-size: clamp(30px, 4vw, 44px); font-variant-numeric: tabular-nums; line-height: 1.05; }
+        .payout-bank-summary > div > span:last-child, .payout-bank-summary p { color: var(--muted); }
+        .payout-bank-summary dl { display: grid; gap: 10px; margin: 0; }
+        .payout-bank-summary dl div { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
+        .payout-bank-summary dt { color: var(--muted); }
+        .payout-bank-summary dd { margin: 0; color: var(--ink); font-weight: 800; font-variant-numeric: tabular-nums; }
+        .payout-bank-summary p { grid-column: 1 / -1; margin: -6px 0 0; font-size: 12px; }
         .payout-cashflow-chart { display: grid; grid-template-columns: 72px minmax(0, 1fr); min-height: 260px; margin-top: 22px; }
         .payout-axis { display: flex; flex-direction: column; justify-content: space-between; padding: 0 12px 32px 0; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
         .payout-bars { display: grid; grid-template-columns: repeat(3, minmax(70px, 1fr)); gap: clamp(18px, 7vw, 90px); border-bottom: 1px solid var(--border); background: repeating-linear-gradient(to bottom, var(--border) 0 1px, transparent 1px 50%); }
@@ -708,6 +718,8 @@
             .period-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .payout-filter { margin-left: 0; }
             .payout-cashflow { padding: 20px 16px; }
+            .payout-bank-summary { grid-template-columns: minmax(0, 1fr); padding: 18px; }
+            .payout-bank-summary p { grid-column: auto; }
             .payout-cashflow-chart { grid-template-columns: 52px minmax(0, 1fr); min-height: 220px; }
             .payout-axis { padding-right: 7px; font-size: 12px; }
             .payout-bars { gap: 12px; }
