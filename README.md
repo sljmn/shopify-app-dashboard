@@ -1,8 +1,12 @@
-# Shopify App Dashboard
+# Mantle
 
-Self-hosted analytics for all of your Shopify apps in one dashboard. It polls the Shopify Partner API and derives
+Newcraft's self-hosted analytics and app-intelligence platform for its Shopify app portfolio. This is the canonical
+production repository for [mantle.newcraft.dev](https://mantle.newcraft.dev). It polls the Shopify Partner API and derives
 installs, uninstalls with reasons, MRR and what moved it, collected revenue, cohort retention,
 churn, and activation.
+
+> The earlier Ruby on Rails prototype is archived and is not used in production. Mantle production is this Python
+> 3.13/FastAPI application.
 
 [![CI](https://github.com/kgelster/shopify-app-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/kgelster/shopify-app-dashboard/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
