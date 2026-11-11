@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest-4-vcpu
     services:
       postgres:
         image: postgres:16
@@ -49,7 +49,7 @@ jobs:
       - run: uv run pytest -q
 
   scan:
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest-4-vcpu
     steps:
       - uses: actions/checkout@v4
         with:
